@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { importGrid, parseDate, parseDecimal, parseDelimited } from '../src/lib/clipboard.ts';
-import { bindImportedFormulas, cellFormulaText } from '../src/lib/formulas.ts';
+import { bindTableFormulas, cellFormulaText } from '../src/lib/formulas.ts';
 import { invalidTableCells, tableData } from '../src/lib/table-data.ts';
 import { addLink, canConnect, createBlock, createWorkspace } from '../src/lib/workspace.ts';
 
@@ -53,7 +53,7 @@ test('keeps letter references bound to column IDs and detects circular sums', ()
     { id: 'amount', name: 'Amount', type: 'auto' as const },
     { id: 'summary', name: 'Summary', type: 'auto' as const },
   ];
-  const imported = bindImportedFormulas({ columns, rows: [
+  const imported = bindTableFormulas({ columns, rows: [
     { id: 'first', cells: ['1,20', '=SUM(A)'] }, { id: 'second', cells: ['2,30', ''] },
     { id: 'footer', cells: ['=SUM()', ''] },
   ] });
@@ -65,6 +65,6 @@ test('keeps letter references bound to column IDs and detects circular sums', ()
   assert.equal(tableData(reversed).display(0, 0), '3,50');
   assert.equal(tableData(reversed).display(2, 1), '3,50');
 
-  const circular = bindImportedFormulas({ columns, rows: [{ id: 'loop', cells: ['=SUM()', ''] }] });
+  const circular = bindTableFormulas({ columns, rows: [{ id: 'loop', cells: ['=SUM()', ''] }] });
   assert.match(tableData({ ...table, ...circular }).cell(0, 0).message ?? '', /refers to itself/);
 });

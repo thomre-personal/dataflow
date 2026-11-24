@@ -13,7 +13,7 @@ export type Formula =
   | { name: 'COUNT'; source: FormulaColumn; distinct?: boolean }
   | { name: 'SUMIF'; condition: FormulaColumn; criterion: string; source?: FormulaColumn }
   | { name: 'COUNTIF'; condition: FormulaColumn; criterion: string }
-  | { name: 'CONCAT'; parts: (FormulaColumn | { literal: string })[] };
+  | { name: 'CONCAT'; parts: (FormulaColumn | { literal: string } | { expression: Formula })[] };
 // Earlier workspaces stored SUM as a column reference without a function name.
 export type Row = { id: string; cells: string[]; formulas?: Record<string, Formula | FormulaColumn> };
 type BlockBase = { id: string; title: string; position: Position; parentId?: string };

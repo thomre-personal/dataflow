@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { bindImportedFormulas, cellFormulaText } from '../src/lib/formulas.ts';
+import { bindTableFormulas, cellFormulaText } from '../src/lib/formulas.ts';
 import { tableResult } from '../src/lib/format.ts';
 import { tableData } from '../src/lib/table-data.ts';
 import { createBlock } from '../src/lib/workspace.ts';
@@ -19,7 +19,7 @@ test('evaluates aggregates for text, numbers, and dates with footer rows exclude
     ['=COUNTIF(Amount, ">0.10")', '=MEDIAN(Amount)', '=MEDIAN(Date)', '=MIN(Amount)'],
     ['', '=MAX(Amount)', '', '=SUMIF(Amount, "<0.30")'],
   ];
-  const imported = bindImportedFormulas({ columns, rows: grid.map((cells, row) => ({ id: String(row), cells })) });
+  const imported = bindTableFormulas({ columns, rows: grid.map((cells, row) => ({ id: String(row), cells })) });
   const block = { ...table, ...imported, footerRows: 4 };
   const data = tableData(block);
   assert.deepEqual(grid.map((_, row) => columns.map((_, column) => data.display(row, column))).slice(4), [
@@ -49,4 +49,30 @@ test('reads saved SUM bindings and keeps a text escape out of numeric columns', 
   assert.equal(data.display(1, 0), '123');
   assert.match(data.cell(1, 0).message ?? '', /This is text/);
   assert.equal(cellFormulaText(rows[2], [{ ...column, name: 'Renamed' }], 0), '=SUM(Renamed)');
+});
+
+test('binds nested CONCAT expressions and keeps their column references after a rename', () => {
+  const table = createBlock('table', { x: 0, y: 0 });
+  assert.ok(table.kind === 'table');
+  const columns = ['Category', 'Label'].map((name) => ({ id: name, name, type: 'auto' as const }));
+  const expression = '=CONCAT("DISTINCT:", COUNT(DISTINCT(Category)))';
+  const saved = {
+    ...table, columns, footerRows: 1,
+    rows: [
+      { id: 'one', cells: ['Home', expression] },
+      { id: 'two', cells: ['home', '=CONCAT("[", CONCAT(Category, ":", COUNT(DISTINCT(Category))), "]")'] },
+      { id: 'three', cells: ['Work', '=CONCAT("Loop:", COUNT(Label))'] },
+      { id: 'four', cells: ['', ''] },
+      { id: 'footer', cells: ['Summary', expression] },
+    ],
+  };
+  const bound = bindTableFormulas(saved);
+  const data = tableData(bound);
+  assert.equal(data.display(0, 1), 'DISTINCT:2');
+  assert.equal(data.display(1, 1), '[home:2]');
+  assert.match(data.cell(2, 1).message ?? '', /refers to itself/);
+  assert.equal(data.display(4, 1), 'DISTINCT:2');
+  const renamed = [{ ...columns[0], name: 'Expense category' }, columns[1]];
+  assert.equal(cellFormulaText(bound.rows[0], renamed, 1), '=CONCAT("DISTINCT:", COUNT(DISTINCT(Expense category)))');
+  assert.equal(tableData(bindTableFormulas({ ...bound, columns: renamed })).display(0, 1), 'DISTINCT:2');
 });

@@ -64,37 +64,44 @@ export function tableData(table: TableBlock) {
     const value = item.cells[column] ?? '';
     if (value.startsWith("'")) return { value: value.slice(1), forcedText: true };
     const formula = readFormula(item, table.columns[column].id);
-    if (formula) return formula.name === 'CONCAT' ? concat(formula, row, column) : calculate(formula);
+    if (formula) return formula.name === 'CONCAT' ? readConcat(formula, row, column) : calculate(formula);
     if (!isFormulaEntry(value)) return { value };
     const { message } = parseFormula(value, table.columns, column);
     return { value, message: message ?? 'Re-enter the formula to link its columns.' };
   }
 
-  function concat(formula: Extract<Formula, { name: 'CONCAT' }>, row: number, column: number): CellValue {
+  function readConcat(formula: Extract<Formula, { name: 'CONCAT' }>, row: number, column: number): CellValue {
     const key = row * table.columns.length + column;
     const cached = strings.get(key);
     if (cached) return cached;
     if (concatenating.has(key)) return { value: '', message: 'This formula refers to itself.' };
     concatenating.add(key);
+    const result = concat(formula, row);
+    concatenating.delete(key);
+    strings.set(key, result);
+    return result;
+  }
+
+  function concat(formula: Extract<Formula, { name: 'CONCAT' }>, row: number): CellValue {
     let value = '';
-    let message: string | undefined;
     for (const part of formula.parts) {
       if ('literal' in part) {
         value += part.literal;
         continue;
       }
-      const index = indices.get(part.columnId);
-      const cell = index === undefined ? { value: '', message: 'The referenced column was deleted.' } : read(row, index);
-      if (cell.message) {
-        message = cell.message;
-        break;
+      let cell: CellValue;
+      if ('expression' in part) {
+        const expression = part.expression;
+        cell = expression.name === 'CONCAT' ? concat(expression, row) : calculate(expression);
+      } else {
+        const index = indices.get(part.columnId);
+        if (index === undefined) return { value: '', message: 'The referenced column was deleted.' };
+        cell = read(row, index);
       }
+      if (cell.message) return cell;
       value += textForDisplay(cell);
     }
-    concatenating.delete(key);
-    const result: CellValue = { value, message, calculated: 'text' };
-    strings.set(key, result);
-    return result;
+    return { value, calculated: 'text' };
   }
 
   function numeric(cell: CellValue, column: number) {

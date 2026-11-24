@@ -491,4 +491,10 @@ test('suggests formulas in both table editors and uses Return to accept suggesti
   await inline.fill('=COUNT(DISTINCT(A))');
   await inline.press('Enter');
   await expect(inline).toHaveValue('1');
+  const category = canvasBlock(page, 'Untitled table').getByRole('textbox', { name: 'Column 1 name' });
+  await category.fill('Category');
+  await category.press('Tab');
+  await inline.fill('=CONCAT("DISTINCT:", COUNT(DISTINCT(Category)))');
+  await inline.press('Enter');
+  await expect(inline).toHaveValue('DISTINCT:1');
 });

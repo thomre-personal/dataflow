@@ -11,7 +11,7 @@ export const formulaFunctions = {
   MIN: 'MIN([Column])',
   MAX: 'MAX([Column])',
   MEDIAN: 'MEDIAN([Column])',
-  CONCAT: 'CONCAT("Text", Column, …)',
+  CONCAT: 'CONCAT("Text", Column, Expression, …)',
 } satisfies Record<Formula['name'], string>;
 
 const functionNames = Object.keys(formulaFunctions) as Formula['name'][];
@@ -70,9 +70,14 @@ function resolveColumn(columns: Column[], argument: string): FormulaColumn | und
 
 export function parseFormula(value: string, columns: Column[], index: number): { formula?: Formula; message?: string } {
   if (!isFormulaEntry(value)) return {};
-  const name = /^=\s*([a-z]+)/i.exec(value.trim())?.[1].toUpperCase() as Formula['name'] | undefined;
+  return parseExpression(value.trimStart().slice(1).trim(), columns, index, 0);
+}
+
+function parseExpression(value: string, columns: Column[], index: number, depth: number): ReturnType<typeof parseFormula> {
+  if (depth >= 64) return { message: 'Use fewer nested functions.' };
+  const name = /^([a-z]+)/i.exec(value)?.[1].toUpperCase() as Formula['name'] | undefined;
   if (!name || !functionNames.includes(name)) return { message: 'Choose a supported function from the suggestions.' };
-  const input = /^=\s*[a-z]+\s*\((.*)\)$/is.exec(value.trim())?.[1];
+  const input = /^[a-z]+\s*\((.*)\)$/is.exec(value)?.[1];
   const args = input === undefined ? undefined : splitArguments(input);
   const syntaxError = { message: 'Use =' + formulaFunctions[name] + '.' };
   const referenceError = { message: 'Choose a unique column name or letter for ' + name + '.' };
@@ -81,9 +86,19 @@ export function parseFormula(value: string, columns: Column[], index: number): {
     if (!args.length) return syntaxError;
     const parts: Extract<Formula, { name: 'CONCAT' }>['parts'] = [];
     for (const argument of args) {
-      const part = argument.startsWith('"') && argument.endsWith('"') ? { literal: unquote(argument) } : resolveColumn(columns, argument);
-      if (!part) return referenceError;
-      parts.push(part);
+      if (argument.startsWith('"') && argument.endsWith('"')) {
+        parts.push({ literal: unquote(argument) });
+        continue;
+      }
+      const column = resolveColumn(columns, argument);
+      if (column) {
+        parts.push(column);
+        continue;
+      }
+      if (!/^[a-z]+\s*\(/i.test(argument)) return referenceError;
+      const nested = parseExpression(argument, columns, index, depth + 1);
+      if (!nested.formula) return nested;
+      parts.push({ expression: nested.formula });
     }
     return { formula: { name, parts } };
   }
@@ -110,17 +125,23 @@ export function bindCellFormula(formulas: NonNullable<Row['formulas']>, columns:
   else delete formulas[columns[index].id];
 }
 
-export function bindImportedFormulas(data: { columns: Column[]; rows: Row[] }) {
-  return {
-    ...data,
-    rows: data.rows.map((row) => {
-      const formulas: NonNullable<Row['formulas']> = {};
-      row.cells.forEach((value, index) => {
-        if (isFormulaEntry(value)) bindCellFormula(formulas, data.columns, index, value);
-      });
-      return Object.keys(formulas).length ? { ...row, formulas } : row;
-    }),
-  };
+export function bindTableFormulas<T extends { columns: Column[]; rows: Row[] }>(data: T): T {
+  let changed = false;
+  const rows = data.rows.map((row) => {
+    let formulas: Row['formulas'];
+    for (const [index, column] of data.columns.entries()) {
+      const value = row.cells[index];
+      if (!value || row.formulas?.[column.id] || !isFormulaEntry(value)) continue;
+      const { formula } = parseFormula(value, data.columns, index);
+      if (!formula) continue;
+      formulas ??= { ...row.formulas };
+      formulas[column.id] = formula;
+    }
+    if (!formulas) return row;
+    changed = true;
+    return { ...row, formulas };
+  });
+  return changed ? { ...data, rows } : data;
 }
 
 export function readFormula(row: Row, columnId: string): Formula | undefined {
@@ -131,7 +152,11 @@ export function readFormula(row: Row, columnId: string): Formula | undefined {
 export function cellFormulaText(row: Row, columns: Column[], index: number) {
   const raw = row.cells[index] ?? '';
   const formula = readFormula(row, columns[index].id);
-  if (!formula) return raw;
+  const expression = formula && expressionText(formula, columns);
+  return expression ? '=' + expression : raw;
+}
+
+function expressionText(formula: Formula, columns: Column[]): string | undefined {
   function reference(source: FormulaColumn, concat = false) {
     const index = columns.findIndex((column) => column.id === source.columnId);
     if (index < 0) return;
@@ -142,12 +167,16 @@ export function cellFormulaText(row: Row, columns: Column[], index: number) {
     return concat ? '[' + name.replaceAll(']', ']]') + ']' : quote(name);
   }
   if (formula.name === 'CONCAT') {
-    const parts = formula.parts.map((part) => 'literal' in part ? quote(part.literal) : reference(part, true));
-    return parts.includes(undefined) ? raw : '=CONCAT(' + parts.join(', ') + ')';
+    const parts = formula.parts.map((part) => {
+      if ('literal' in part) return quote(part.literal);
+      if ('expression' in part) return expressionText(part.expression, columns);
+      return reference(part, true);
+    });
+    return parts.includes(undefined) ? undefined : 'CONCAT(' + parts.join(', ') + ')';
   }
   const refs = 'condition' in formula ? [reference(formula.condition), quote(formula.criterion)] : [reference(formula.source)];
   if (formula.name === 'SUMIF' && formula.source) refs.push(reference(formula.source));
-  if (refs.includes(undefined)) return raw;
+  if (refs.includes(undefined)) return;
   const args = formula.name === 'COUNT' && formula.distinct ? 'DISTINCT(' + refs[0] + ')' : refs.join(', ');
-  return '=' + formula.name + '(' + args + ')';
+  return formula.name + '(' + args + ')';
 }

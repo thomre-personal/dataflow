@@ -52,7 +52,7 @@ Type `=` to see formula suggestions. Use the arrow keys and **Return** to choose
 | `MIN`, `MAX`, and `MEDIAN` | `=MAX(Date)` finds the latest date. These functions also work with numbers. If a date median falls between days, it returns the earlier day. |
 | `CONCAT` | `=CONCAT("Order #", OrderID, " / ", Status)` joins literal text and values from the same row. Use two double quotes for a quotation mark inside a literal. |
 
-Column totals, averages, counts, and date aggregates use data rows and skip footer rows. `CONCAT` uses the row that contains the formula.
+Column totals, averages, counts, and date aggregates use data rows and skip footer rows. Direct column references in `CONCAT` use the row that contains the formula. You can also pass a function result to `CONCAT`. For example, `=CONCAT("DISTINCT:", COUNT(DISTINCT(Category)))` displays `DISTINCT:3` when there are three unique nonempty categories.
 
 Date, number, and Boolean columns validate their cells as you edit or paste. Empty cells are allowed. DataFlow shows invalid values so you can correct them before running a query or plotting the table.
 

@@ -21,7 +21,7 @@
   import { absolutePosition, addLink, canConnect, canGroup, createBlock, createWorkspace, kinds, related, sqlAlias, starterWorkspace } from './lib/workspace';
   import type { Block, BlockKind, ChartBlock, GroupBlock, Library, Link, NumberFormat, Position, Result, SqlBlock, Workspace } from './lib/workspace';
   import { importGrid, parseDelimited } from './lib/clipboard';
-  import { bindImportedFormulas } from './lib/formulas';
+  import { bindTableFormulas } from './lib/formulas';
   import { describeCellIssue, invalidTableCells, tableData } from './lib/table-data';
   import { chartSeries, countLabel, tablePreview, tableResult } from './lib/format';
   import { loadLibrary, saveLibrary } from './lib/storage';
@@ -677,7 +677,7 @@
       const defaultColumn = target?.kind === 'table' && target.columns.length === 1
         && ((target.columns[0].name === 'A' && target.columns[0].type === 'auto') || (target.columns[0].name === 'Column 1' && target.columns[0].type === 'text'));
       const existing = target?.kind === 'table' && (hasValues || !defaultColumn) ? target.columns : undefined;
-      const data = bindImportedFormulas(importGrid(parseDelimited(pasteText), pasteHeader, pasteNumberFormat, existing));
+      const data = bindTableFormulas(importGrid(parseDelimited(pasteText), pasteHeader, pasteNumberFormat, existing));
       if (target?.kind === 'table') {
         if (hasValues && !confirm('Replace the existing data in “' + target.title + '”?')) return;
         patchBlock(target.id, {

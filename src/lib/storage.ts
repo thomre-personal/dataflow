@@ -1,4 +1,5 @@
 import type { Library } from './workspace';
+import { bindTableFormulas } from './formulas';
 
 const storeName = 'workspaces';
 let opening: Promise<IDBDatabase> | undefined;
@@ -15,11 +16,19 @@ function database(): Promise<IDBDatabase> {
 
 export async function loadLibrary(): Promise<Library | undefined> {
   const db = await database();
-  return new Promise((resolve, reject) => {
+  const library = await new Promise<Library | undefined>((resolve, reject) => {
     const request = db.transaction(storeName).objectStore(storeName).get('library');
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
+  if (!library) return;
+  return {
+    ...library,
+    workspaces: library.workspaces.map((workspace) => ({
+      ...workspace,
+      blocks: workspace.blocks.map((block) => block.kind === 'table' ? bindTableFormulas(block) : block),
+    })),
+  };
 }
 
 export async function saveLibrary(library: Library): Promise<void> {
