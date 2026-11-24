@@ -113,16 +113,18 @@ export function sqlAlias(title: string): string {
   return /^[a-z]/.test(name) ? name : 'input' + (name ? '_' + name : '');
 }
 
-export function related(workspace: Workspace, id: string, direction: 'inputs' | 'outputs'): Set<string> {
+export function related(workspace: Workspace, roots: string | ReadonlySet<string>, direction: 'inputs' | 'outputs'): Set<string> {
   const found = new Set<string>();
-  const pending = [id];
+  const pending = typeof roots === 'string' ? [roots] : [...roots];
+  const visited = new Set(pending);
   while (pending.length) {
     const current = pending.pop()!;
     for (const link of workspace.links) {
       const parent = direction === 'inputs' ? link.target : link.source;
       const child = direction === 'inputs' ? link.source : link.target;
-      if (parent === current && !found.has(child) && child !== id) {
+      if (parent === current && !visited.has(child)) {
         found.add(child);
+        visited.add(child);
         pending.push(child);
       }
     }

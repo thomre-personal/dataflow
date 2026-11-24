@@ -14,7 +14,7 @@
     toggleExpanded?: () => void;
     resize?: (bounds: ResizeParams) => void;
     canResize?: (bounds: ResizeParams) => boolean;
-    group?: { count: number; drop: { target: string }; hasInput: boolean; hasOutput: boolean };
+    group?: { count: number; drop: { target: string }; focusExpanded: boolean; hasInput: boolean; hasOutput: boolean };
     edit?: {
       workspace: Workspace;
       toggleLock: () => void;
@@ -42,7 +42,7 @@
   const icons = { table: Table2, sql: Braces, chart: ChartColumnIncreasing, group: Folder };
   const labels = { table: 'Table', sql: 'SQL query', chart: 'Chart', group: 'Group' };
   let block = $derived(data.block);
-  let expanded = $derived(block.kind !== 'sql' && block.expanded !== false);
+  let expanded = $derived(block.kind !== 'sql' && (block.expanded !== false || data.group?.focusExpanded === true));
   let connectionSource = $derived(connection.current.fromHandle?.type === 'source' ? connection.current.fromNode?.id : undefined);
   let acceptsConnection = $derived(block.kind === 'table' && data.edit && connectionSource
     && canConnect(data.edit.workspace, connectionSource, block.id));
@@ -61,7 +61,7 @@
   </button>
 {/snippet}
 
-{#if expanded}
+{#if expanded && !data.group?.focusExpanded}
   <NodeResizer minWidth={260} minHeight={block.kind === 'chart' ? 228 : block.kind === 'group' ? 120 : 170}
     lineClass="block-resize-edge" handleClass="block-resize-corner"
     shouldResize={(_event, bounds) => data.canResize?.(bounds) ?? true}
@@ -77,7 +77,7 @@
       <div><h3 aria-label={block.title}><BlockName title={block.title} rename={data.rename} /></h3>
         {#if !expanded}<p>{countLabel(data.group?.count ?? 0, 'block')}</p>{/if}
       </div>
-      {@render expansionButton()}
+      {#if !data.group?.focusExpanded}{@render expansionButton()}{/if}
     </header>
   </div>
 {:else}

@@ -355,7 +355,7 @@ test('resizes and collapses groups and moves canvas blocks in and out of nested 
   const area = page.getByRole('region', { name: 'Canvas drop area' });
   const addGroup = page.getByRole('button', { name: 'Add group', exact: true });
   await addGroup.dragTo(area, { targetPosition: { x: 450, y: 85 } });
-  await canvasBlock(page, 'Untitled group').getByRole('button', { name: 'Rename Untitled group' }).click();
+  await canvasBlock(page, 'Untitled group').getByText('Untitled group', { exact: true }).click();
   const name = page.getByRole('textbox', { name: 'Block name' });
   await name.fill('Budget group');
   await name.press('Enter');
@@ -405,6 +405,64 @@ test('resizes and collapses groups and moves canvas blocks in and out of nested 
   await page.reload();
   await expect(outer.getByRole('button', { name: 'Expand group Budget group' })).toBeVisible();
   await expect(table).toBeVisible();
+});
+
+test('focusing a collapsed group shows nested members and their external inputs and outputs', async ({ page }) => {
+  await page.goto('/');
+  await canvasBlock(page, 'Monthly totals').waitFor();
+  const inspector = page.getByRole('complementary', { name: 'Block inspector' });
+  const sidebar = page.getByRole('complementary', { name: 'Workspace blocks' });
+  const parent = inspector.getByRole('combobox', { name: 'Group', exact: true });
+
+  async function addGroup(title: string) {
+    await page.getByRole('button', { name: 'Add group', exact: true }).click();
+    await canvasBlock(page, 'Untitled group').getByText('Untitled group', { exact: true }).click();
+    const name = page.getByRole('textbox', { name: 'Block name' });
+    await name.fill(title);
+    await name.press('Enter');
+  }
+
+  await addGroup('Budget group');
+  await addGroup('Queries');
+  await parent.selectOption({ label: 'Budget group' });
+  await sidebar.getByRole('button', { name: 'Monthly totals', exact: true }).click();
+  await parent.selectOption({ label: 'Queries' });
+  await addGroup('Unrelated group');
+
+  const outer = canvasBlock(page, 'Budget group');
+  const inner = canvasBlock(page, 'Queries');
+  const query = canvasBlock(page, 'Monthly totals');
+  await inner.getByRole('button', { name: 'Collapse group Queries' }).click();
+  await outer.getByRole('button', { name: 'Collapse group Budget group' }).click();
+  await expect(query).toHaveCount(0);
+
+  const search = page.getByRole('combobox', { name: 'Find a block' });
+  await search.fill('Budget group');
+  await search.press('Enter');
+  await expect(outer.locator('.group-card')).not.toHaveClass(/collapsed/);
+  await expect(inner.locator('.group-card')).not.toHaveClass(/collapsed/);
+  await expect(query).toBeVisible();
+  await expect(canvasBlock(page, 'Unrelated group')).toHaveCount(0);
+
+  const input = canvasBlock(page, 'Transactions');
+  const output = canvasBlock(page, 'Spending by month');
+  await expect(input.locator('.node-relationship')).toHaveText('input');
+  await expect(output.locator('.node-relationship')).toHaveText('output');
+  await expect(page.getByRole('group', { name: 'Connection from Transactions to Monthly totals' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Connection from Monthly totals to Spending by month' })).toBeVisible();
+  await expect(input).toBeInViewport({ ratio: .9 });
+  await expect(output).toBeInViewport({ ratio: .9 });
+  const [frame, upstream, downstream, child] = await Promise.all([outer.boundingBox(), input.boundingBox(), output.boundingBox(), query.boundingBox()]);
+  expect(upstream!.x + upstream!.width).toBeLessThan(frame!.x);
+  expect(downstream!.x).toBeGreaterThan(frame!.x + frame!.width);
+  expect(child!.x).toBeGreaterThan(frame!.x);
+  expect(child!.x + child!.width).toBeLessThan(frame!.x + frame!.width);
+
+  await page.getByRole('button', { name: 'Exit focus view' }).click();
+  await expect(outer.getByRole('button', { name: 'Expand group Budget group' })).toBeVisible();
+  await expect(inner).toHaveCount(0);
+  await outer.getByRole('button', { name: 'Expand group Budget group' }).click();
+  await expect(inner.getByRole('button', { name: 'Expand group Queries' })).toBeVisible();
 });
 
 test('saves appearance and shortcut preferences and can delete without a hotkey confirmation', async ({ page }) => {

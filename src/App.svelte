@@ -43,6 +43,16 @@
   let library = $state<Library>({ activeId: sample.id, workspaces: [sample] });
   let workspace = $derived(library.workspaces.find((item) => item.id === library.activeId) ?? library.workspaces[0]);
   let blocksById = $derived(new Map(workspace.blocks.map((block) => [block.id, block])));
+  let childrenByParent = $derived.by(() => {
+    const children = new Map<string, Block[]>();
+    for (const block of workspace.blocks) {
+      if (!block.parentId) continue;
+      const siblings = children.get(block.parentId);
+      if (siblings) siblings.push(block);
+      else children.set(block.parentId, [block]);
+    }
+    return children;
+  });
   let history = $derived(histories[workspace.id]);
   let ready = $state(false);
   let selectedId = $state('monthly-totals');
@@ -252,17 +262,17 @@
     return issue ? describeCellIssue(block, issue) : undefined;
   }
 
-  function nodeSize(block: Block): { width: number; height: number } {
+  function nodeSize(block: Block, focusScope?: ReadonlySet<string>): { width: number; height: number } {
     if ((block.kind === 'table' || block.kind === 'chart') && block.expanded !== false) {
       if (block.expandedSize) return block.expandedSize;
       if (block.kind === 'chart') return { width: 420, height: 320 };
       return { width: 320, height: Math.max(280, 132 + Math.min(block.rows.length, 13) * 28) };
     }
     if (block.kind !== 'group') return { width: 260, height: 228 };
-    if (block.expanded === false) return { width: 260, height: 66 };
-    const children = workspace.blocks.filter((item) => item.parentId === block.id);
+    if (block.expanded === false && !focusScope?.has(block.id)) return { width: 260, height: 66 };
+    const children = childrenByParent.get(block.id) ?? [];
     return children.reduce((size, child) => {
-      const bounds = nodeSize(child);
+      const bounds = nodeSize(child, focusScope);
       return { width: Math.max(size.width, child.position.x + bounds.width + 24), height: Math.max(size.height, child.position.y + bounds.height + 24) };
     }, block.expandedSize ?? { width: 330, height: 280 });
   }
@@ -286,14 +296,21 @@
 
   function groupCanResize(group: GroupBlock, { x, y, width, height }: ResizeParams) {
     if (focused) return true;
-    return workspace.blocks.every((child) => {
-      if (child.parentId !== group.id) return true;
+    return (childrenByParent.get(group.id) ?? []).every((child) => {
       const left = child.position.x + group.position.x - x;
       const top = child.position.y + group.position.y - y;
       const size = nodeSize(child);
       return left >= Math.min(groupInset.x, child.position.x) && top >= Math.min(groupInset.y, child.position.y)
         && left + size.width + 24 <= width && top + size.height + 24 <= height;
     });
+  }
+
+  function focusScope(center: Block) {
+    const members = new Set([center.id]);
+    for (const id of members) {
+      for (const child of childrenByParent.get(id) ?? []) members.add(child.id);
+    }
+    return members;
   }
 
   function toggleExpanded(block: Exclude<Block, SqlBlock>) {
@@ -327,13 +344,18 @@
   }
 
   $effect(() => {
-    const inputs = focused ? related(workspace, focused, 'inputs') : new Set<string>();
-    const outputs = focused ? related(workspace, focused, 'outputs') : new Set<string>();
+    const center = blocksById.get(focused);
+    const members = center ? focusScope(center) : new Set<string>();
+    const inputs = related(workspace, members, 'inputs');
+    const outputs = related(workspace, members, 'outputs');
+    for (const id of inputs) outputs.delete(id);
     const focusPositions = new Map<string, { x: number; y: number }>();
-    if (focused) {
-      const center = workspace.blocks.find((block) => block.id === focused);
-      focusPositions.set(focused, { x: 0, y: 0 });
-      const centerSize = center ? nodeSize(center) : { width: 260, height: 228 };
+    if (center) {
+      focusPositions.set(center.id, { x: 0, y: 0 });
+      for (const id of members) {
+        if (id !== center.id) focusPositions.set(id, { ...blocksById.get(id)!.position });
+      }
+      const centerSize = nodeSize(center, members);
       for (const [direction, ids] of [['input', inputs], ['output', outputs]] as const) {
         const side = workspace.blocks.filter((block) => ids.has(block.id)).map((block) => ({ id: block.id, ...nodeSize(block) }));
         const height = side.reduce((sum, block) => sum + block.height + 32, -32);
@@ -345,18 +367,19 @@
       }
     }
     const visibleLinks = workspace.links.flatMap((link) => {
-      if (focused) return focusPositions.has(link.source) && focusPositions.has(link.target) ? [link] : [];
+      if (center) return focusPositions.has(link.source) && focusPositions.has(link.target) ? [link] : [];
       const source = visibleBlockId(link.source);
       const target = visibleBlockId(link.target);
       return source === target ? [] : [{ ...link, source, target }];
     });
-    flowNodes = workspace.blocks.filter((block) => focused ? focusPositions.has(block.id) : visibleBlockId(block.id) === block.id)
+    flowNodes = workspace.blocks.filter((block) => center ? focusPositions.has(block.id) : visibleBlockId(block.id) === block.id)
       .sort((a, b) => depth(a) - depth(b)).map((block) => {
       const result = block.kind === 'chart' ? chartInput(block) : runtime[block.id] ?? {};
-      const size = nodeSize(block);
+      const size = nodeSize(block, members);
       const expandable = block.kind !== 'sql';
+      const parentId = !center || (block.id !== center.id && members.has(block.id)) ? block.parentId : undefined;
       return {
-        id: block.id, type: 'block', position: focusPositions.get(block.id) ?? { ...block.position }, parentId: focused ? undefined : block.parentId,
+        id: block.id, type: 'block', position: focusPositions.get(block.id) ?? { ...block.position }, parentId,
         selected: block.id === selectedId,
         dragHandle: block.kind === 'group' ? '.group-title' : '.node-heading',
         ...size,
@@ -373,7 +396,8 @@
           canResize: block.kind === 'group' ? (bounds: ResizeParams) => groupCanResize(block, bounds) : undefined,
           group: block.kind === 'group' ? {
             drop: groupDrop,
-            count: workspace.blocks.filter((item) => item.parentId === block.id).length,
+            count: childrenByParent.get(block.id)?.length ?? 0,
+            focusExpanded: members.has(block.id),
             hasInput: visibleLinks.some((link) => link.target === block.id),
             hasOutput: visibleLinks.some((link) => link.source === block.id),
           } : undefined,
