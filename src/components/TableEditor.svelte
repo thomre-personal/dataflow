@@ -5,7 +5,7 @@
 <script lang="ts">
   import { CircleAlert, ClipboardPlus, Plus, Trash2 } from 'lucide-svelte';
   import { tick } from 'svelte';
-  import { columnLetter, dataRowCount, newId, rowNumber, tableInputs } from '../lib/workspace';
+  import { columnLetter, dataRowCount, defaultTableColumnWidth, newId, rowNumber, tableInputs } from '../lib/workspace';
   import { countLabel } from '../lib/format';
   import { MAX_COLUMNS, MAX_ROWS, parseDelimited } from '../lib/clipboard';
   import { bindCellFormula, cellFormulaText, isFormulaEntry, suggestFunctions } from '../lib/formulas';
@@ -43,10 +43,114 @@
   let issues = $derived([...invalidTableCells(block, data)].filter((issue) =>
     issue.row !== editing?.row || issue.column !== editing.column || !isFormulaEntry(cellDraft)));
   let issueByCell = $derived(new Map(issues.map((issue) => [issue.row + ':' + issue.column, issue.message])));
+  const rowIndexWidth = 35;
+  const rowActionsWidth = 30;
+  let table = $state<HTMLTableElement>();
+  type Resize = { id: string; pointer: number; start: number; scale: number; initial: number; size: number; min: number; widths?: Record<string, number> };
+  let resizing = $state<Resize>();
+  let columnWidths = $derived(resizing?.widths && resizing.size !== resizing.initial
+    ? { ...resizing.widths, [resizing.id]: resizing.size } : block.columnWidths);
+  let gridWidth = $derived(rowIndexWidth + rowActionsWidth + block.columns.reduce((width, column) =>
+    width + (columnWidths?.[column.id] ?? defaultTableColumnWidth), 0));
 
   const editorId = $props.id();
   const suggestionsId = editorId + '-formulas';
   const cellId = (rowId: string, columnId: string) => editorId + '-cell-' + rowId + '-' + columnId;
+
+  function renderedColumnWidths() {
+    const headers = table?.tHead?.rows[0].cells;
+    return Object.fromEntries(block.columns.map(({ id }, index) => {
+      const header = headers?.[index + 1];
+      return [id, header ? parseFloat(getComputedStyle(header).width) : defaultTableColumnWidth];
+    }));
+  }
+
+  function rowHeight(id: string) {
+    return resizing?.id === id && !resizing.widths && resizing.size !== resizing.initial
+      ? resizing.size : block.rowHeights?.[id];
+  }
+
+  function startResize(event: PointerEvent & { currentTarget: HTMLButtonElement }, id: string, column: boolean) {
+    if (event.button !== 0 || resizing || !table) return;
+    const row = event.currentTarget.closest('tr');
+    if (!row) return;
+    const bounds = table.getBoundingClientRect();
+    const scale = bounds.width / table.offsetWidth;
+    const widths = column ? renderedColumnWidths() : undefined;
+    const initial = widths?.[id] ?? row.offsetHeight;
+    let min = defaultTableColumnWidth;
+    if (!column) {
+      const height = row.style.height;
+      row.style.height = '';
+      min = row.offsetHeight;
+      row.style.height = height;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    resizing = {
+      id, pointer: event.pointerId, start: column ? event.clientX : event.clientY,
+      scale, initial, size: initial, min, widths,
+    };
+  }
+
+  function moveResize(event: PointerEvent) {
+    if (resizing?.pointer !== event.pointerId) return;
+    const position = resizing.widths ? event.clientX : event.clientY;
+    resizing.size = Math.max(resizing.min, resizing.initial + Math.round((position - resizing.start) / resizing.scale));
+  }
+
+  function endResize(event: PointerEvent, save = false) {
+    if (resizing?.pointer !== event.pointerId) return;
+    if (save) moveResize(event);
+    const { id, initial, size, widths } = resizing;
+    resizing = undefined;
+    if (!save || size === initial) return;
+    if (widths) change({ columnWidths: { ...widths, [id]: size } });
+    else change({ rowHeights: { ...block.rowHeights, [id]: size } });
+  }
+
+  function withoutSize(sizes: Record<string, number> | undefined, id: string) {
+    if (!sizes || !Object.hasOwn(sizes, id)) return sizes;
+    const next = { ...sizes };
+    delete next[id];
+    return Object.keys(next).length ? next : undefined;
+  }
+
+  function fitColumn(id: string, index: number) {
+    const header = table?.tHead?.rows[0].cells[index + 1];
+    const name = header?.querySelector('input');
+    if (!header || !name) return;
+    const context = document.createElement('canvas').getContext('2d');
+    if (!context) return;
+    const heading = getComputedStyle(name);
+    context.font = heading.font;
+    const padding = (style: CSSStyleDeclaration) => parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    let width = Math.max(defaultTableColumnWidth, context.measureText(name.value).width
+      + padding(heading) + header.offsetWidth - name.offsetWidth);
+    const sample = table?.tBodies[0]?.rows[0]?.cells[index + 1]?.querySelector('textarea');
+    if (sample) {
+      const style = getComputedStyle(sample);
+      const space = padding(style) + 2;
+      const normalWeight = table ? getComputedStyle(table).fontWeight : '400';
+      for (let row = 0; row < block.rows.length; row++) {
+        const weight = index < titleColumns || row >= dataRows ? '650' : normalWeight;
+        context.font = `${style.fontStyle} ${weight} ${style.fontSize} ${style.fontFamily}`;
+        for (const line of data.display(row, index).split(/\r\n?|\n/)) {
+          width = Math.max(width, context.measureText(line).width + space);
+        }
+      }
+    }
+    const widths = renderedColumnWidths();
+    const size = Math.ceil(width);
+    if (size !== block.columnWidths?.[id] && Math.abs(size - widths[id]) >= 1) {
+      change({ columnWidths: { ...widths, [id]: size } });
+    }
+  }
+
+  function fitRow(id: string) {
+    if (block.rowHeights?.[id] !== undefined) change({ rowHeights: withoutSize(block.rowHeights, id) });
+  }
 
   async function focusCell(rowIndex: number, rowId: string, columnId: string) {
     limit = Math.max(limit, rowIndex + 1);
@@ -182,6 +286,7 @@
     const columnId = block.columns[index].id;
     change({
       columns: block.columns.filter((column) => column.id !== columnId),
+      columnWidths: withoutSize(block.columnWidths, columnId),
       rows: block.rows.map((row) => {
         const formulas = { ...row.formulas };
         delete formulas[columnId];
@@ -198,6 +303,17 @@
     if (count !== (block[key] ?? 0)) change({ [key]: count });
   }
 </script>
+
+{#snippet resizeHandle(id: string, label: string, fit: () => void, column = false)}
+  <button type="button" class="table-resize-handle nodrag nopan" class:column-resize={column}
+    class:row-resize={!column} class:resizing={resizing?.id === id}
+    aria-label={label} title={label + ' · Double-click to fit'}
+    onpointerdown={(event) => startResize(event, id, column)} onpointermove={moveResize}
+    onpointerup={(event) => endResize(event, true)} onlostpointercapture={endResize}
+    onclick={(event) => { event.stopPropagation(); if (event.detail === 0) fit(); }}
+    ondblclick={(event) => { event.stopPropagation(); fit(); }}>
+  </button>
+{/snippet}
 
 {#snippet tools()}
 <div class="table-tools">
@@ -230,7 +346,14 @@
   </div>
 {/if}
 <div class="editor-grid" data-table-style={block.style}>
-  <table>
+  <table bind:this={table} style:min-width={gridWidth + 'px'} style:width={columnWidths ? gridWidth + 'px' : undefined}>
+    <colgroup>
+      <col style:width={rowIndexWidth + 'px'} />
+      {#each block.columns as column (column.id)}
+        <col style:width={columnWidths ? (columnWidths[column.id] ?? defaultTableColumnWidth) + 'px' : undefined} />
+      {/each}
+      <col style:width={rowActionsWidth + 'px'} />
+    </colgroup>
     <thead><tr><th scope="col" class="row-index">#</th>
       {#each block.columns as column, index (column.id)}
         <th scope="col" class:title-column={index < titleColumns}>
@@ -243,12 +366,17 @@
           <select value={column.type} onchange={(event) => updateColumn(index, { type: event.currentTarget.value as ColumnType })} aria-label={column.name + ' type'}>
             {#each types as [value, name]}<option {value}>{name}</option>{/each}
           </select>
+          {@render resizeHandle(column.id, 'Resize column ' + column.name, () => fitColumn(column.id, index), true)}
         </th>
       {/each}
       <th scope="col"><span class="sr-only">Actions</span></th>
     </tr></thead>
     <tbody>{#each block.rows.slice(0, limit) as row, rowIndex (row.id)}
-      <tr class:footer-row={rowIndex >= dataRows}><th scope="row" class="row-index">{rowNumber(block, rowIndex)}</th>
+      {@const height = rowHeight(row.id)}
+      <tr class:footer-row={rowIndex >= dataRows} style:height={height === undefined ? undefined : height + 'px'}>
+        <th scope="row" class="row-index">{rowNumber(block, rowIndex)}
+          {@render resizeHandle(row.id, 'Resize row ' + rowNumber(block, rowIndex), () => fitRow(row.id))}
+        </th>
         {#each block.columns as column, columnIndex (column.id)}
           {@const id = cellId(row.id, column.id)}
           {@const issue = issueByCell.get(rowIndex + ':' + columnIndex)}
@@ -261,7 +389,7 @@
             class:active-cell={activeCell?.rowId === row.id && activeCell.columnId === column.id}
             class:numeric={data.columns[columnIndex].type === 'decimal'}
             {value}
-            rows={Math.min(8, value.split(/\r\n?|\n/).length)}
+            rows={value.split(/\r\n?|\n/).length}
             title={isFormula ? cellFormulaText(row, block.columns, columnIndex, inputs) : undefined}
             aria-label={column.name + ' row ' + rowNumber(block, rowIndex)}
             aria-invalid={issue ? true : undefined}
@@ -294,6 +422,7 @@
         {/each}
         <td class="row-actions"><button class="icon-button small" aria-label={'Delete row ' + rowNumber(block, rowIndex)} onclick={() => change({
           rows: block.rows.filter((candidate) => candidate.id !== row.id),
+          rowHeights: withoutSize(block.rowHeights, row.id),
           footerRows: rowIndex >= dataRows ? footerRows - 1 : block.footerRows,
         })}><Trash2 size={13} /></button></td>
       </tr>

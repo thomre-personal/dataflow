@@ -8,12 +8,24 @@ export type Position = { x: number; y: number };
 export type Column = { id: string; name: string; type: ColumnType };
 export type FormulaColumn = { columnId: string; reference: 'implicit' | 'name' | 'letter'; tableId?: string };
 export type OrderedFunction = 'MIN' | 'MAX' | 'MEDIAN';
+export const booleanFunctions = ['AND', 'OR', 'NOT', 'XOR', 'XNOR', 'XAND', 'NAND', 'NOR'] as const;
+export type BooleanFunction = typeof booleanFunctions[number];
+export type BooleanFormula = {
+  name: BooleanFunction;
+  args: (FormulaColumn | { boolean: boolean } | { expression: Formula })[];
+};
+
+export function isBooleanFunction(value: unknown): value is BooleanFunction {
+  return booleanFunctions.some((name) => name === value);
+}
+
 export type Formula =
   | { name: 'SUM' | 'AVERAGE' | 'AVG' | OrderedFunction; source: FormulaColumn }
   | { name: 'COUNT'; source: FormulaColumn; distinct?: boolean }
   | { name: 'SUMIF'; condition: FormulaColumn; criterion: string; source?: FormulaColumn }
   | { name: 'COUNTIF'; condition: FormulaColumn; criterion: string }
-  | { name: 'CONCAT'; parts: (FormulaColumn | { literal: string } | { expression: Formula })[] };
+  | { name: 'CONCAT'; parts: (FormulaColumn | { literal: string } | { expression: Formula })[] }
+  | BooleanFormula;
 // Earlier workspaces stored SUM as a column reference without a function name.
 export type Row = { id: string; cells: string[]; formulas?: Record<string, Formula | FormulaColumn> };
 type BlockBase = { id: string; title: string; position: Position; parentId?: string };
@@ -29,6 +41,8 @@ export type TableBlock = BlockBase & ExpandableBlock & {
   titleColumns?: number;
   footerRows?: number;
   rowIndexBase?: 0 | 1;
+  columnWidths?: Record<string, number>;
+  rowHeights?: Record<string, number>;
 };
 export type SqlBlock = BlockBase & { kind: 'sql'; sql: string };
 export type ChartBlock = BlockBase & ExpandableBlock & { kind: 'chart'; chart: 'bar' | 'line'; x: string; y: string };
@@ -50,7 +64,12 @@ export type Result = {
   titleColumns?: number;
   footerRows?: number;
   tableStyle?: TableStyle;
+  columnWidths?: number[];
+  rowHeights?: number[];
 };
+
+export const defaultTableColumnWidth = 118;
+export const defaultPreviewRowHeight = 28;
 
 export function dataRowCount(table: TableBlock) {
   return Math.max(0, table.rows.length - (table.footerRows ?? 0));

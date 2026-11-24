@@ -982,6 +982,11 @@
           ...data, numberFormat: pasteNumberFormat,
           titleColumns: Math.min(target.titleColumns ?? 0, data.columns.length),
           footerRows: Math.min(target.footerRows ?? 0, data.rows.length),
+          columnWidths: target.columnWidths && Object.fromEntries(data.columns.flatMap(({ id }) => {
+            const width = target.columnWidths?.[id];
+            return width === undefined ? [] : [[id, width]];
+          })),
+          rowHeights: undefined,
         });
         modal = pasteFromTableDialog ? 'table' : null;
       } else {

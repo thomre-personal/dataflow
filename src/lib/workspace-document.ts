@@ -1,4 +1,4 @@
-import { canConnect, canGroup, newId } from './workspace.ts';
+import { canConnect, canGroup, isBooleanFunction, newId } from './workspace.ts';
 import type { Block, Column, Link, Row, Workspace } from './workspace.ts';
 
 const format = 'dataflow-workspace';
@@ -21,6 +21,11 @@ function optionalCount(value: unknown, max: number) {
   return value === undefined || (finiteNumber(value) && Number.isInteger(value) && value >= 0 && value <= max);
 }
 
+function optionalDimensions(value: unknown) {
+  return value === undefined || (record(value)
+    && Object.entries(value).every(([key, size]) => id(key) && finiteNumber(size) && size > 0));
+}
+
 function objectsWithIds<T extends { id: string }>(values: unknown, valid: (value: unknown) => value is T): values is T[] {
   return Array.isArray(values) && values.every(valid) && new Set(values.map((value) => value.id)).size === values.length;
 }
@@ -37,6 +42,11 @@ function reference(value: unknown): boolean {
 
 function formula(value: unknown, depth = 0): boolean {
   if (!record(value) || depth >= 64) return false;
+  if (isBooleanFunction(value.name)) {
+    return Array.isArray(value.args) && value.args.length > 0 && (value.name !== 'NOT' || value.args.length === 1)
+      && value.args.every((argument) => record(argument) && ('expression' in argument ? formula(argument.expression, depth + 1)
+        : 'boolean' in argument ? typeof argument.boolean === 'boolean' : argument.tableId === undefined && reference(argument)));
+  }
   switch (value.name) {
     case undefined: return depth === 0 && reference(value);
     case 'SUM': case 'AVERAGE': case 'AVG': case 'MIN': case 'MAX': case 'MEDIAN':
@@ -83,7 +93,8 @@ function block(value: unknown): value is Block {
         && ['plain', 'banded', 'emphasis', 'grid'].some((style) => style === value.style)
         && (value.rowIndexBase === undefined || value.rowIndexBase === 0 || value.rowIndexBase === 1)
         && (value.inlineLocked === undefined || typeof value.inlineLocked === 'boolean')
-        && optionalCount(value.titleColumns, columns.length) && optionalCount(value.footerRows, rows.length);
+        && optionalCount(value.titleColumns, columns.length) && optionalCount(value.footerRows, rows.length)
+        && optionalDimensions(value.columnWidths) && optionalDimensions(value.rowHeights);
     }
     default: return false;
   }

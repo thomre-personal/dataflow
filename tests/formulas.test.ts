@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { bindTableFormulas, cellFormulaText, parseFormula } from '../src/lib/formulas.ts';
+import { bindTableFormulas, cellFormulaText, parseFormula, readFormula } from '../src/lib/formulas.ts';
 import { tableResult } from '../src/lib/format.ts';
 import { invalidTableCells, tableData } from '../src/lib/table-data.ts';
 import { addLink, canConnect, createBlock, createWorkspace, tableInputs } from '../src/lib/workspace.ts';
@@ -97,6 +97,47 @@ test('allows text summaries in typed footers and still reports broken formulas',
   assert.equal(data.display(1, 0), 'Summe: 2.50');
   assert.deepEqual(data.cell(1, 0), { value: 'Summe: 2.50' });
   assert.deepEqual(tableResult(summary).rows, [['2.50']]);
+});
+
+test('evaluates Boolean functions, nested formulas, and current-row references', () => {
+  const table = createBlock('table', { x: 0, y: 0 });
+  const columns = [
+    { id: 'paid', name: 'Paid', type: 'boolean' as const },
+    { id: 'refunded', name: 'Refunded', type: 'auto' as const },
+    { id: 'result', name: 'Result', type: 'auto' as const },
+  ];
+  const cases = [
+    ['true', 'false', '=AND(Paid, NOT(Refunded))', 'true'],
+    ['false', 'false', '=OR(Paid, Refunded)', 'false'],
+    ['true', 'true', '=XOR(Paid, Refunded)', 'false'],
+    ['true', 'true', '=XOR(Paid, Refunded, TRUE)', 'true'],
+    ['true', 'false', '=XNOR(Paid, Refunded)', 'false'],
+    ['false', 'false', '=XAND(Paid, Refunded)', 'true'],
+    ['true', 'false', '=NAND(Paid, Refunded)', 'true'],
+    ['false', 'false', '=NOR(Paid, Refunded)', 'true'],
+  ];
+  const block = bindTableFormulas({ ...table, columns, rows: cases.map(([paid, refunded, expression], index) =>
+    ({ id: 'row-' + index, cells: [paid, refunded, expression] })) });
+  const evaluated = tableData(block);
+  assert.deepEqual(cases.map((_, row) => evaluated.display(row, 2)), cases.map(([, , , expected]) => expected));
+  assert.equal(tableResult(block).columns[2].type, 'boolean');
+
+  const renamed = [{ ...columns[0], name: 'TRUE' }, ...columns.slice(1)];
+  const expression = '=AND([TRUE], NOT(Refunded))';
+  assert.equal(cellFormulaText(block.rows[0], renamed, 2), expression);
+  assert.deepEqual(parseFormula(expression, renamed, 2).formula, readFormula(block.rows[0], columns[2].id));
+
+  const problems = bindTableFormulas({ ...block, rows: [
+    { id: 'text', cells: ["'true", 'false', '=AND(Paid, Refunded)'] },
+    { id: 'cycle', cells: ['true', 'false', '=OR(TRUE, NOT(Result))'] },
+    { id: 'arity', cells: ['true', 'false', '=NOT(Paid, Refunded)'] },
+    { id: 'concat', cells: ['true', 'false', '=CONCAT("Paid: ", AND(Paid, NOT(Refunded)))'] },
+  ] });
+  const data = tableData(problems);
+  assert.match(data.cell(0, 2).message ?? '', /needs Boolean values/);
+  assert.match(data.cell(1, 2).message ?? '', /refers to itself/);
+  assert.match(data.cell(2, 2).message ?? '', /Use =NOT/);
+  assert.equal(data.display(3, 2), 'Paid: true');
 });
 
 test('aggregates linked table columns using stable IDs and the source data and number format', () => {

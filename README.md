@@ -37,6 +37,8 @@ Open **Settings** from the gear in the top right to choose Light, Dark, or Auto,
 
 Press **Shift+Enter** while editing a cell to insert a line break. Press **Enter** to confirm the cell.
 
+Drag the divider at the right edge of a column header or the bottom edge of a row number to resize it. Other columns and rows keep their sizes. Double-click a divider to fit its contents.
+
 In the table editor, select a cell and press **Option+↑** or **Option+↓** to insert a row above or below. Press **Option+←** or **Option+→** to insert a column to the left or right. Use **Alt** on a non-Mac keyboard.
 
 Set **Title columns** to highlight columns on the left. Set **Footer rows** to keep summary rows at the bottom. Footer cells can contain text or formulas in any column. DataFlow still checks for formula errors. SQL queries and charts include title columns and skip footer rows.
@@ -57,8 +59,13 @@ Select a cell to see its formula and the functions it uses in **Cell options**. 
 | `COUNT` and `DISTINCT` | `=COUNT(DISTINCT(Category))` counts unique nonempty categories. Text comparisons ignore case. |
 | `MIN`, `MAX`, and `MEDIAN` | `=MAX(Date)` finds the latest date. These functions also work with numbers. If a date median falls between days, it returns the earlier day. |
 | `CONCAT` | `=CONCAT("Order #", OrderID, " / ", Status)` joins literal text and values from the same row. Use two double quotes for a quotation mark inside a literal. |
+| `AND`, `OR`, and `NOT` | `=AND(Paid, NOT(Archived))` checks that a row is paid and active. |
+| `XOR`, `XNOR`, and `XAND` | `=XOR(Paid, Refunded)` checks that exactly one of these two values is true. With more arguments, XOR checks for an odd number of true values. XNOR and its alias XAND check for an even number. |
+| `NAND` and `NOR` | `=NOR(Paid, Refunded)` checks that neither value is true. NAND reverses the result of AND. |
 
 Column totals, averages, counts, and date aggregates use data rows and skip footer rows. Direct column references in `CONCAT` use the row that contains the formula. You can also pass a function result to `CONCAT`. For example, `=CONCAT("DISTINCT:", COUNT(DISTINCT(Category)))` displays `DISTINCT:3` when there are three unique nonempty categories.
+
+Boolean functions accept `TRUE`, `FALSE`, Boolean values in the current row, and other Boolean formulas. Use an **Auto** or **Boolean** column for their results if you want SQL to read them as Booleans.
 
 To aggregate a column in another table, connect that table to the one containing the formula. Drag its output port or **+** onto the destination table, or choose it under **Connect input** in the inspector. Then enter a formula such as `=MEDIAN(Transactions::Amount)`. A formula can use the source table’s name or the input alias shown in the inspector. The result updates as the source data changes. For `SUMIF`, the condition and sum columns must come from the same table.
 

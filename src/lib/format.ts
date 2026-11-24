@@ -1,5 +1,5 @@
 import { describeCellIssue, tableData } from './table-data.ts';
-import { dataRowCount } from './workspace.ts';
+import { dataRowCount, defaultPreviewRowHeight, defaultTableColumnWidth } from './workspace.ts';
 import type { ChartBlock, Result, TableBlock, Workspace } from './workspace.ts';
 
 export const countLabel = (value: number, singular: string, plural = singular + 's') =>
@@ -19,12 +19,15 @@ export function tableResult(table: TableBlock, workspace?: Workspace): Result {
 
 export function tablePreview(table: TableBlock, limit: number, workspace?: Workspace): Result {
   const data = tableData(table, workspace);
+  const rows = table.rows.slice(0, limit);
   return {
     columns: data.columns,
-    rows: table.rows.slice(0, limit).map((_, row) => data.columns.map((_, column) => data.display(row, column) || null)),
+    rows: rows.map((_, row) => data.columns.map((_, column) => data.display(row, column) || null)),
     tableStyle: table.style,
     titleColumns: table.titleColumns,
     footerRows: Math.max(0, Math.min(limit, table.rows.length) - dataRowCount(table)),
+    columnWidths: table.columnWidths && table.columns.map(({ id }) => table.columnWidths?.[id] ?? defaultTableColumnWidth),
+    rowHeights: table.rowHeights && rows.map(({ id }) => Math.max(defaultPreviewRowHeight, table.rowHeights?.[id] ?? 0)),
   };
 }
 

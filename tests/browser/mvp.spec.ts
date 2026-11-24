@@ -176,6 +176,57 @@ test('resizes an expanded table, scrolls to its last row and restores the size',
   await expect(table.getByRole('textbox', { name: 'Item row 1', exact: true })).toBeVisible();
 });
 
+test('resizes columns and rows independently and fits their contents on double-click', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New workspace', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Workspace name' }).fill('Table dimensions');
+  await page.getByRole('button', { name: 'Create workspace' }).click();
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Untitled table' });
+  await dialog.getByRole('button', { name: 'Column', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Row', exact: true }).click();
+  await dialog.getByRole('textbox', { name: 'B row 2', exact: true }).fill('First line\nSecond line');
+  await dialog.getByRole('textbox', { name: 'B row 3', exact: true }).fill('M'.repeat(48));
+  await dialog.getByRole('textbox', { name: 'B row 3', exact: true }).press('Enter');
+  const grid = dialog.getByRole('table');
+  const columns = () => grid.locator('thead th').evaluateAll((headers) => headers.map((cell) => (cell as HTMLElement).offsetWidth));
+  const rows = (table: Locator) => table.locator('tbody tr').evaluateAll((rows) => rows.map((row) => (row as HTMLElement).offsetHeight));
+  const initialColumns = await columns();
+  const initialRows = await rows(grid);
+  const column = dialog.getByRole('button', { name: 'Resize column B', exact: true });
+  await dragResize(page, column, 70, 0);
+  const enlargedColumns = await columns();
+  expect(enlargedColumns[2]).toBeCloseTo(initialColumns[2] + 70, 0);
+  expect(enlargedColumns.filter((_, index) => index !== 2)).toEqual(initialColumns.filter((_, index) => index !== 2));
+  await column.dblclick();
+  const fittedColumns = await columns();
+  expect(fittedColumns[2]).toBeGreaterThan(enlargedColumns[2]);
+  expect(fittedColumns.filter((_, index) => index !== 2)).toEqual(initialColumns.filter((_, index) => index !== 2));
+
+  const row = dialog.getByRole('button', { name: 'Resize row 2', exact: true });
+  await dragResize(page, row, 0, 64);
+  const enlargedRows = await rows(grid);
+  expect(enlargedRows).toEqual([initialRows[0], initialRows[1] + 64, initialRows[2]]);
+  await row.dblclick();
+  await expect.poll(() => rows(grid)).toEqual(initialRows);
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  const card = canvasBlock(page, 'Untitled table');
+  await expect.poll(() => rows(card.getByRole('table'))).toEqual(enlargedRows);
+  await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect.poll(() => rows(card.getByRole('table'))).toEqual(enlargedRows);
+  await dragResize(page, card.getByRole('button', { name: 'Resize row 1', exact: true }), 0, 35);
+  await expect.poll(async () => (await rows(card.getByRole('table')))[0]).toBeGreaterThan(enlargedRows[0]);
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect.poll(() => rows(card.getByRole('table'))).toEqual(enlargedRows);
+  await card.getByRole('button', { name: 'Lock inline editing', exact: true }).click();
+  const locked = card.getByRole('region', { name: 'Full table data' });
+  await expect.poll(async () => (await rows(locked.getByRole('table')))[1]).toBe(enlargedRows[1]);
+  const lockedWidth = await locked.getByRole('columnheader', { name: 'B', exact: true }).evaluate((cell: HTMLElement) => cell.offsetWidth);
+  expect(lockedWidth).toBeCloseTo(fittedColumns[2], 0);
+});
+
 async function dragOutput(page: Page, name: string, y: number) {
   const source = canvasBlock(page, name);
   await source.hover();
@@ -664,7 +715,7 @@ test('shows nested functions and searchable documentation for the active cell', 
   const used = options.getByRole('region', { name: 'Functions in this cell' });
   await expect(used.locator('summary')).toHaveText(['CONCAT', 'COUNT', 'DISTINCT']);
   const catalog = options.getByRole('region', { name: 'Function catalog' });
-  await expect(catalog.locator('summary')).toHaveCount(11);
+  await expect(catalog.locator('summary')).toHaveCount(19);
   const search = catalog.getByRole('searchbox', { name: 'Search functions' });
   await search.fill('mEdIaN');
   await expect(inlineCell).not.toBeFocused();
@@ -674,7 +725,7 @@ test('shows nested functions and searchable documentation for the active cell', 
   await search.fill('unknown function');
   await expect(catalog.getByText('No matching functions.')).toBeVisible();
   await search.clear();
-  await expect(catalog.locator('summary')).toHaveCount(11);
+  await expect(catalog.locator('summary')).toHaveCount(19);
 
   await inspector.getByRole('button', { name: 'Delete block' }).scrollIntoViewIfNeeded();
   await table.getByRole('textbox', { name: 'B row 2', exact: true }).fill("'=MAX(A)");
@@ -684,6 +735,14 @@ test('shows nested functions and searchable documentation for the active cell', 
   await expect(options.getByLabel('Cell formula')).toHaveCount(0);
   await options.getByRole('button', { name: 'Clear cell selection' }).click();
   await expect(options).toHaveCount(0);
+
+  await inlineCell.fill('=XO');
+  const suggestions = page.getByRole('listbox', { name: 'Formula suggestions' });
+  await expect(suggestions.getByRole('option', { name: /^XOR/ })).toBeVisible();
+  await inlineCell.fill('=AND(TRUE, NOT(FALSE))');
+  await inlineCell.press('Enter');
+  await expect(inlineCell).toHaveValue('true');
+  await expect(used.locator('summary')).toHaveText(['AND', 'NOT']);
 });
 
 test('pastes a range over a blank two-by-two table and infers the pasted column types', async ({ page }) => {

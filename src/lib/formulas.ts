@@ -1,5 +1,5 @@
-import { columnLetter, tableInputs } from './workspace.ts';
-import type { Column, Formula, FormulaColumn, Row, TableInput, Workspace } from './workspace.ts';
+import { columnLetter, isBooleanFunction, tableInputs } from './workspace.ts';
+import type { BooleanFormula, Column, Formula, FormulaColumn, Row, TableInput, Workspace } from './workspace.ts';
 
 export type FormulaFunction = Formula['name'] | 'DISTINCT';
 
@@ -53,6 +53,46 @@ export const formulaFunctions = {
     signature: 'CONCAT("Text", Column, Expression, …)',
     description: 'Joins quoted text, column values from the current row, and results of other functions.',
     example: '=CONCAT("Total: ", SUM(Amount))',
+  },
+  AND: {
+    signature: 'AND(Boolean, …)',
+    description: 'Returns true when all arguments are true.',
+    example: '=AND(Paid, Approved)',
+  },
+  OR: {
+    signature: 'OR(Boolean, …)',
+    description: 'Returns true when at least one argument is true.',
+    example: '=OR(Paid, Approved)',
+  },
+  NOT: {
+    signature: 'NOT(Boolean)',
+    description: 'Reverses a single Boolean value.',
+    example: '=NOT(Archived)',
+  },
+  XOR: {
+    signature: 'XOR(Boolean, …)',
+    description: 'Returns true when an odd number of arguments are true.',
+    example: '=XOR(Paid, Refunded)',
+  },
+  XNOR: {
+    signature: 'XNOR(Boolean, …)',
+    description: 'Returns true when an even number of arguments are true. With two arguments, it checks whether they match.',
+    example: '=XNOR(Paid, Approved)',
+  },
+  XAND: {
+    signature: 'XAND(Boolean, …)',
+    description: 'An alias for XNOR. Returns true when an even number of arguments are true.',
+    example: '=XAND(Paid, Approved)',
+  },
+  NAND: {
+    signature: 'NAND(Boolean, …)',
+    description: 'Returns true when at least one argument is false.',
+    example: '=NAND(Paid, Approved)',
+  },
+  NOR: {
+    signature: 'NOR(Boolean, …)',
+    description: 'Returns true when all arguments are false.',
+    example: '=NOR(Paid, Approved)',
   },
   DISTINCT: {
     signature: 'DISTINCT(Column)',
@@ -164,6 +204,26 @@ function parseExpression(value: string, columns: Column[], index: number, inputs
   const syntaxError = { message: 'Use =' + formulaFunctions[name].signature + '.' };
   const referenceError = { message: 'Choose a unique column name or letter for ' + name + '.' };
   if (!args) return syntaxError;
+  if (isBooleanFunction(name)) {
+    if (!args.length || (name === 'NOT' && args.length !== 1)) return syntaxError;
+    const operands: BooleanFormula['args'] = [];
+    for (const argument of args) {
+      if (/^(true|false)$/i.test(argument)) {
+        operands.push({ boolean: argument.toLowerCase() === 'true' });
+        continue;
+      }
+      const column = resolveColumn(columns, argument);
+      if (column) {
+        operands.push(column);
+        continue;
+      }
+      if (!/^[a-z]+\s*\(/i.test(argument)) return { message: 'Use TRUE, FALSE, a column, or a Boolean formula in ' + name + '.' };
+      const nested = parseExpression(argument, columns, index, inputs, depth + 1);
+      if (!nested.formula) return nested;
+      operands.push({ expression: nested.formula });
+    }
+    return { formula: { name, args: operands } };
+  }
   if (name === 'CONCAT') {
     if (!args.length) return syntaxError;
     const parts: Extract<Formula, { name: 'CONCAT' }>['parts'] = [];
@@ -271,6 +331,15 @@ function expressionText(formula: Formula, columns: Column[], inputs: TableInput[
       return reference(part, true);
     });
     return parts.includes(undefined) ? undefined : 'CONCAT(' + parts.join(', ') + ')';
+  }
+  if ('args' in formula) {
+    const args = formula.args.map((argument) => {
+      if ('boolean' in argument) return argument.boolean ? 'TRUE' : 'FALSE';
+      if ('expression' in argument) return expressionText(argument.expression, columns, inputs);
+      const column = reference(argument, true);
+      return column && /^(true|false)$/i.test(column) ? bracket(column) : column;
+    });
+    return args.includes(undefined) ? undefined : formula.name + '(' + args.join(', ') + ')';
   }
   const refs = 'condition' in formula ? [reference(formula.condition), quote(formula.criterion)] : [reference(formula.source)];
   if (formula.name === 'SUMIF' && formula.source) refs.push(reference(formula.source));

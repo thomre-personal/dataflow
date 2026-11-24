@@ -1,12 +1,13 @@
-import { inferType, parseDate, parseDecimal, validateCell } from './clipboard.ts';
+import { inferType, parseBoolean, parseDate, parseDecimal, validateCell } from './clipboard.ts';
 import { isFormulaEntry, parseFormula, readFormula } from './formulas.ts';
 import { dataRowCount, rowNumber, tableInputs } from './workspace.ts';
-import type { Column, Formula, OrderedFunction, TableBlock, TableInput, ValueType, Workspace } from './workspace.ts';
+import type { BooleanFormula, Column, Formula, OrderedFunction, TableBlock, TableInput, ValueType, Workspace } from './workspace.ts';
 
 type CellIssue = { row: number; column: number; message: string };
-type CellValue = { value: string; calculated?: 'number' | 'date' | 'text'; forcedText?: boolean; message?: string };
+type CellValue = { value: string; calculated?: 'number' | 'date' | 'text' | 'boolean'; forcedText?: boolean; message?: string };
 type Decimal = { units: bigint; scale: number };
-type AggregateFormula = Exclude<Formula, { name: 'CONCAT' }>;
+type RowFormula = Extract<Formula, { name: 'CONCAT' } | BooleanFormula>;
+type AggregateFormula = Exclude<Formula, RowFormula>;
 type TableEvaluation = {
   columns: (Column & { type: ValueType })[];
   cell: (row: number, column: number) => ReturnType<typeof validateCell>;
@@ -75,30 +76,36 @@ function createTableData(table: TableBlock, inputs: TableInput[], evaluate: (tab
   const indices = new Map(table.columns.map((column, index) => [column.id, index]));
   const results = new Map<string, CellValue>();
   const calculating = new Set<string>();
-  const strings = new Map<number, CellValue>();
-  const concatenating = new Set<number>();
+  const rowResults = new Map<number, CellValue>();
+  const evaluatingRows = new Set<number>();
 
   function read(row: number, column: number): CellValue {
     const item = table.rows[row];
     const value = item.cells[column] ?? '';
     if (value.startsWith("'")) return { value: value.slice(1), forcedText: true };
     const formula = readFormula(item, table.columns[column].id);
-    if (formula) return formula.name === 'CONCAT' ? readConcat(formula, row, column) : calculateAggregate(formula);
+    if (formula) return formula.name === 'CONCAT' || 'args' in formula ? readRowFormula(formula, row, column) : calculateAggregate(formula);
     if (!isFormulaEntry(value)) return { value };
     const { message } = parseFormula(value, table.columns, column, inputs);
     return { value, message: message ?? 'Re-enter the formula to link its columns.' };
   }
 
-  function readConcat(formula: Extract<Formula, { name: 'CONCAT' }>, row: number, column: number): CellValue {
+  function readRowFormula(formula: RowFormula, row: number, column: number): CellValue {
     const key = row * table.columns.length + column;
-    const cached = strings.get(key);
+    const cached = rowResults.get(key);
     if (cached) return cached;
-    if (concatenating.has(key)) return { value: '', message: 'This formula refers to itself.' };
-    concatenating.add(key);
-    const result = concat(formula, row);
-    concatenating.delete(key);
-    strings.set(key, result);
+    if (evaluatingRows.has(key)) return { value: '', message: 'This formula refers to itself.' };
+    evaluatingRows.add(key);
+    const result = evaluateExpression(formula, row);
+    evaluatingRows.delete(key);
+    rowResults.set(key, result);
     return result;
+  }
+
+  function evaluateExpression(formula: Formula, row: number): CellValue {
+    if (formula.name === 'CONCAT') return concat(formula, row);
+    if ('args' in formula) return calculateBoolean(formula, row);
+    return calculateAggregate(formula);
   }
 
   function concat(formula: Extract<Formula, { name: 'CONCAT' }>, row: number): CellValue {
@@ -110,8 +117,7 @@ function createTableData(table: TableBlock, inputs: TableInput[], evaluate: (tab
       }
       let cell: CellValue;
       if ('expression' in part) {
-        const expression = part.expression;
-        cell = expression.name === 'CONCAT' ? concat(expression, row) : calculateAggregate(expression);
+        cell = evaluateExpression(part.expression, row);
       } else {
         const index = indices.get(part.columnId);
         if (index === undefined) return { value: '', message: 'The referenced column was deleted.' };
@@ -121,6 +127,41 @@ function createTableData(table: TableBlock, inputs: TableInput[], evaluate: (tab
       value += textForDisplay(cell);
     }
     return { value, calculated: 'text' };
+  }
+
+  function calculateBoolean(formula: BooleanFormula, row: number): CellValue {
+    let truths = 0;
+    const operandError = { value: '', message: formula.name + ' needs Boolean values (TRUE or FALSE).' };
+    for (const operand of formula.args) {
+      if ('boolean' in operand) {
+        truths += Number(operand.boolean);
+        continue;
+      }
+      let cell: CellValue;
+      if ('expression' in operand) {
+        cell = evaluateExpression(operand.expression, row);
+      } else {
+        const index = indices.get(operand.columnId);
+        if (index === undefined) return { value: '', message: 'The referenced column was deleted.' };
+        cell = read(row, index);
+        const type = table.columns[index].type;
+        if (!cell.message && type !== 'auto' && type !== 'boolean') return operandError;
+      }
+      if (cell.message) return cell;
+      const value = !cell.forcedText && (!cell.calculated || cell.calculated === 'boolean') ? parseBoolean(cell.value) : null;
+      if (value === null) return operandError;
+      truths += Number(value === 'true');
+    }
+    let result: boolean;
+    switch (formula.name) {
+      case 'AND': result = truths === formula.args.length; break;
+      case 'OR': result = truths > 0; break;
+      case 'NOT': case 'NOR': result = truths === 0; break;
+      case 'XOR': result = truths % 2 === 1; break;
+      case 'XAND': case 'XNOR': result = truths % 2 === 0; break;
+      case 'NAND': result = truths < formula.args.length; break;
+    }
+    return { value: String(result), calculated: 'boolean' };
   }
 
   function calculateAggregate(formula: AggregateFormula): CellValue {

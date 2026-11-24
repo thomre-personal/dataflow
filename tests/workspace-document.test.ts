@@ -9,7 +9,10 @@ test('workspace files round-trip canvas state and preserve stable formula refere
   const table = source.blocks[0];
   if (table.kind !== 'table') throw new Error('Expected the sample table first.');
   table.rows.push({ id: 'footer-1', cells: ['Total', '', '=SUM(Amount)'] });
+  table.rows[0].cells[1] = '=AND(TRUE, NOT(FALSE))';
   table.footerRows = 1;
+  table.columnWidths = { category: 240 };
+  table.rowHeights = { 'txn-1': 64 };
   source.blocks.unshift({ id: 'group-1', kind: 'group', title: 'Summary', position: { x: 20, y: 30 }, expanded: false });
   table.parentId = 'group-1';
 
@@ -23,6 +26,11 @@ test('workspace files round-trip canvas state and preserve stable formula refere
   if (reopenedTable.kind !== 'table') throw new Error('Expected the sample table after its group.');
   assert.equal(reopenedTable.parentId, 'group-1');
   assert.equal(reopenedTable.footerRows, 1);
+  assert.deepEqual(reopenedTable.columnWidths, table.columnWidths);
+  assert.deepEqual(reopenedTable.rowHeights, table.rowHeights);
+  assert.deepEqual(reopenedTable.rows[0].formulas?.category, {
+    name: 'AND', args: [{ boolean: true }, { expression: { name: 'NOT', args: [{ boolean: false }] } }],
+  });
   assert.deepEqual(reopenedTable.rows.at(-1)?.formulas?.amount, {
     name: 'SUM', source: { columnId: 'amount', reference: 'name' },
   });

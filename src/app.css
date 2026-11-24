@@ -343,6 +343,7 @@ code { font-family: var(--mono); }
 .grid-empty { padding: 11px; font-size: 11px; color: var(--muted); }
 .full-grid { height: 100%; overflow-anchor: none; overscroll-behavior: contain; }
 .full-grid table { min-width: 100%; }
+.full-grid table.sized-preview { min-width: 0; table-layout: fixed; }
 .full-grid thead { position: sticky; top: 0; z-index: 1; }
 .full-grid td, .full-grid th { height: 28px; padding: 0 8px; line-height: 27px; max-width: none; min-width: 82px; }
 .full-grid .grid-spacer td { padding: 0; border: 0; }
@@ -403,14 +404,16 @@ dialog::backdrop { background: #151f386d; backdrop-filter: blur(2px); }
 .table-style-label:has(select) { margin-left: auto; }
 .table-style-label select { width: auto; margin: 0; min-height: 32px; }
 .editor-grid { max-height: min(55dvh, 440px); }
+.editor-grid table { table-layout: fixed; }
 .editor-grid th, .editor-grid td { border-bottom: 1px solid var(--divider); }
 .editor-grid th { font-weight: 600; color: var(--muted); background: var(--raised); }
-.editor-grid th input, .editor-grid th select { width: 100%; display: block; min-width: 112px; padding: 3px 8px; border: 0; }
+.editor-grid thead th, .editor-grid tbody th { position: relative; }
+.editor-grid th input, .editor-grid th select { width: 100%; display: block; min-width: 0; padding: 3px 8px; border: 0; }
 .editor-grid th input { color: var(--text); font-weight: 670; padding-top: 7px; }
 .column-heading { display: flex; align-items: center; gap: 3px; padding: 2px 5px 0; }
 .column-heading > span { color: var(--subtle); font: 10px var(--mono); }
-.editor-grid .column-heading input { min-width: 80px; min-height: 25px; padding: 3px; }
-.editor-grid .column-heading button { width: 18px; height: 22px; }
+.editor-grid .column-heading input { min-height: 25px; padding: 3px; }
+.editor-grid .column-heading button { flex-shrink: 0; width: 18px; height: 22px; }
 .editor-grid .formula-cell textarea { color: var(--accent); }
 .formula-suggestions { position: fixed; inset: auto; margin: 0; padding: 4px; max-height: min(260px, 42dvh); overflow: auto;
   color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); }
@@ -418,10 +421,17 @@ dialog::backdrop { background: #151f386d; backdrop-filter: blur(2px); }
 .formula-suggestions button:hover, .formula-suggestions button[aria-selected="true"] { color: var(--accent); background: var(--accent-soft); }
 .editor-grid th select { color: var(--muted); font-size: 10px; padding-bottom: 6px; }
 .editor-grid .row-index { min-width: 35px; width: 35px; text-align: center; padding: 0 4px; color: var(--subtle); font-size: 11px; }
-.editor-grid td textarea { display: block; min-width: 118px; width: 100%; padding: 6px 8px; border: 0; background: transparent; color: var(--text); resize: none; white-space: pre; }
+.editor-grid td textarea { display: block; width: 100%; padding: 6px 8px; border: 0; background: transparent; color: var(--text); resize: none; white-space: pre; }
 .editor-grid td textarea:focus { outline-offset: -2px; }
 .editor-grid td textarea:focus, .editor-grid th input:focus { background: var(--accent-soft); }
 .editor-grid td textarea.active-cell:not(:focus) { box-shadow: inset 0 0 0 1px var(--accent-line); }
+.table-resize-handle { position: absolute; z-index: 1; touch-action: none; }
+.table-resize-handle.column-resize { inset: 0 0 0 auto; width: 7px; cursor: col-resize; }
+.table-resize-handle.row-resize { inset: auto 0 0; height: 7px; cursor: row-resize; }
+.table-resize-handle::after { content: ''; position: absolute; background: var(--divider); }
+.table-resize-handle.column-resize::after { inset: 0 0 0 auto; width: 1px; }
+.table-resize-handle.row-resize::after { inset: auto 0 0; height: 1px; }
+.table-resize-handle:is(:hover, :focus-visible, .resizing)::after { background: var(--accent); }
 .editor-grid[data-table-style="banded"] tr:nth-child(even) td { background: var(--raised); }
 .table-validation { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 10px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--error) 32%, var(--divider)); border-radius: 6px; color: var(--error); background: color-mix(in srgb, var(--error) 8%, var(--surface)); font-size: 11px; }
 .table-validation svg { flex-shrink: 0; margin-top: 1px; }
