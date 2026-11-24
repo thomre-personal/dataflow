@@ -224,6 +224,8 @@ code { font-family: var(--mono); }
 .kind-icon.chart { color: var(--chart-ink); background: var(--chart-bg); }
 .kind-icon.config { color: var(--accent); background: var(--accent-soft); }
 .color-config { color: var(--accent); }
+.kind-icon.switch { color: var(--sql-ink); background: var(--sql-bg); }
+.color-switch { color: var(--sql-ink); }
 .kind-icon.group { color: var(--group-ink); background: var(--group-bg); }
 .color-table { color: var(--table-ink); }
 .color-sql { color: var(--sql-ink); }
@@ -249,10 +251,14 @@ code { font-family: var(--mono); }
 .node-inline { padding: 8px; overflow: auto; overscroll-behavior: contain; }
 .table-editor-content { display: flow-root; }
 .node-inline .editor-grid { max-height: none; overflow: auto hidden; margin-bottom: 7px; }
-.node-inline .table-tools { margin-bottom: 6px; }
-.node-inline .table-tools .button { min-height: 26px; padding: 3px 5px; font-size: 11px; }
+.table-grow { position: absolute; z-index: 4; top: 64px; right: -29px; display: grid; place-items: center;
+  width: 25px; height: 25px; border: 1px solid var(--border); border-radius: 50%; color: var(--accent); background: var(--surface);
+  box-shadow: var(--shadow); cursor: ew-resize; touch-action: none; }
+.table-grow-row { top: auto; right: auto; bottom: -29px; left: 11px; cursor: ns-resize; }
+.table-grow:hover { background: var(--accent-soft); }
 .config-editor, .config-presets, .config-field { display: grid; gap: 8px; }
 .modal-body > .config-editor { margin-top: 12px; }
+.config-global { margin-top: 10px; }
 .config-field { padding: 8px; border: 1px solid var(--divider); border-radius: 6px; }
 .config-actions { display: flex; flex-wrap: wrap; align-items: end; gap: 6px; }
 .config-actions .field { flex: 1; min-width: 70px; margin: 0; }
@@ -260,7 +266,13 @@ code { font-family: var(--mono); }
 .field.config-slider input { width: 100%; min-height: 18px; padding: 0; accent-color: var(--accent); border: 0; }
 .config-options { border: 0; padding: 0; }
 .config-options .checkbox { padding-bottom: 0; }
-.node-inline .table-style-label:has(select) { margin-left: 0; }
+.switch-editor, .switch-presets, .node-switch { display: grid; gap: 8px; }
+.switch-editor { margin-top: 12px; }
+.switch-presets { border: 1px solid var(--divider); border-radius: 6px; padding: 8px; }
+.switch-presets legend { padding-inline: 4px; font-weight: 650; }
+.switch-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.switch-options .field { margin: 0; }
+.node-switch { place-content: center; justify-items: center; padding: 8px; color: var(--muted); font-size: 11px; }
 .node-state { display: inline-flex; align-items: center; gap: 5px; }
 .node-state i { display: inline-block; width: 6px; height: 6px; flex: 0 0 6px; border-radius: 100%; background: var(--subtle); }
 .node-state.ready i { background: var(--success); }
@@ -333,7 +345,7 @@ code { font-family: var(--mono); }
 .control-label, .field { font-size: 11px; font-weight: 650; color: var(--muted); }
 .field { display: block; }
 .field + .field { margin-top: 9px; }
-.field input, .field select, .field textarea, .inline-select, .table-style-label select { display: block; width: 100%; margin-top: 4px; border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 6px; min-height: 33px; padding: 6px 8px; font-size: 12px; font-weight: 490; }
+.field input, .field select, .field textarea, .inline-select { display: block; width: 100%; margin-top: 4px; border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 6px; min-height: 33px; padding: 6px 8px; font-size: 12px; font-weight: 490; }
 .field textarea { resize: vertical; }
 .inline-select { margin-top: 7px; color: var(--muted); }
 .query-preview { max-height: 180px; overflow: auto; padding: 9px; background: var(--raised); color: var(--code); border: 1px solid var(--divider); border-radius: 6px; font: 11px/1.75 var(--mono); tab-size: 2; }
@@ -384,7 +396,9 @@ code { font-family: var(--mono); }
 .result-grid .footer-row > .title-column, .editor-grid .footer-row > .title-column { background: var(--accent-soft); }
 .editor-grid[data-table-style="banded"] tr:nth-child(even) > td.title-column { background: var(--accent-soft); }
 .editor-grid[data-table-style="banded"] tr.footer-row:nth-child(even) > td:not(.title-column) { background: var(--raised); }
-.table-style-label input { width: 45px; border: 1px solid var(--border); border-radius: 5px; padding: 3px; background: var(--surface); }
+.table-options-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+.table-options-fields .field { margin: 0; white-space: nowrap; }
+.table-option-style { margin-top: 8px; }
 
 dialog { width: min(calc(100vw - 34px), 510px); max-height: min(calc(100dvh - 38px), 790px); padding: 0; margin: auto; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 13px; box-shadow: 0 20px 70px #18233750; overflow: auto; }
 dialog.wide { width: min(calc(100vw - 34px), 920px); }
@@ -432,9 +446,6 @@ dialog::backdrop { background: #151f386d; backdrop-filter: blur(2px); }
 .table-dialog-inspector { max-height: min(55dvh, 440px); overflow: auto; border: 1px solid var(--divider); border-radius: 6px; }
 .table-dialog-inspector > .helper-text { padding: 10px 14px; }
 .table-dialog-inspector .cell-inspector { border: 0; }
-.table-style-label { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; }
-.table-style-label:has(select) { margin-left: auto; }
-.table-style-label select { width: auto; margin: 0; min-height: 32px; }
 .editor-grid { max-height: min(55dvh, 440px); }
 .editor-grid table { table-layout: fixed; }
 .editor-grid th, .editor-grid td { border-bottom: 1px solid var(--divider); }
@@ -460,7 +471,10 @@ dialog::backdrop { background: #151f386d; backdrop-filter: blur(2px); }
 .editor-grid .row-index { min-width: 35px; width: 35px; text-align: center; padding: 0 4px; color: var(--subtle); font-size: 11px; }
 .cell-editor { position: relative; }
 .cell-editor::before { content: attr(data-value); display: block; visibility: hidden; }
-.cell-editor::before, .editor-grid td textarea { padding: 6px 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cell-editor::before, .editor-grid td textarea, .cell-readonly { padding: 6px 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cell-readonly { position: absolute; inset: 0; overflow: hidden; color: var(--cell-color, var(--text)); text-decoration: var(--cell-decoration, none); }
+.cell-readonly:not(.numeric) { text-align: var(--cell-align, left); }
+.editor-grid .formula-cell .cell-readonly { color: var(--cell-color, var(--accent)); }
 .editor-grid td textarea { position: absolute; inset: 0; display: block; width: 100%; height: 100%; border: 0; background: transparent; color: var(--cell-color, var(--text)); text-decoration: var(--cell-decoration, none); resize: none; overflow: hidden; cursor: default; caret-color: transparent; }
 .editor-grid td textarea.editing-cell { cursor: text; caret-color: auto; }
 .editor-grid td textarea:not(.numeric) { text-align: var(--cell-align, left); }

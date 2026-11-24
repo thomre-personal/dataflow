@@ -18,13 +18,13 @@
     canResize?: (bounds: ResizeParams) => boolean;
     query?: { setPreview: (view: NonNullable<SqlBlock['preview']>) => void; run: () => void };
     config?: { patch: (patch: Partial<ConfigBlock>) => void; confirm: (request: Confirmation) => void };
+    switch?: { ready: boolean; toggle: () => void };
     group?: { count: number; drop: { target: string }; focused: boolean; focusExpanded: boolean; hasInput: boolean; hasOutput: boolean };
     edit?: {
       workspace: Workspace;
       toggleLock: () => void;
-      patch: (patch: Partial<TableBlock>) => void;
+      patch: (patch: Partial<TableBlock>, continueGrowth?: boolean) => void;
       hotkeys: Hotkeys;
-      paste: () => void;
       error: (message: string) => void;
       activeCell?: CellSelection;
       selectCell: (cell: CellSelection, extend?: boolean) => void;
@@ -35,9 +35,9 @@
 <script lang="ts">
   import { Handle, NodeResizer, Position, useConnection } from '@xyflow/svelte';
   import type { Node, NodeProps } from '@xyflow/svelte';
-  import { Braces, ChartColumnIncreasing, CircleAlert, Folder, Lock, LockOpen, Maximize2, Minimize2, Plus, SlidersHorizontal, Table2 } from 'lucide-svelte';
+  import { Braces, ChartColumnIncreasing, CircleAlert, Equal, Folder, Lock, LockOpen, Maximize2, Minimize2, Pause, Plus, SlidersHorizontal, Table2, ToggleLeft } from 'lucide-svelte';
   import { countLabel, chartSeries, tablePreview } from '../lib/format';
-  import { canConnect } from '../lib/workspace';
+  import { canConnect, defaultTableColumnWidth } from '../lib/workspace';
   import { tableCardContentSize } from '../lib/table-layout';
   import MiniChart from './MiniChart.svelte';
   import BlockName from './BlockName.svelte';
@@ -47,10 +47,11 @@
 
   let { data, selected }: NodeProps<Node<CardData>> = $props();
   const connection = useConnection();
-  const icons = { table: Table2, sql: Braces, chart: ChartColumnIncreasing, config: SlidersHorizontal, group: Folder };
-  const labels = { table: 'Table', sql: 'SQL query', chart: 'Chart', config: 'Config', group: 'Group' };
+  const icons = { table: Table2, sql: Braces, chart: ChartColumnIncreasing, config: SlidersHorizontal, switch: ToggleLeft, group: Folder };
+  const labels = { table: 'Table', sql: 'SQL query', chart: 'Chart', config: 'Config', switch: 'Switch', group: 'Group' };
   let block = $derived(data.block);
-  let expanded = $derived(block.kind !== 'sql' && (block.expanded !== false || data.group?.focusExpanded === true));
+  let expanded = $derived(block.kind !== 'sql' && block.kind !== 'switch'
+    && (block.expanded !== false || data.group?.focusExpanded === true));
   let connectionSource = $derived(connection.current.fromHandle?.type === 'source' ? connection.current.fromNode?.id : undefined);
   let acceptsConnection = $derived(block.kind === 'table' && data.edit && connectionSource
     && canConnect(data.edit.workspace, connectionSource, block.id));
@@ -59,8 +60,38 @@
   let codeLines = $derived(block.kind === 'sql' ? block.sql.trim().split('\n').slice(0, 6) : []);
   let showQueryResults = $derived(block.kind === 'sql' && block.preview === 'results');
   let card = $state<HTMLDivElement>();
+  type GrowthAxis = 'row' | 'column';
+  let tableEditor = $state<{ grow: (axis: GrowthAxis, count: number, continueGrowth: boolean) => void; revealRows: () => void }>();
+  let growth: { axis: GrowthAxis; pointer: number; start: number; step: number; added: number } | undefined;
+  let skipGrowthClick = false;
   let movedResize = false;
   const sqlKeyword = /^(?:SELECT|FROM|WHERE|JOIN|AS|GROUP|BY|ORDER|LIMIT|SUM|WITH|AND|DESC|ASC|VALUES)$/i;
+
+  function startGrowth(event: PointerEvent & { currentTarget: HTMLButtonElement }, axis: GrowthAxis) {
+    if (event.button !== 0 || !card) return;
+    const scale = card.getBoundingClientRect().width / card.offsetWidth;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    skipGrowthClick = false;
+    growth = { axis, pointer: event.pointerId, start: axis === 'row' ? event.clientY : event.clientX,
+      step: scale * (axis === 'row' ? 33 : defaultTableColumnWidth), added: 0 };
+  }
+
+  function moveGrowth(event: PointerEvent) {
+    if (growth?.pointer !== event.pointerId) return;
+    const distance = (growth.axis === 'row' ? event.clientY : event.clientX) - growth.start;
+    if (distance <= 4 || growth.step <= 0) return;
+    const count = Math.floor(distance / growth.step) + 1;
+    if (count <= growth.added) return;
+    tableEditor?.grow(growth.axis, count - growth.added, growth.added > 0);
+    growth.added = count;
+    skipGrowthClick = true;
+  }
+
+  function stopGrowth(event: PointerEvent) {
+    if (growth?.pointer !== event.pointerId) return;
+    if (event.type === 'pointerup') moveGrowth(event);
+    growth = undefined;
+  }
 
   $effect(() => {
     if (block.kind !== 'table' || !expanded || !card) return;
@@ -87,6 +118,19 @@
     return () => node?.removeEventListener('dblclick', fitEdge);
   });
 </script>
+
+{#snippet growthHandle(axis: GrowthAxis)}
+  <button type="button" class="table-grow nodrag nopan" class:table-grow-row={axis === 'row'}
+    aria-label={'Add ' + axis} title={'Click or drag to add ' + axis + 's'}
+    onpointerdown={(event) => startGrowth(event, axis)} onpointermove={moveGrowth} onpointerup={stopGrowth} onlostpointercapture={stopGrowth}
+    onclick={(event) => {
+      event.stopPropagation();
+      if (event.detail === 0 || !skipGrowthClick) tableEditor?.grow(axis, 1, false);
+      skipGrowthClick = false;
+    }}>
+    {#if axis === 'row'}<Equal size={15} />{:else}<Pause size={15} />{/if}
+  </button>
+{/snippet}
 
 {#snippet expansionButton()}
   <button class="icon-button small nodrag" aria-expanded={expanded}
@@ -119,9 +163,10 @@
   </div>
 {:else}
   <div bind:this={card} class="graph-card {block.kind}" class:expanded class:selected class:related={Boolean(data.focusSide)} class:accepts-connection={Boolean(acceptsConnection)}>
-    {#if block.kind === 'table' || block.kind === 'sql' || block.kind === 'chart'}
+    {#if block.kind === 'table' || block.kind === 'sql' || block.kind === 'chart' || block.kind === 'switch'}
       <Handle type="target" position={Position.Left} isConnectable={true} aria-label="Input port" />
     {/if}
+    {#if block.kind === 'switch'}<Handle type="source" position={Position.Right} isConnectable={true} aria-label="Output port" />{/if}
     {#if block.kind === 'table' || block.kind === 'sql' || block.kind === 'config'}
       <Handle type="source" position={Position.Right} isConnectable={true} aria-label="Output port" />
       <Handle id="quick-create" class="quick-exit" type="source" position={Position.Right} isConnectable={true}
@@ -140,15 +185,23 @@
           <button type="button" aria-pressed={showQueryResults}
             onclick={(event) => { event.stopPropagation(); data.query?.setPreview('results'); }}>Results</button>
         </div>
-      {:else}{@render expansionButton()}{/if}
+      {:else if block.kind !== 'switch'}{@render expansionButton()}{/if}
     </header>
 
     {#if block.kind === 'table'}
-      {#if expanded && !block.inlineLocked && data.edit}
-        <div class="node-preview node-inline nodrag nopan nowheel" role="group" aria-label={'Edit ' + block.title}>
-          <TableEditor {block} workspace={data.edit.workspace} hotkeys={data.edit.hotkeys} change={data.edit.patch}
-            paste={data.edit.paste} error={data.edit.error} activeCell={data.edit.activeCell} selectCell={data.edit.selectCell} inline />
+      {#if expanded && data.edit}
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex (The locked table must be reachable for keyboard scrolling.) -->
+        <div class="node-preview node-inline nodrag nopan nowheel" role={block.inlineLocked ? 'region' : 'group'}
+          aria-label={block.inlineLocked ? 'Full table data' : 'Edit ' + block.title} data-table-style={block.style} tabindex={block.inlineLocked ? 0 : undefined}
+          onscroll={(event) => {
+            const element = event.currentTarget;
+            if (element.scrollTop + element.clientHeight >= element.scrollHeight - 1) tableEditor?.revealRows();
+          }}>
+          <TableEditor bind:this={tableEditor} {block} workspace={data.edit.workspace} hotkeys={data.edit.hotkeys} change={data.edit.patch}
+            error={data.edit.error} activeCell={block.inlineLocked ? undefined : data.edit.activeCell}
+            selectCell={data.edit.selectCell} locked={block.inlineLocked ?? false} inline />
         </div>
+        {#if selected && !block.inlineLocked}{@render growthHandle('row')}{@render growthHandle('column')}{/if}
       {:else}
         <div class="node-preview node-table">
           {#if expanded}
@@ -163,7 +216,8 @@
         <div class="node-actions">
           {#if expanded && data.edit}
             <button class="nodrag" title={block.inlineLocked ? 'Unlock inline editing' : 'Lock inline editing'}
-              aria-label={block.inlineLocked ? 'Unlock inline editing' : 'Lock inline editing'} onclick={data.edit.toggleLock}>
+              aria-label={block.inlineLocked ? 'Unlock inline editing' : 'Lock inline editing'}
+              onclick={(event) => { event.stopPropagation(); data.edit?.toggleLock(); }}>
               {#if block.inlineLocked}<LockOpen size={12} /> Unlock{:else}<Lock size={12} /> Lock{/if}
             </button>
           {/if}
@@ -207,9 +261,20 @@
           <p class="helper-text">{countLabel(block.presets.length, 'preset')}</p>
         {/if}
       </div>
-      <footer class="node-footer"><span>{countLabel(block.fields.length, 'field')}</span>
+      <footer class="node-footer"><span>{countLabel(block.fields.length, 'field')}{#if block.global} <span class="separator">·</span> Global{/if}</span>
         <button class="nodrag" onclick={(event) => { event.stopPropagation(); data.open(); }}>Open config</button>
       </footer>
+    {:else if block.kind === 'switch'}
+      {@const target = block.options[block.active === 0 ? 1 : 0].label}
+      <div class="node-preview node-switch">
+        <button class="button primary nodrag" disabled={!data.switch?.ready} onclick={(event) => {
+          event.stopPropagation();
+          data.switch?.toggle();
+        }}>{block.active === undefined ? 'Apply ' : 'Switch to '}{target}</button>
+        {#if block.active !== undefined}<span>Last applied {block.options[block.active].label}</span>
+        {:else if !data.switch?.ready}<span>Choose presets for both options.</span>{/if}
+      </div>
+      <footer class="node-footer"><button class="nodrag" onclick={(event) => { event.stopPropagation(); data.open(); }}>Configure switch</button></footer>
     {:else}
       <div class="node-preview node-chart">{#if series}
         <MiniChart {series} type={block.chart} dark={data.dark} compact={!expanded} />

@@ -4,7 +4,7 @@
   import {
     ArrowDownLeft, ArrowUpRight, Braces, ChartColumnIncreasing, Check,
     ChevronDown, CircleAlert, ClipboardPlus, CloudOff, Download, FileText, Focus, Folder, FolderOpen, Layers3, Link2, Maximize,
-    PanelRightClose, PanelRightOpen, Pencil, Play, Plus, Redo2, RefreshCw, Search, Settings as SettingsIcon, SlidersHorizontal, Table2, Trash2, Undo2, Unplug,
+    PanelRightClose, PanelRightOpen, Pencil, Play, Plus, Redo2, RefreshCw, Search, Settings as SettingsIcon, SlidersHorizontal, Table2, ToggleLeft, Trash2, Undo2, Unplug,
     Workflow, X,
   } from 'lucide-svelte';
   import { onMount, tick, untrack } from 'svelte';
@@ -17,13 +17,16 @@
   import ConfirmDialog from './components/ConfirmDialog.svelte';
   import type { Confirmation } from './components/ConfirmDialog.svelte';
   import ConfigEditor from './components/ConfigEditor.svelte';
+  import TableOptions from './components/TableOptions.svelte';
+  import SwitchEditor from './components/SwitchEditor.svelte';
   import TableEditor from './components/TableEditor.svelte';
   import CellInspector from './components/CellInspector.svelte';
   import ResultGrid from './components/ResultGrid.svelte';
   import MiniChart from './components/MiniChart.svelte';
   import Settings from './components/Settings.svelte';
-  import { absolutePosition, addLink, canConnect, canGroup, columnLetter, createBlock, createWorkspace, dataRowCount, kinds, newId, related, rowNumber, sqlAlias, starterWorkspace, tableInputs } from './lib/workspace';
-  import type { Block, BlockKind, ChartBlock, GroupBlock, Library, Link, NumberFormat, Position, Result, SqlBlock, TableBlock, Workspace } from './lib/workspace';
+  import { absolutePosition, addLink, canConnect, canGroup, columnLetter, createBlock, createWorkspace, dataRowCount, implicitConfigInputs, kinds, newId, related, rowNumber, sqlAlias, starterWorkspace, switchConfigs, tableInputs } from './lib/workspace';
+  import type { Block, BlockKind, ChartBlock, ConfigBlock, GroupBlock, Library, Link, NumberFormat, Position, Result, SqlBlock, SwitchBlock, TableBlock, Workspace } from './lib/workspace';
+  import { evaluateConfigField, loadConfigPreset } from './lib/config';
   import { importGrid, parseDelimited } from './lib/clipboard';
   import { bindTableFormulas, bindWorkspaceFormulas, cellFormulaText, isFormulaEntry } from './lib/formulas';
   import { cellSelectionBounds, updateCellStyles } from './lib/cell-style';
@@ -40,8 +43,8 @@
   import { defaultHotkeys, defaultPreferences, eventHotkey, hotkeyLabel, isMac, loadPreferences } from './lib/preferences';
   import type { Preferences } from './lib/preferences';
 
-  const icons = { table: Table2, sql: Braces, chart: ChartColumnIncreasing, config: SlidersHorizontal, group: Folder };
-  const blockKinds: BlockKind[] = ['table', 'sql', 'chart', 'config', 'group'];
+  const icons = { table: Table2, sql: Braces, chart: ChartColumnIncreasing, config: SlidersHorizontal, switch: ToggleLeft, group: Folder };
+  const blockKinds: BlockKind[] = ['table', 'sql', 'chart', 'config', 'switch', 'group'];
   const blockDragType = 'application/x-dataflow-block';
   const groupInset = { x: 24, y: 55 };
   const addLabel = (kind: BlockKind) => 'Add ' + (kind === 'sql' ? 'SQL query' : kinds[kind].label.toLowerCase());
@@ -105,8 +108,11 @@
   let connectionDrag: { port?: Connection } | undefined;
   let workspaceMenu = $state(false);
   let activeTab = $state<'sql' | 'data'>('sql');
-  let modal = $state<'paste' | 'table' | 'sql' | 'chart' | 'config' | 'workspace' | 'workspace-file' | 'settings' | 'quick-create' | 'configure' | null>(null);
+  let modal = $state<'paste' | 'table' | 'sql' | 'chart' | 'config' | 'switch' | 'workspace' | 'workspace-file' | 'settings' | 'quick-create' | 'configure' | null>(null);
   let confirmation = $state.raw<Confirmation>();
+  let pendingConfig = $state<{ block: ConfigBlock; fit: boolean }>();
+  let canCreateConfig = $derived(Boolean(pendingConfig?.block.title.trim()
+    && pendingConfig.block.fields.every((field) => !evaluateConfigField(field).message)));
   let quickSource = $state('');
   let quickPosition = $state<Position>({ x: 0, y: 0 });
   let quickPointer = $state<Position>({ x: 0, y: 0 });
@@ -120,8 +126,6 @@
   let pasteText = $state('');
   let pasteHeader = $state(true);
   let pasteNumberFormat = $state<NumberFormat>('auto');
-  let pasteTarget = $state('');
-  let pasteFromTableDialog = $state(false);
   let pasteError = $state('');
   let blockSearch = $state<BlockSearch>();
   let queryViewRevision = 0;
@@ -173,8 +177,16 @@
 
   function saveWorkspace(next: Workspace) {
     const previous = workspace;
+    const beforeGlobals = previous.blocks.filter((block) => block.kind === 'config' && block.global);
+    const afterGlobals = next.blocks.filter((block) => block.kind === 'config' && block.global);
+    const globalsChanged = beforeGlobals.length !== afterGlobals.length || afterGlobals.some((block, index) => {
+      const before = beforeGlobals[index];
+      return before.kind !== 'config' || block.kind !== 'config' || block.id !== before.id
+        || block.title !== before.title || block.fields !== before.fields;
+    });
+    if (globalsChanged) next = bindWorkspaceFormulas(next);
     library = { ...library, workspaces: library.workspaces.map((item) => item.id === next.id ? next : item) };
-    invalidateComputed(previous, next);
+    invalidateComputed(previous, next, globalsChanged);
     persist();
     scheduleFileSave(next.id);
   }
@@ -394,7 +406,7 @@
     return stamp;
   }
 
-  function invalidateComputed(previous: Workspace, next: Workspace) {
+  function invalidateComputed(previous: Workspace, next: Workspace, globalsChanged: boolean) {
     const previousLinks = new Set(previous.links.map(({ id }) => id));
     const nextLinks = new Set(next.links.map(({ id }) => id));
     const changedInputs = new Set([
@@ -402,6 +414,11 @@
       ...next.links.filter(({ id }) => !previousLinks.has(id)).map(({ target }) => target),
     ]);
     const changed = new Set(changedInputs);
+    if (globalsChanged) {
+      for (const block of next.blocks) {
+        if (block.kind === 'sql' || block.kind === 'chart') changed.add(block.id);
+      }
+    }
     const nextBlocks = new Map(next.blocks.map((block) => [block.id, block]));
     workspaceResults[next.id] ??= {};
     const results = workspaceResults[next.id];
@@ -433,9 +450,11 @@
     }
   }
 
-  function patchBlock(id: string, patch: Partial<Block>) {
+  function patchBlock(id: string, patch: Partial<Block>, continueGrowth = false) {
     if (!workspace.blocks.some((block) => block.id === id)) return;
-    replaceWorkspace({ ...workspace, blocks: workspace.blocks.map((block) => block.id === id ? { ...block, ...patch } as Block : block) });
+    const next = { ...workspace, blocks: workspace.blocks.map((block) => block.id === id ? { ...block, ...patch } as Block : block) };
+    if (continueGrowth) saveWorkspace(next);
+    else replaceWorkspace(next);
   }
 
   function renameBlock(id: string, value: string) {
@@ -616,7 +635,7 @@
     return members;
   }
 
-  function toggleExpanded(block: Exclude<Block, SqlBlock>) {
+  function toggleExpanded(block: Exclude<Block, SqlBlock | SwitchBlock>) {
     const expanded = block.expanded === false;
     patchBlock(block.id, { expanded });
     if (block.kind === 'group' && !expanded && visibleBlockId(selectedId) === block.id) select(block.id);
@@ -679,7 +698,7 @@
       .sort((a, b) => depth(a) - depth(b)).map((block) => {
       const result = block.kind === 'chart' ? chartInput(block) : runtime[block.id] ?? {};
       const size = nodeSize(block, members);
-      const expandable = block.kind !== 'sql';
+      const expandable = block.kind !== 'sql' && block.kind !== 'switch';
       const parentId = !center || (block.id !== center.id && members.has(block.id)) ? block.parentId : undefined;
       return {
         id: block.id, type: 'block', position: focusPositions.get(block.id) ?? { ...block.position }, parentId,
@@ -701,6 +720,10 @@
             patch: (patch: Partial<typeof block>) => patchBlock(block.id, patch),
             confirm: (request: Confirmation) => confirmation = request,
           } : undefined,
+          switch: block.kind === 'switch' ? {
+            ready: switchReady(block),
+            toggle: () => toggleSwitch(block.id),
+          } : undefined,
           query: block.kind === 'sql' ? {
             setPreview: (preview: NonNullable<SqlBlock['preview']>) => {
               if (preview !== (block.preview ?? 'query')) patchBlock(block.id, { preview });
@@ -718,10 +741,9 @@
           edit: block.kind === 'table' ? {
             workspace,
             toggleLock: () => patchBlock(block.id, { inlineLocked: !block.inlineLocked }),
-            patch: (patch: Partial<Block>) => patchBlock(block.id, patch),
+            patch: (patch: Partial<TableBlock>, continueGrowth?: boolean) => patchBlock(block.id, patch, continueGrowth),
             hotkeys: preferences.hotkeys,
             error: message,
-            paste: () => { select(block.id); openPaste(block.id); },
             activeCell: activeCell?.tableId === block.id ? activeCell : undefined,
             selectCell: (cell: CellSelection, extend?: boolean) => select(block.id, cell, extend),
           } : undefined,
@@ -803,6 +825,7 @@
     if (block?.kind === 'table') modal = 'table';
     if (block?.kind === 'chart') modal = 'chart';
     if (block?.kind === 'config') modal = 'config';
+    if (block?.kind === 'switch') modal = 'switch';
     if (block?.kind === 'sql') {
       sqlDraft = block.sql;
       sqlDraftLinks = workspace.links;
@@ -884,15 +907,60 @@
   function add(kind: BlockKind, dropPosition?: Position) {
     if (!ready) return;
     const group = dropPosition ? groupAtPoint(dropPosition) : undefined;
-    focused = '';
     const block = createBlock(kind, { x: 0, y: 0 });
     block.position = dropPosition ? (group ? groupPosition(dropPosition, group) : dropPosition) : nextBlockPosition(block);
     block.parentId = group?.id;
+    if (block.kind === 'config') {
+      pendingConfig = { block, fit: !dropPosition };
+      modal = 'config';
+      return;
+    }
+    focused = '';
     if (dropPosition && block.kind === 'table') block.expandedSize = { width: 440, height: 300 };
     replaceWorkspace({ ...workspace, blocks: [...workspace.blocks, block] });
     select(block.id);
-    if (kind === 'sql' || kind === 'chart' || kind === 'config' || (kind === 'table' && !dropPosition)) openBlock(block.id);
+    if (kind === 'sql' || kind === 'chart' || kind === 'switch' || (kind === 'table' && !dropPosition)) openBlock(block.id);
     if (!dropPosition) void fitCanvas();
+  }
+
+  function patchConfig(block: ConfigBlock, patch: Partial<ConfigBlock>) {
+    if (pendingConfig) pendingConfig.block = { ...pendingConfig.block, ...patch };
+    else patchBlock(block.id, patch);
+  }
+
+  function createConfig() {
+    if (!pendingConfig || !canCreateConfig) return;
+    const { block, fit } = pendingConfig;
+    const created = { ...block, title: block.title.trim() };
+    focused = '';
+    replaceWorkspace({ ...workspace, blocks: [...workspace.blocks, created] });
+    select(created.id);
+    closeModal();
+    if (fit) void fitCanvas();
+  }
+
+  function switchReady(block: SwitchBlock) {
+    const configs = switchConfigs(workspace, block.id);
+    return block.options.every(({ presets }) => presets.length > 0 && presets.every(({ configId, presetId }) =>
+      configs.some((config) => config.id === configId && config.presets.some((preset) => preset.id === presetId))));
+  }
+
+  function toggleSwitch(id: string) {
+    const block = blocksById.get(id);
+    if (block?.kind !== 'switch' || !switchReady(block)) return;
+    const active = block.active === 0 ? 1 : 0;
+    const available = switchConfigs(workspace, id);
+    const updates = new Map<string, ConfigBlock>();
+    for (const { configId, presetId } of block.options[active].presets) {
+      const config = available.find((item) => item.id === configId);
+      const preset = config?.presets.find((item) => item.id === presetId);
+      if (!config || !preset) return;
+      const result = loadConfigPreset(config, preset);
+      if (result.message !== undefined) { message('Could not switch presets. ' + result.message); return; }
+      updates.set(configId, { ...config, fields: result.fields });
+    }
+    replaceWorkspace({ ...workspace, blocks: workspace.blocks.map((item) =>
+      item.id === id ? { ...block, active } : updates.get(item.id) ?? item) });
   }
 
   function startBlockDrag(event: DragEvent, kind: BlockKind) {
@@ -945,7 +1013,7 @@
       const bound = bindTableFormulas(targetBlock, tableInputs(next, target));
       if (bound !== targetBlock) next.blocks = next.blocks.map((block) => block.id === target ? bound : block);
     }
-    replaceWorkspace(next);
+    replaceWorkspace(targetBlock?.kind === 'switch' ? bindWorkspaceFormulas(next) : next);
   }
 
   function onConnect(connection: Connection) {
@@ -1087,56 +1155,24 @@
     switchWorkspace(created.id);
   }
 
-  function openPaste(id = '') {
-    pasteFromTableDialog = modal === 'table';
+  function openPaste() {
     pasteText = '';
     pasteError = '';
     pasteHeader = true;
-    const target = workspace.blocks.find((block) => block.id === id);
-    pasteNumberFormat = target?.kind === 'table' ? target.numberFormat : 'auto';
-    pasteTarget = id;
+    pasteNumberFormat = 'auto';
     modal = 'paste';
   }
 
-  function importPaste(confirmed = false) {
+  function importPaste() {
     try {
-      const target = workspace.blocks.find((item) => item.id === pasteTarget);
-      const hasValues = target?.kind === 'table' && target.rows.some((row) => row.cells.some((cell) => cell.trim()));
-      const defaultColumns = target?.kind === 'table' && target.columns.length <= 2
-        && target.columns.every((column, index) => column.name === columnLetter(index) && column.type === 'auto');
-      const legacyDefaultColumn = target?.kind === 'table' && target.columns.length === 1
-        && target.columns[0].name === 'Column 1' && target.columns[0].type === 'text';
-      const existing = target?.kind === 'table' && (hasValues || (!defaultColumns && !legacyDefaultColumn)) ? target.columns : undefined;
-      const data = bindTableFormulas(importGrid(parseDelimited(pasteText), pasteHeader, pasteNumberFormat, existing), tableInputs(workspace, pasteTarget));
-      if (target?.kind === 'table') {
-        if (hasValues && !confirmed) {
-          confirmation = { title: 'Replace table data?', message: 'Replace the existing data in “' + target.title + '”?',
-            label: 'Replace data', accept: () => importPaste(true) };
-          return;
-        }
-        patchBlock(target.id, {
-          ...data, numberFormat: pasteNumberFormat,
-          titleColumns: Math.min(target.titleColumns ?? 0, data.columns.length),
-          footerRows: Math.min(target.footerRows ?? 0, data.rows.length),
-          columnWidths: target.columnWidths && Object.fromEntries(data.columns.flatMap(({ id }) => {
-            const width = target.columnWidths?.[id];
-            return width === undefined ? [] : [[id, width]];
-          })),
-          rowHeights: undefined,
-          cellStyles: undefined,
-        });
-        modal = pasteFromTableDialog ? 'table' : null;
-      } else {
-        const block = {
-          ...createBlock('table', { x: 0, y: 0 }),
-          ...data, title: 'Pasted data', numberFormat: pasteNumberFormat,
-        };
-        block.position = nextBlockPosition(block);
-        replaceWorkspace({ ...workspace, blocks: [...workspace.blocks, block] });
-        select(block.id);
-        modal = 'table';
-        void fitCanvas();
-      }
+      const initial = createBlock('table', { x: 0, y: 0 });
+      const data = bindTableFormulas(importGrid(parseDelimited(pasteText), pasteHeader, pasteNumberFormat), tableInputs(workspace, initial.id));
+      const block = { ...initial, ...data, title: 'Pasted data', numberFormat: pasteNumberFormat };
+      block.position = nextBlockPosition(block);
+      replaceWorkspace({ ...workspace, blocks: [...workspace.blocks, block] });
+      select(block.id);
+      modal = 'table';
+      void fitCanvas();
       message(countLabel(data.rows.length, 'row') + ' pasted');
     } catch (error) {
       pasteError = error instanceof Error ? error.message : String(error);
@@ -1148,8 +1184,9 @@
       sqlDraft = '';
       sqlDraftLinks = [];
     }
-    modal = modal === 'paste' && pasteFromTableDialog ? 'table' : null;
+    modal = null;
     draftBlock = undefined;
+    pendingConfig = undefined;
   }
   function keyboard(event: KeyboardEvent) {
     if (confirmation) return;
@@ -1429,6 +1466,7 @@
             </div>
           {:else if block.kind === 'table'}
             {@const issue = tableProblem(block)}
+            <TableOptions {block} change={(patch) => patchBlock(block.id, patch)} />
             {#if selectedTableCell && block.expanded !== false && !block.inlineLocked}
               {@render inspectCell()}
             {/if}
@@ -1452,6 +1490,10 @@
               <div class="result-summary">{countLabel(block.fields.length, 'field')} · {countLabel(block.presets.length, 'preset')}</div>
               <button class="button secondary full-width" onclick={() => openBlock(block.id)}><SlidersHorizontal size={15} /> Open config</button>
             </div>
+          {:else if block.kind === 'switch'}
+            <div class="inspector-body">
+              <button class="button secondary full-width" onclick={() => openBlock(block.id)}><ToggleLeft size={15} /> Configure switch</button>
+            </div>
           {:else}
             <div class="inspector-body"><p class="helper-text">{countLabel(workspace.blocks.filter((item) => item.parentId === block.id).length, 'block')} in this group</p></div>
           {/if}
@@ -1462,8 +1504,8 @@
               {#each inputLinks as link (link.id)}
                 {@const input = workspace.blocks.find((item) => item.id === link.source)}
                 <div class="connection-row"><button class="connection-link" onclick={() => focusBlock(link.source)}><Link2 size={14} /><span>{input?.title ?? 'Source'}</span></button><button class="icon-button small" aria-label={'Disconnect ' + (input?.title ?? 'source')} onclick={() => disconnect(link.id)}><Unplug size={13} /></button></div>
-                {#if block.kind === 'sql'}<code class="connection-alias">{link.alias}</code>
-                {:else if block.kind === 'table'}<code class="connection-alias">{link.alias}{input?.kind === 'config' ? '.Field' : '::…'}</code>{/if}
+                {#if block.kind === 'sql' && input?.kind !== 'switch'}<code class="connection-alias">{link.alias}</code>
+                {:else if block.kind === 'table' && input?.kind !== 'switch'}<code class="connection-alias">{link.alias}{input?.kind === 'config' ? '.Field' : '::…'}</code>{/if}
               {/each}
               {#if candidates.length}<select aria-label="Connect input" class="inline-select" value="" onchange={(event) => { const id = event.currentTarget.value; if (id) connect(id, block.id); event.currentTarget.value = ''; }}><option value="">Connect input…</option>{#each candidates as item}<option value={item.id}>{item.title}</option>{/each}</select>
               {:else if inputLinks.length === 0 && block.kind !== 'config'}<p class="helper-text">{block.kind === 'table' ? 'Connect a table or config to reference its values.' : 'Add a data source to connect it.'}</p>{/if}
@@ -1545,7 +1587,11 @@
         </select>
       {/if}
       {#each sqlDraftLinks.filter((link) => link.target === selectedId) as link (link.id)}
-        <code class="connection-alias" title={workspace.blocks.find((block) => block.id === link.source)?.title}>{link.alias}</code>
+        {@const source = blocksById.get(link.source)}
+        {#if source?.kind !== 'switch'}<code class="connection-alias" title={source?.title}>{link.alias}</code>{/if}
+      {/each}
+      {#each implicitConfigInputs(sqlEditorWorkspace, selectedId) as input (input.config.id)}
+        <code class="connection-alias" title={input.config.title}>{input.alias} · {input.via ?? 'Global'}</code>
       {/each}
     </div>
     {@render sqlCode(sqlDraft, (text) => sqlDraft = text, true)}
@@ -1592,7 +1638,7 @@
   {#snippet content()}
     <label class="field">Cell range<textarea class="paste-editor" placeholder={'Date\tCategory\tAmount\n2026-01-01\tGroceries\t24.50'} bind:value={pasteText} spellcheck="false"
       onkeydown={(event) => {
-        if (!pasteTarget && event.key === 'Enter' && !event.shiftKey && !event.isComposing && pasteText.trim()) {
+        if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && pasteText.trim()) {
           event.preventDefault();
           importPaste();
         }
@@ -1601,7 +1647,7 @@
     <label class="field">Number format<select bind:value={pasteNumberFormat}><option value="auto">Detect automatically</option><option value="decimal-comma">1.234,56</option><option value="decimal-point">1,234.56</option></select></label></div>
     {#if pasteError}<p class="inline-error" role="alert"><CircleAlert size={15} />{pasteError}</p>{/if}
   {/snippet}
-  {#snippet footer()}<button class="button secondary" onclick={closeModal}>Cancel</button><button class="button primary" onclick={() => importPaste()} disabled={!pasteText.trim()}><ClipboardPlus size={15} /> {pasteTarget ? 'Replace table data' : 'Create table'}</button>{/snippet}
+  {#snippet footer()}<button class="button secondary" onclick={closeModal}>Cancel</button><button class="button primary" onclick={importPaste} disabled={!pasteText.trim()}><ClipboardPlus size={15} /> Create table</button>{/snippet}
   <Modal title="Paste data" subtitle="Copy a cell range in Numbers or Excel and paste it below." close={closeModal} children={content} {footer} />
 {:else if modal === 'table' && selected?.kind === 'table'}
   {@const table = selected}
@@ -1609,9 +1655,10 @@
     <div class="table-dialog-layout">
       <div class="table-dialog-editor">
         <TableEditor block={table} {workspace} hotkeys={preferences.hotkeys} change={(patch) => patchBlock(table.id, patch)}
-          paste={() => openPaste(table.id)} error={message} activeCell={activeCell} selectCell={(cell, extend) => select(table.id, cell, extend)} />
+          error={message} activeCell={activeCell} selectCell={(cell, extend) => select(table.id, cell, extend)} />
       </div>
-      <aside class="table-dialog-inspector" aria-label="Cell inspector">
+      <aside class="table-dialog-inspector" aria-label="Table inspector">
+        <TableOptions block={table} change={(patch) => patchBlock(table.id, patch)} />
         {#if selectedTableCell}
           {@render inspectCell()}
         {:else}
@@ -1622,15 +1669,37 @@
   {/snippet}
   {#snippet footer()}<button class="button primary" onclick={closeModal}>Done</button>{/snippet}
   <Modal title={table.title} subtitle="Table" wide close={closeModal} children={content} {footer} />
-{:else if modal === 'config' && selected?.kind === 'config'}
+{:else if modal === 'config'}
+  {@const block = pendingConfig?.block ?? (selected?.kind === 'config' ? selected : undefined)}
+  {#if block}
+    {#snippet content()}
+      <label class="field">Name<input maxlength="100" value={block.title}
+        oninput={(event) => { if (pendingConfig) patchConfig(block, { title: event.currentTarget.value }); }}
+        onchange={(event) => { if (!pendingConfig) event.currentTarget.value = renameBlock(block.id, event.currentTarget.value); }} /></label>
+      <label class="checkbox config-global"><input type="checkbox" checked={block.global ?? false}
+        onchange={(event) => patchConfig(block, { global: event.currentTarget.checked })} />Global config</label>
+      <ConfigEditor {block} change={(patch) => patchConfig(block, patch)} confirm={(request) => confirmation = request} manage />
+    {/snippet}
+    {#snippet footer()}
+      {#if pendingConfig}
+        <button class="button secondary" onclick={closeModal}>Cancel</button>
+        <button class="button primary" onclick={createConfig} disabled={!canCreateConfig}>Create config</button>
+      {:else}
+        <button class="button primary" onclick={closeModal}>Done</button>
+      {/if}
+    {/snippet}
+    <Modal title={pendingConfig ? 'Create config' : block.title} subtitle={pendingConfig ? undefined : 'Config'} close={closeModal} children={content} {footer} />
+  {/if}
+{:else if modal === 'switch' && selected?.kind === 'switch'}
   {@const block = selected}
   {#snippet content()}
     <label class="field">Name<input maxlength="100" value={block.title}
       onchange={(event) => event.currentTarget.value = renameBlock(block.id, event.currentTarget.value)} /></label>
-    <ConfigEditor {block} change={(patch) => patchBlock(block.id, patch)} confirm={(request) => confirmation = request} manage />
+    <SwitchEditor {block} configs={switchConfigs(workspace, block.id)} candidates={candidates.filter((item): item is ConfigBlock => item.kind === 'config' && !item.global)}
+      connect={(id) => connect(id, block.id)} change={(patch) => patchBlock(block.id, patch)} />
   {/snippet}
   {#snippet footer()}<button class="button primary" onclick={closeModal}>Done</button>{/snippet}
-  <Modal title={block.title} subtitle="Config" close={closeModal} children={content} {footer} />
+  <Modal title="Configure switch" subtitle={block.title} close={closeModal} children={content} {footer} />
 {:else if modal === 'chart' && selected?.kind === 'chart'}
   {@const chart = selected}
   {#snippet content()}

@@ -41,13 +41,21 @@ SQL queries and charts refresh automatically when input data changes. Turn off *
 
 ### Config blocks
 
-Add a **Config** block for values you want to reuse. Give the block a name and add fields with sliders, multiple-choice checkboxes, toggles, or text inputs. Change the current values directly on the canvas. Open the config to save the current values under a preset name, load a saved preset, or delete one.
+Add a **Config** block for values you want to reuse. Give it a name and add fields with sliders, multiple-choice checkboxes, toggles, or text inputs. In **Data type**, choose Auto, Text, Number, Date, or Boolean for input and multiple-choice fields. Sliders use Number and toggles use Boolean. Invalid values are marked on the field. Once the config is created, change its values and save, load, or delete presets in the canvas block.
 
-Connect the config to a table from its output port or through **Connect input**. A formula such as `=A1*MeineConfig.SoliFactor` reads the current field value. Use brackets around names with spaces, as in `=[Tax settings].[Soli factor]`.
+Connect a config to a table from its output port or through **Connect input**. Enable **Global config** to use it across the workspace without a connection. A formula such as `=A1*MeineConfig.SoliFactor` reads the current field value. Use brackets around names with spaces, as in `=[Tax settings].[Soli factor]`.
 
-In SQL, connect the config and use its input alias as a one-row table. For example, `SELECT SoliFactor FROM meineconfig` reads the current factor. Sliders and numeric input values are numbers, toggles are Boolean, and multiple-choice selections are JSON arrays stored as text. Changing a value or loading a preset updates dependent formulas and follows the automatic refresh setting for SQL.
+In SQL, use the config's input alias as a one-row table. The SQL editor lists aliases for connected and global configs. For example, `SELECT SoliFactor FROM meineconfig` reads the current factor. Multiple-choice selections are JSON arrays stored as text. Changing a value or loading a preset updates dependent formulas and follows the automatic refresh setting for SQL.
+
+### Switch blocks
+
+Add a **Switch** to alternate between two sets of config presets. Name options A and B, then choose the presets for each option. Global configs are available automatically. Connect any local configs the switch should control. If a config has no preset for an option, the switch leaves its values as they are.
+
+Click the button on the switch to apply an option and click again to apply the other. One Undo reverses the entire change. Connect the switch to a table or SQL block to make its local configs available to that block.
 
 ### Table editing
+
+Select a table on the canvas to show its add-row and add-column handles outside the card. Click a handle to add one row or column, or drag it outward to add several and grow the table. Locking a table keeps its layout and disables editing. Paste clipboard data by selecting the starting cell and pressing **Cmd+V**.
 
 Click a cell once to select it. Drag from one cell to another to select the rectangle between them. You can also select a cell and Shift-click the other corner. Click a selected cell again or press **Enter** to edit. Press **Shift+Enter** while editing to insert a line break and **Enter** to confirm. Long text wraps within the width of the cell. This visual wrapping leaves the stored text as entered.
 
@@ -57,13 +65,13 @@ Drag the divider at the right edge of a column header or the bottom edge of a ro
 
 In the table editor, select a cell and press **Option+↑** or **Option+↓** to insert a row above or below. Press **Option+←** or **Option+→** to insert a column to the left or right. Use **Alt** on a non-Mac keyboard.
 
-Set **Title columns** to highlight columns on the left. Set **Footer rows** to keep summary rows at the bottom. Footer cells can contain text or formulas in any column. DataFlow still checks for formula errors. SQL queries and charts include title columns and skip footer rows.
+In **Table options** in the inspector, set **Title columns** to highlight columns on the left and **Footer rows** to keep summary rows at the bottom. Footer cells can contain text or formulas in any column. DataFlow still checks for formula errors. SQL queries and charts include title columns and skip footer rows.
 
-New tables use the **Grid** style by default. Blank tables start with two rows and two columns, **A** and **B**. New columns use the **Auto** type. Auto uses the data rows to infer a column type for SQL and charts. Use **First row** to switch between starting at 1 and starting at 0. In **Column settings**, edit the name, set the data type, or delete the column.
+New tables use the **Grid** style by default. Blank tables start with two rows and two columns, **A** and **B**. New columns use the **Auto** type. Auto uses the data rows to infer a column type for SQL and charts. Use **First row** in the inspector to choose whether row numbering starts at 1 or 0. In **Column settings**, edit the name, set the data type, or delete the column.
 
 Enter `=SUM()` in a footer cell to total its own column. Enter `=SUM(Amount)` in another column to total `Amount`. You can use a column letter such as `=SUM(A)` as well. A matching column name takes precedence over a letter. Sums include data rows and skip footer rows. Click a calculated cell to see its formula. Renaming a column updates formulas that refer to its name.
 
-Type `=` to see formula suggestions. Use the arrow keys and **Return** to choose one. Press **Return** again to confirm the cell once you have finished typing. Start a value with an apostrophe to treat it as text. For example, `'=` displays `=`.
+Type `=` to see formula suggestions. Use the arrow keys and **Return** to choose one. While editing a formula, click another cell in the same table to insert its address at the cursor. Press **Return** to confirm the cell once you have finished typing. Start a value with an apostrophe to treat it as text. For example, `'=` displays `=`.
 
 Select a cell to see its formula and the functions it uses in **Cell options**. Expand a function for its syntax and an example. **Search functions** filters the full catalog below the functions used in the cell. Cell options are also available in the table dialog.
 

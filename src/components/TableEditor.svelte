@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CircleAlert, ClipboardPlus, Plus, Trash2 } from 'lucide-svelte';
+  import { CircleAlert, Plus, Trash2 } from 'lucide-svelte';
   import { tick } from 'svelte';
   import { columnLetter, dataRowCount, defaultTableColumnWidth, newId, rowNumber, tableInputs } from '../lib/workspace';
   import { countLabel } from '../lib/format';
@@ -12,24 +12,23 @@
   import { eventHotkey, hotkeyLabel } from '../lib/preferences';
   import type { Hotkeys } from '../lib/preferences';
   import { tableCardContentSize } from '../lib/table-layout';
-  import type { Column, ColumnType, TableBlock, TableStyle, Workspace } from '../lib/workspace';
+  import type { Column, ColumnType, TableBlock, Workspace } from '../lib/workspace';
   import FormulaSuggestions from './FormulaSuggestions.svelte';
   import Modal from './Modal.svelte';
 
-  let { block, workspace, hotkeys, change, paste, error, activeCell, selectCell, inline = false }: {
+  let { block, workspace, hotkeys, change, error, activeCell, selectCell, inline = false, locked = false }: {
     block: TableBlock;
     workspace: Workspace;
     hotkeys: Hotkeys;
-    change: (patch: Partial<TableBlock>) => void;
-    paste: () => void;
+    change: (patch: Partial<TableBlock>, continueGrowth?: boolean) => void;
     error: (message: string) => void;
     activeCell?: CellSelection;
     selectCell: (cell: CellSelection, extend?: boolean) => void;
     inline?: boolean;
+    locked?: boolean;
   } = $props();
 
   const types: [ColumnType, string][] = [['auto', 'Auto'], ['text', 'Text'], ['decimal', 'Number'], ['date', 'Date'], ['boolean', 'Boolean']];
-  const styles: [TableStyle, string][] = [['plain', 'Plain'], ['banded', 'Banded'], ['emphasis', 'Emphasis'], ['grid', 'Grid']];
   let limit = $state(60);
   let data = $derived(tableData(block, workspace));
   let inputs = $derived(tableInputs(workspace, block.id));
@@ -37,6 +36,7 @@
   let titleColumns = $derived(block.titleColumns ?? 0);
   let footerRows = $derived(block.footerRows ?? 0);
   let editing = $state<{ id: string; input: HTMLTextAreaElement; row: number; column: number }>();
+  $effect(() => { if (locked) editing = undefined; });
   let cellDraft = $state('');
   let hideSuggestions = $state(false);
   let activeSuggestion = $state(0);
@@ -127,17 +127,51 @@
     resizeGrid({ columnWidths: widths }, width);
   }
 
-  function resizeGrid(patch: Partial<TableBlock>, width?: number, rowDelta = 0) {
+  function resizeGrid(patch: Partial<TableBlock>, width?: number, rowDelta = 0, continueGrowth = false, growHeight = 0) {
     const card = inline ? table?.closest<HTMLElement>('.graph-card.table') : undefined;
     const needed = card && tableCardContentSize(card, width, rowDelta);
     if (card && needed) {
       const next = {
         width: width === undefined ? card.offsetWidth : Math.max(card.offsetWidth, needed.width),
-        height: width === undefined ? Math.max(card.offsetHeight, needed.height) : card.offsetHeight,
+        height: width === undefined ? Math.max(card.offsetHeight + growHeight, needed.height) : card.offsetHeight,
       };
       if (next.width !== card.offsetWidth || next.height !== card.offsetHeight) patch.expandedSize = next;
     }
-    change(patch);
+    change(patch, continueGrowth);
+  }
+
+  export function revealRows() {
+    if (block.rows.length > limit) limit += 100;
+  }
+
+  export function grow(axis: 'row' | 'column', count: number, continueGrowth: boolean) {
+    if (locked || count < 1) return;
+    if (axis === 'row') {
+      count = Math.min(count, MAX_ROWS - block.rows.length);
+      if (!count) return;
+      const rows = Array.from({ length: count }, () => ({ id: newId(), cells: block.columns.map(() => '') }));
+      const visible = Math.max(0, Math.min(count, limit - block.rows.length));
+      resizeGrid({ rows: [...block.rows.slice(0, dataRows), ...rows, ...block.rows.slice(dataRows)] },
+        undefined, visible * 33, continueGrowth, count * 33);
+      return;
+    }
+    count = Math.min(count, MAX_COLUMNS - block.columns.length);
+    if (!count) return;
+    const used = new Set(block.columns.map(({ name }) => name.toLowerCase()));
+    const widths = renderedColumnWidths();
+    let index = block.columns.length;
+    const added = Array.from({ length: count }, () => {
+      while (used.has(columnLetter(index).toLowerCase())) index++;
+      const column = { id: newId(), name: columnLetter(index++), type: 'auto' as const };
+      widths[column.id] = defaultTableColumnWidth;
+      return column;
+    });
+    const width = rowIndexWidth + rowActionsWidth + Object.values(widths).reduce((sum, size) => sum + size, 0);
+    resizeGrid({
+      columns: [...block.columns, ...added],
+      columnWidths: widths,
+      rows: block.rows.map((row) => ({ ...row, cells: [...row.cells, ...added.map(() => '')] })),
+    }, width, 0, continueGrowth);
   }
 
   function withoutEntry<T>(entries: Record<string, T> | undefined, id: string) {
@@ -360,8 +394,23 @@
   }
 
   function cellPointer(event: PointerEvent & { currentTarget: HTMLTableCellElement }, address: CellAddress) {
-    if (event.button !== 0 || cellDrag) return;
+    if (locked || event.button !== 0 || cellDrag) return;
     const cell = event.currentTarget;
+    if (editing && isFormulaEntry(cellDraft)
+      && (block.rows[editing.row]?.id !== address.rowId || block.columns[editing.column]?.id !== address.columnId)) {
+      const row = block.rows.findIndex(({ id }) => id === address.rowId);
+      const column = block.columns.findIndex(({ id }) => id === address.columnId);
+      const authoring = editing;
+      const { input } = authoring;
+      const start = Math.max(input.value.indexOf('=') + 1, input.selectionStart);
+      event.preventDefault();
+      input.setRangeText(columnLetter(column) + rowNumber(block, row), start, Math.max(start, input.selectionEnd), 'end');
+      cellDraft = input.value;
+      hideSuggestions = false;
+      activeSuggestion = 0;
+      updateCell(authoring.row, authoring.column, cellDraft);
+      return;
+    }
     if (event.shiftKey && cellAnchor) {
       event.preventDefault();
       document.getElementById(cellId(cellAnchor.rowId, cellAnchor.columnId))?.closest('td')?.focus({ preventScroll: true });
@@ -496,18 +545,12 @@
     });
   }
 
-  function updateCount(event: Event & { currentTarget: HTMLInputElement }, key: 'titleColumns' | 'footerRows', max: number) {
-    const input = event.currentTarget;
-    const count = Math.max(0, Math.min(max, Math.trunc(input.valueAsNumber || 0)));
-    input.value = String(count);
-    if (count !== (block[key] ?? 0)) change({ [key]: count });
-  }
 </script>
 
 {#snippet resizeHandle(id: string, label: string, fit: () => void, column = false)}
   <button type="button" class="table-resize-handle nodrag nopan" class:column-resize={column}
     class:row-resize={!column} class:resizing={resizing?.id === id}
-    aria-label={label} title={label + ' · Double-click to fit'}
+    aria-label={label} title={label + ' · Double-click to fit'} disabled={locked}
     onpointerdown={(event) => startResize(event, id, column)} onpointermove={moveResize}
     onpointerup={(event) => endResize(event, true)} onlostpointercapture={endResize}
     onclick={(event) => { event.stopPropagation(); if (event.detail === 0) fit(); }}
@@ -517,23 +560,8 @@
 
 {#snippet tools()}
 <div class="table-tools">
-  <button class="button secondary" onclick={paste}><ClipboardPlus size={15} /> Paste range</button>
   <button class="button ghost" title={hotkeyLabel(hotkeys.rowAbove) + ' inserts above, ' + hotkeyLabel(hotkeys.rowBelow) + ' inserts below'} onclick={() => insertRow(dataRows)}><Plus size={15} /> Row</button>
   <button class="button ghost" title={hotkeyLabel(hotkeys.columnLeft) + ' inserts left, ' + hotkeyLabel(hotkeys.columnRight) + ' inserts right'} onclick={() => insertColumn(block.columns.length)}><Plus size={15} /> Column</button>
-  <label class="table-style-label">Style
-    <select value={block.style} onchange={(event) => change({ style: event.currentTarget.value as TableStyle })}>
-      {#each styles as [value, name]}<option {value}>{name}</option>{/each}
-    </select>
-  </label>
-  <label class="table-style-label">Title columns<input type="number" min="0" max={block.columns.length} value={titleColumns}
-    onchange={(event) => updateCount(event, 'titleColumns', block.columns.length)} /></label>
-  <label class="table-style-label" title="Footer rows are excluded from SQL and charts">Footer rows<input type="number" min="0" max={block.rows.length} value={footerRows}
-    onchange={(event) => updateCount(event, 'footerRows', block.rows.length)} /></label>
-  <label class="table-style-label">First row
-    <select value={block.rowIndexBase ?? 1} onchange={(event) => change({ rowIndexBase: event.currentTarget.value === '0' ? 0 : 1 })}>
-      <option value={1}>1</option><option value={0}>0</option>
-    </select>
-  </label>
 </div>
 {/snippet}
 <div class="table-editor-content">
@@ -547,7 +575,7 @@
   </div>
 {/if}
 <div class="editor-grid" data-table-style={block.style}>
-  <table bind:this={table} style:min-width={gridWidth + 'px'} style:width={columnWidths ? gridWidth + 'px' : undefined}
+  <table bind:this={table} aria-rowcount={block.rows.length + 1} style:min-width={gridWidth + 'px'} style:width={columnWidths ? gridWidth + 'px' : undefined}
     onpointermove={extendCellDrag} onpointerup={endCellDrag} onlostpointercapture={endCellDrag}>
     <colgroup>
       <col style:width={rowIndexWidth + 'px'} />
@@ -559,10 +587,10 @@
     <thead><tr><th scope="col" class="row-index">#</th>
       {#each block.columns as column, index (column.id)}
         {@const letter = columnLetter(index)}
-        <th scope="col" class:title-column={index < titleColumns}>
+        <th scope="col" aria-label={column.name || letter} class:title-column={index < titleColumns}>
           <button type="button" class="table-header-select column-select nokey" data-table-selection=""
             aria-label={'Select column ' + column.name} aria-pressed={activeCell?.axis === 'column' && activeCell.columnId === column.id}
-            title={'Double-click or press F2 to edit column ' + column.name}
+            title={'Double-click or press F2 to edit column ' + column.name} disabled={locked}
             onclick={(event) => selectHeader(event.currentTarget, { axis: 'column', columnId: column.id })}
             ondblclick={(event) => openColumnSettings(column, event.currentTarget)}
             onkeydown={(event) => columnHeaderKeyboard(event, column)} oncopy={copyCells}>
@@ -582,7 +610,7 @@
       <tr class:footer-row={rowIndex >= dataRows} style:height={height === undefined ? undefined : height + 'px'}>
         <th scope="row" class="row-index">
           <button type="button" class="table-header-select row-select nokey" data-table-selection=""
-            aria-label={'Select row ' + rowNumber(block, rowIndex)} aria-pressed={activeCell?.axis === 'row' && activeCell.rowId === row.id}
+            aria-label={'Select row ' + rowNumber(block, rowIndex)} aria-pressed={activeCell?.axis === 'row' && activeCell.rowId === row.id} disabled={locked}
             onclick={(event) => selectHeader(event.currentTarget, { axis: 'row', rowId: row.id })}
             onkeydown={headerSelectionKeyboard} oncopy={copyCells}>
             {rowNumber(block, rowIndex)}
@@ -599,7 +627,8 @@
           {@const address = { rowId: row.id, columnId: column.id }}
           {@const active = cellAnchor?.rowId === row.id && cellAnchor.columnId === column.id}
           <!-- svelte-ignore a11y_no_noninteractive_tabindex (Cells can be selected with the keyboard before entering edit mode.) -->
-          <td data-table-cell="" class="nokey" tabindex="0" class:invalid-cell={Boolean(issue)} class:title-column={columnIndex < titleColumns}
+          <td data-table-cell="" class="nokey" tabindex={locked ? undefined : 0} role={columnIndex < titleColumns ? 'rowheader' : undefined}
+            class:invalid-cell={Boolean(issue)} class:title-column={columnIndex < titleColumns}
             class:formula-cell={isFormula} class:range-cell={inRange} class:selected-cell={active}
             class:range-top={inRange && rowIndex === range?.top} class:range-bottom={inRange && rowIndex === range?.bottom}
             class:range-left={inRange && columnIndex === range?.left} class:range-right={inRange && columnIndex === range?.right}
@@ -608,7 +637,9 @@
             onkeydown={(event) => selectionKeyboard(event, rowIndex, columnIndex)}
             oncopy={copyCells} onpaste={(event) => pasteCells(event, rowIndex, columnIndex, true)}
             style={cellStyleCss(block.cellStyles?.[row.id]?.[column.id])}>
-            <div class="cell-editor" data-value={value + '\u200b'}><textarea
+            <div class="cell-editor" data-value={value + '\u200b'}>
+            {#if locked}<span class="cell-readonly" class:numeric={data.columns[columnIndex].type === 'decimal'}>{value}</span>
+            {:else}<textarea
             {id}
             data-table-cell=""
             tabindex="-1"
@@ -644,9 +675,9 @@
             }}
             onkeydown={(event) => cellKeyboard(event, rowIndex, columnIndex)}
             onpaste={(event) => pasteCells(event, rowIndex, columnIndex)}
-            ></textarea></div>{#if issue}<span id={id + '-error'} class="cell-validation-message">{issue}</span>{/if}</td>
+            ></textarea>{/if}</div>{#if issue}<span id={id + '-error'} class="cell-validation-message">{issue}</span>{/if}</td>
         {/each}
-        <td class="row-actions"><button class="icon-button small" aria-label={'Delete row ' + rowNumber(block, rowIndex)} onclick={() => change({
+        <td class="row-actions"><button class="icon-button small" aria-label={'Delete row ' + rowNumber(block, rowIndex)} disabled={locked} onclick={() => change({
           rows: block.rows.filter((candidate) => candidate.id !== row.id),
           rowHeights: withoutEntry(block.rowHeights, row.id),
           cellStyles: withoutEntry(block.cellStyles, row.id),
@@ -685,8 +716,10 @@
   <Modal className="column-settings-dialog" title="Column settings" subtitle={'Column ' + columnLetter(settingsColumnIndex)}
     close={closeColumnSettings} children={settingsFields} footer={settingsFooter} />
 {/if}
-{#if inline}{@render tools()}{/if}
-<div class="table-count"><span>{countLabel(block.rows.length, 'row')} · {countLabel(block.columns.length, 'column')}</span>
-  {#if block.rows.length > limit}<button class="text-button" onclick={() => limit += 100}>Show more</button>{/if}
-</div>
+{#if !inline || block.rows.length > limit}
+  <div class="table-count">
+    {#if !inline}<span>{countLabel(block.rows.length, 'row')} · {countLabel(block.columns.length, 'column')}</span>{/if}
+    {#if block.rows.length > limit}<button class="text-button" onclick={revealRows}>Show more</button>{/if}
+  </div>
+{/if}
 </div>

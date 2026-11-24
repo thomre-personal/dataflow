@@ -1,7 +1,6 @@
 import { describeCellIssue, tableData } from './table-data.ts';
 import { cellFontLineHeight } from './cell-style.ts';
-import { parseDecimal } from './clipboard.ts';
-import { configValueText } from './config.ts';
+import { evaluateConfigField } from './config.ts';
 import { dataRowCount, defaultPreviewRowHeight, defaultTableColumnWidth } from './workspace.ts';
 import type { ChartBlock, ConfigBlock, Result, TableBlock, Workspace } from './workspace.ts';
 
@@ -11,10 +10,9 @@ export const countLabel = (value: number, singular: string, plural = singular + 
 export function configResult(block: ConfigBlock): Result {
   if (!block.fields.length) throw new Error('Add at least one field to ' + block.title + '.');
   const fields = block.fields.map((field) => {
-    const value = configValueText(field.value);
-    const number = field.type === 'input' || field.type === 'slider' ? parseDecimal(value) : null;
-    const type: Result['columns'][number]['type'] = field.type === 'toggle' ? 'boolean' : number === null ? 'text' : 'decimal';
-    return { column: { name: field.name, type }, value: number ?? value };
+    const evaluated = evaluateConfigField(field);
+    if (evaluated.message !== undefined) throw new Error(block.title + ', ' + field.name + ': ' + evaluated.message);
+    return { column: { name: field.name, type: evaluated.type }, value: evaluated.value };
   });
   return { columns: fields.map(({ column }) => column), rows: [fields.map(({ value }) => value)] };
 }

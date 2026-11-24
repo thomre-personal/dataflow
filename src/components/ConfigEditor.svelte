@@ -1,8 +1,8 @@
 <script lang="ts">
   import { Plus, Trash2 } from 'lucide-svelte';
-  import { applyConfigValue, configFieldTypes, createConfigField } from '../lib/config';
+  import { applyConfigValue, configDataTypes, configFieldDataType, configFieldTypes, createConfigField, evaluateConfigField, loadConfigPreset } from '../lib/config';
   import { newId } from '../lib/workspace';
-  import type { ConfigBlock, ConfigField, ConfigValue } from '../lib/workspace';
+  import type { ColumnType, ConfigBlock, ConfigField, ConfigValue } from '../lib/workspace';
   import type { Confirmation } from './ConfirmDialog.svelte';
 
   let { block, change, confirm, manage = false }: {
@@ -16,6 +16,8 @@
   let presetId = $state('');
   let error = $state('');
   let preset = $derived(block.presets.find(({ id }) => id === presetId));
+  let issues = $derived(new Map(block.fields.map((field) => [field.id, evaluateConfigField(field).message])));
+  let hasIssues = $derived([...issues.values()].some(Boolean));
   const editorId = $props.id();
 
   function update(field: ConfigField) {
@@ -53,7 +55,7 @@
   function savePreset(event: SubmitEvent) {
     event.preventDefault();
     const name = presetName.trim();
-    if (!name || !block.fields.length) return;
+    if (!name || !block.fields.length || hasIssues) return;
     if (block.presets.some((item) => item.name.toLowerCase() === name.toLowerCase())) {
       error = 'A preset with that name already exists.';
       return;
@@ -68,9 +70,13 @@
 
   function loadPreset() {
     if (!preset) return;
-    const { values } = preset;
+    const result = loadConfigPreset(block, preset);
+    if (result.message !== undefined) {
+      error = 'Could not load the preset. ' + result.message;
+      return;
+    }
     error = '';
-    change({ fields: block.fields.map((field) => applyConfigValue(field, values[field.id])) });
+    change({ fields: result.fields });
   }
 
   function removeField(field: ConfigField) {
@@ -95,7 +101,7 @@
 </script>
 
 <div class="config-editor">
-  {#if block.presets.length || manage}
+  {#if !manage && block.fields.length}
     <section class="config-presets" aria-label="Presets">
       {#if block.presets.length}
         <div class="config-actions">
@@ -104,18 +110,19 @@
             {#each block.presets as item (item.id)}<option value={item.id}>{item.name}</option>{/each}
           </select></label>
           <button type="button" class="button secondary" disabled={!preset} onclick={loadPreset}>Load preset</button>
-          {#if manage}<button type="button" class="icon-button delete-block" aria-label="Delete preset" disabled={!preset} onclick={removePreset}><Trash2 size={14} /></button>{/if}
+          <button type="button" class="icon-button delete-block" aria-label="Delete preset" disabled={!preset} onclick={removePreset}><Trash2 size={14} /></button>
         </div>
       {/if}
-      {#if manage}
-        <form class="config-actions" onsubmit={savePreset}>
-          <label class="field">Preset name<input maxlength="100" bind:value={presetName} /></label>
-          <button class="button secondary" disabled={!presetName.trim() || !block.fields.length}>Save preset</button>
-        </form>
-      {/if}
+      <form class="config-actions" onsubmit={savePreset}>
+        <label class="field">Preset name<input maxlength="100" bind:value={presetName} /></label>
+        <button class="button secondary" disabled={!presetName.trim() || hasIssues}>Save preset</button>
+      </form>
     </section>
   {/if}
+  {#if error}<p class="inline-error" role="alert">{error}</p>{/if}
   {#each block.fields as field (field.id)}
+    {@const issue = issues.get(field.id)}
+    {@const issueId = issue ? editorId + '-error-' + field.id : undefined}
     <section class="config-field" aria-label={field.name}>
       {#if manage}
         <div class="config-actions">
@@ -125,6 +132,12 @@
           </select></label>
           <button type="button" class="icon-button delete-block" aria-label={'Delete field ' + field.name} onclick={() => removeField(field)}><Trash2 size={14} /></button>
         </div>
+        <label class="field">Data type<select value={configFieldDataType(field)} disabled={field.type === 'slider' || field.type === 'toggle'}
+          onchange={(event) => {
+            if (field.type === 'input' || field.type === 'multi') update({ ...field, dataType: event.currentTarget.value as ColumnType });
+          }}>
+          {#each Object.entries(configDataTypes) as [type, label]}<option value={type}>{label}</option>{/each}
+        </select></label>
         {#if field.type === 'slider'}
           <div class="config-actions">
             <label class="field">Minimum<input type="number" step="any" value={field.min} onchange={(event) => changeLimit(field, 'min', event.currentTarget)} /></label>
@@ -132,14 +145,16 @@
             <label class="field">Step<input type="number" step="any" value={field.step} onchange={(event) => changeLimit(field, 'step', event.currentTarget)} /></label>
           </div>
         {:else if field.type === 'multi'}
-          <label class="field">Options (one per line)<textarea rows="2" value={field.options.join('\n')} onchange={(event) => {
+          <label class="field">Options (one per line)<textarea rows="2" value={field.options.join('\n')} aria-invalid={Boolean(issue)}
+            aria-describedby={issueId} onchange={(event) => {
             const options = [...new Set(event.currentTarget.value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean))];
             update({ ...field, options, value: field.value.filter((value) => options.includes(value)) });
           }}></textarea></label>
         {/if}
       {/if}
       {#if field.type === 'input'}
-        <label class="field">{field.name}<input value={field.value} onchange={(event) => setValue(field, event.currentTarget.value)} /></label>
+        <label class="field">{field.name}<input value={field.value} aria-invalid={Boolean(issue)} aria-describedby={issueId}
+          onchange={(event) => setValue(field, event.currentTarget.value)} /></label>
       {:else if field.type === 'slider'}
         <label class="field config-slider" for={editorId + '-' + field.id}>{field.name}
           <span>{field.value}</span>
@@ -156,9 +171,9 @@
           {/each}
         </fieldset>
       {/if}
+      {#if issue}<p id={issueId} class="inline-error" role="alert">{issue}</p>{/if}
     </section>
   {/each}
-  {#if error}<p class="inline-error" role="alert">{error}</p>{/if}
   {#if manage}
     <button type="button" class="button secondary" onclick={addField}><Plus size={14} /> Add field</button>
   {:else if !block.fields.length}

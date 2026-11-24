@@ -187,10 +187,11 @@ test('pans the canvas when a table cannot scroll and keeps native scrolling when
 
   await card.getByRole('button', { name: 'Unlock inline editing', exact: true }).click();
   await card.getByRole('button', { name: 'Open table', exact: true }).click();
-  await dialog.getByRole('button', { name: 'Paste range', exact: true }).click();
-  const paste = page.getByRole('dialog', { name: 'Paste data', exact: true });
-  await paste.getByRole('textbox', { name: 'Cell range' }).fill('A\tB\n' + Array.from({ length: 30 }, (_, index) => index + '\tValue').join('\n'));
-  await paste.getByRole('button', { name: 'Replace table data', exact: true }).click();
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  const values = Array.from({ length: 30 }, (_, index) => index + '\tValue').join('\n');
+  await page.evaluate((text) => navigator.clipboard.writeText(text), values);
+  await dialog.getByRole('textbox', { name: 'A row 1', exact: true }).click();
+  await page.keyboard.press('ControlOrMeta+v');
   await dialog.getByRole('button', { name: 'Done', exact: true }).click();
   const editor = card.getByRole('group', { name: 'Edit Untitled table', exact: true });
   await editor.hover();
@@ -208,6 +209,57 @@ test('pans the canvas when a table cannot scroll and keeps native scrolling when
   await page.getByRole('region', { name: 'Canvas drop area', exact: true }).hover({ position: { x: 24, y: 32 } });
   await page.mouse.wheel(0, -70);
   await expect.poll(async () => (await viewport()).zoom).toBeGreaterThan(beforeScroll.zoom);
+});
+
+test('keeps the table geometry when locking and grows the table from the outside handles', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New workspace', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Workspace name' }).fill('Stable table layout');
+  await page.getByRole('button', { name: 'Create workspace' }).click();
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Untitled table', exact: true }).getByRole('button', { name: 'Done', exact: true }).click();
+  await waitForCanvasFit(page);
+  const card = canvasBlock(page, 'Untitled table');
+  const table = card.getByRole('table');
+  const layout = () => card.locator('.node-inline').evaluate((editor) => ({
+    width: editor.clientWidth, height: editor.clientHeight, scrollWidth: editor.scrollWidth, scrollHeight: editor.scrollHeight,
+    columnsOverflow: editor.querySelector('.editor-grid')!.scrollWidth - editor.querySelector('.editor-grid')!.clientWidth,
+    headers: [...editor.querySelectorAll<HTMLElement>('thead th')].map((header) => [header.offsetWidth, header.offsetHeight]),
+    rows: [...editor.querySelectorAll<HTMLElement>('tbody tr')].map((row) => row.offsetHeight),
+  }));
+  const unfit = await cardSize(card);
+  await card.getByRole('button', { name: 'Lock inline editing', exact: true }).click();
+  for (const edge of ['right', 'bottom']) {
+    const bounds = (await card.locator('.block-resize-edge.' + edge).boundingBox())!;
+    await page.mouse.dblclick(bounds.x + bounds.width / 2, bounds.y + bounds.height * (edge === 'right' ? .18 : .5));
+  }
+  const lockedLayout = await layout();
+  expect((await cardSize(card)).height).toBeLessThan(unfit.height);
+  expect(lockedLayout.scrollHeight).toBe(lockedLayout.height);
+  expect(lockedLayout.columnsOverflow).toBe(0);
+  await expect(card.getByRole('button', { name: 'Select row 1', exact: true })).toBeDisabled();
+  await expect(card.getByRole('button', { name: 'Delete row 1', exact: true })).toBeDisabled();
+  await card.getByRole('button', { name: 'Unlock inline editing', exact: true }).click();
+  expect(await layout()).toEqual(lockedLayout);
+  await expect(card.getByRole('button', { name: 'Paste range', exact: true })).toHaveCount(0);
+  await expect(card.getByRole('button', { name: 'Delete row 1', exact: true })).toBeEnabled();
+
+  const rowHandle = card.getByRole('button', { name: 'Add row', exact: true });
+  const columnHandle = card.getByRole('button', { name: 'Add column', exact: true });
+  const original = await cardSize(card);
+  await rowHandle.click();
+  await expect(table.locator('tbody tr')).toHaveCount(3);
+  expect((await cardSize(card)).height).toBeGreaterThan(original.height);
+  await columnHandle.click();
+  await expect(table.getByRole('columnheader', { name: 'C', exact: true })).toBeVisible();
+  expect((await cardSize(card)).width).toBeGreaterThan(original.width);
+
+  await dragResize(page, rowHandle, 0, 86);
+  await expect.poll(() => table.locator('tbody tr').count()).toBeGreaterThan(4);
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(table.locator('tbody tr')).toHaveCount(3);
+  await dragResize(page, columnHandle, 170, 0);
+  await expect(table.getByRole('columnheader', { name: 'E', exact: true })).toBeVisible();
 });
 
 test('resizes an expanded table, scrolls to its last row and restores the size', async ({ page }) => {
@@ -369,10 +421,9 @@ test('creates a connected table from a table output and resolves its source in f
 test('stores config presets and supplies live values to table formulas and SQL', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Add config', exact: true }).click();
-  const name = page.getByRole('dialog', { name: 'Untitled config', exact: true }).getByRole('textbox', { name: 'Name', exact: true });
-  await name.fill('MeineConfig');
-  await name.press('Tab');
-  const config = page.getByRole('dialog', { name: 'MeineConfig', exact: true });
+  const config = page.getByRole('dialog', { name: 'Create config', exact: true });
+  await config.getByRole('textbox', { name: 'Name', exact: true }).fill('MeineConfig');
+  await expect(config.getByRole('region', { name: 'Presets', exact: true })).toHaveCount(0);
   const field = (name: string) => config.getByRole('region', { name, exact: true });
   let index = 0;
   const addField = async (name: string, type: string) => {
@@ -394,23 +445,35 @@ test('stores config presets and supplies live values to table formulas and SQL',
   await addField('Enabled', 'toggle');
   await field('Enabled').getByRole('checkbox', { name: 'Enabled' }).check();
   await addField('Note', 'input');
-  await field('Note').getByRole('textbox', { name: 'Note', exact: true }).fill('Baseline');
+  const note = field('Note').getByRole('textbox', { name: 'Note', exact: true });
+  await note.fill('Baseline');
+  await note.press('Tab');
+  const noteType = field('Note').getByRole('combobox', { name: 'Data type' });
+  const create = config.getByRole('button', { name: 'Create config', exact: true });
+  await noteType.selectOption('decimal');
+  await expect(note).toHaveAttribute('aria-invalid', 'true');
+  await expect(field('Note').getByRole('alert')).toContainText('Enter a number');
+  await expect(create).toBeDisabled();
+  await noteType.selectOption('text');
+  await expect(note).toHaveAttribute('aria-invalid', 'false');
   await addField('Regions', 'multi');
   const options = field('Regions').getByRole('textbox', { name: 'Options (one per line)' });
   await options.fill('EU\nUS');
   await options.press('Tab');
   for (const option of ['EU', 'US']) await field('Regions').getByRole('checkbox', { name: option }).check();
-  await config.getByRole('textbox', { name: 'Preset name' }).fill('Baseline');
-  await config.getByRole('button', { name: 'Save preset' }).click();
-  await slider.press('Home');
-  await field('Enabled').getByRole('checkbox', { name: 'Enabled' }).uncheck();
-  await field('Regions').getByRole('checkbox', { name: 'US' }).uncheck();
-  await config.getByRole('button', { name: 'Load preset' }).click();
-  await expect(slider).toHaveValue('0.1');
-  await expect(field('Enabled').getByRole('checkbox', { name: 'Enabled' })).toBeChecked();
-  await expect(field('Regions').getByRole('checkbox', { name: 'US' })).toBeChecked();
-  await expect(field('Note').getByRole('textbox', { name: 'Note', exact: true })).toHaveValue('Baseline');
-  await config.getByRole('button', { name: 'Done' }).click();
+  await create.click();
+  const configCard = canvasBlock(page, 'MeineConfig');
+  const cardSlider = configCard.getByRole('slider', { name: 'SoliFactor' });
+  await configCard.getByRole('textbox', { name: 'Preset name' }).fill('Baseline');
+  await configCard.getByRole('button', { name: 'Save preset' }).click();
+  await cardSlider.press('Home');
+  await configCard.getByRole('checkbox', { name: 'Enabled' }).uncheck();
+  await configCard.getByRole('checkbox', { name: 'US', exact: true }).uncheck();
+  await configCard.getByRole('button', { name: 'Load preset' }).click();
+  await expect(cardSlider).toHaveValue('0.1');
+  await expect(configCard.getByRole('checkbox', { name: 'Enabled' })).toBeChecked();
+  await expect(configCard.getByRole('checkbox', { name: 'US', exact: true })).toBeChecked();
+  await expect(configCard.getByRole('textbox', { name: 'Note', exact: true })).toHaveValue('Baseline');
 
   await page.getByRole('button', { name: 'Add table', exact: true }).click();
   const table = page.getByRole('dialog', { name: 'Untitled table', exact: true });
@@ -432,21 +495,137 @@ test('stores config presets and supplies live values to table formulas and SQL',
   await sql.getByRole('button', { name: 'Save and run' }).click();
   await expect(inspector.getByRole('cell', { name: '0.1', exact: true })).toBeVisible();
 
-  const configCard = canvasBlock(page, 'MeineConfig');
-  await configCard.getByRole('slider', { name: 'SoliFactor' }).press('ArrowLeft');
+  await cardSlider.press('ArrowLeft');
   await expect(inspector.getByRole('cell', { name: '0.05', exact: true })).toBeVisible();
   const output = canvasBlock(page, 'Untitled table').getByRole('textbox', { name: 'B row 1', exact: true });
   await expect(output).toHaveValue('6');
-  await configCard.getByRole('button', { name: 'Open config', exact: true }).click();
-  await config.getByRole('combobox', { name: 'Preset', exact: true }).selectOption({ label: 'Baseline' });
-  await config.getByRole('button', { name: 'Load preset', exact: true }).click();
-  await expect(slider).toHaveValue('0.1');
-  await config.getByRole('button', { name: 'Delete preset', exact: true }).click();
+  await configCard.getByRole('combobox', { name: 'Preset', exact: true }).selectOption({ label: 'Baseline' });
+  await configCard.getByRole('button', { name: 'Load preset', exact: true }).click();
+  await expect(cardSlider).toHaveValue('0.1');
+  await configCard.getByRole('button', { name: 'Delete preset', exact: true }).click();
   const confirmation = page.getByRole('dialog', { name: 'Delete preset?', exact: true });
   await confirmation.getByRole('button', { name: 'Delete preset', exact: true }).click();
-  await expect(config.getByRole('combobox', { name: 'Preset', exact: true })).toHaveCount(0);
-  await config.getByRole('button', { name: 'Done' }).click();
+  await expect(configCard.getByRole('combobox', { name: 'Preset', exact: true })).toHaveCount(0);
   await expect(output).toHaveValue('12');
+});
+
+test('uses global configs without connections and inserts a clicked cell at the formula cursor', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Add config', exact: true }).click();
+  const config = page.getByRole('dialog', { name: 'Create config', exact: true });
+  await config.getByRole('textbox', { name: 'Name', exact: true }).fill('Tax');
+  await config.getByRole('checkbox', { name: 'Global config', exact: true }).check();
+  await config.getByRole('button', { name: 'Add field', exact: true }).click();
+  const name = config.getByRole('textbox', { name: 'Field name', exact: true });
+  await name.fill('Rate');
+  await name.press('Tab');
+  await config.getByRole('combobox', { name: 'Data type', exact: true }).selectOption('decimal');
+  const rate = config.getByRole('textbox', { name: 'Rate', exact: true });
+  await rate.fill('0,05');
+  await rate.press('Tab');
+  await config.getByRole('button', { name: 'Create config', exact: true }).click();
+
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const table = page.getByRole('dialog', { name: 'Untitled table', exact: true });
+  const base = table.getByRole('textbox', { name: 'A row 1', exact: true });
+  const formula = table.getByRole('textbox', { name: 'B row 1', exact: true });
+  await base.fill('120');
+  await formula.fill('=0*Tax.Rate');
+  await formula.evaluate((input: HTMLTextAreaElement) => input.setSelectionRange(1, 2));
+  await base.click();
+  await expect(formula).toBeFocused();
+  await expect(formula).toHaveValue('=A1*Tax.Rate');
+  await formula.press('Enter');
+  await expect(formula).toHaveValue('6');
+  await table.getByRole('button', { name: 'Done' }).click();
+
+  await page.getByRole('button', { name: 'Add SQL query', exact: true }).click();
+  const sql = page.getByRole('dialog', { name: 'Edit SQL', exact: true });
+  await expect(sql.getByText('tax · Global', { exact: true })).toBeVisible();
+  await sql.getByRole('textbox', { name: 'SQL code' }).fill('SELECT Rate FROM "tax";');
+  await sql.getByRole('button', { name: 'Save and run' }).click();
+  const inspector = page.getByRole('complementary', { name: 'Block inspector' });
+  await expect(inspector.getByRole('cell', { name: '0.05', exact: true })).toBeVisible();
+
+  const configCard = canvasBlock(page, 'Tax');
+  await configCard.getByRole('button', { name: 'Open config', exact: true }).click();
+  const existingConfig = page.getByRole('dialog', { name: 'Tax', exact: true });
+  await existingConfig.getByRole('checkbox', { name: 'Global config', exact: true }).uncheck();
+  await existingConfig.getByRole('button', { name: 'Done' }).click();
+  const output = canvasBlock(page, 'Untitled table').getByRole('textbox', { name: 'B row 1', exact: true });
+  await expect(output).toHaveValue('#ERROR');
+  await configCard.getByRole('button', { name: 'Open config', exact: true }).click();
+  await existingConfig.getByRole('checkbox', { name: 'Global config', exact: true }).check();
+  await existingConfig.getByRole('button', { name: 'Done' }).click();
+  await expect(output).toHaveValue('6');
+});
+
+test('switches named presets for connected and global configs, including with no input links', async ({ page }) => {
+  await page.goto('/');
+  const draft = page.getByRole('dialog', { name: 'Create config', exact: true });
+  async function setupConfig(title: string, global: boolean, low: string, high: string) {
+    await page.getByRole('button', { name: 'Add config', exact: true }).click();
+    await draft.getByRole('textbox', { name: 'Name', exact: true }).fill(title);
+    if (global) await draft.getByRole('checkbox', { name: 'Global config', exact: true }).check();
+    await draft.getByRole('button', { name: 'Add field', exact: true }).click();
+    const name = draft.getByRole('textbox', { name: 'Field name', exact: true });
+    await name.fill('Rate');
+    await name.press('Tab');
+    await draft.getByRole('button', { name: 'Create config', exact: true }).click();
+    const card = canvasBlock(page, title);
+    const value = card.getByRole('textbox', { name: 'Rate', exact: true });
+    for (const [label, text] of [['Low', low], ['High', high]]) {
+      await value.fill(text);
+      await value.press('Tab');
+      await card.getByRole('textbox', { name: 'Preset name', exact: true }).fill(label);
+      await card.getByRole('button', { name: 'Save preset', exact: true }).click();
+    }
+    return value;
+  }
+  const global = await setupConfig('GlobalTax', true, '1', '2');
+  const local = await setupConfig('LocalTax', false, '3', '4');
+  await page.getByRole('button', { name: 'Add switch', exact: true }).click();
+  const setup = page.getByRole('dialog', { name: 'Configure switch', exact: true });
+  const name = setup.getByRole('textbox', { name: 'Name', exact: true });
+  await name.fill('Tax mode');
+  await name.press('Tab');
+  for (const [letter, label] of [['A', 'Low'], ['B', 'High']]) {
+    const option = setup.getByRole('textbox', { name: 'Option ' + letter, exact: true });
+    await option.fill(label);
+    await option.press('Tab');
+    await setup.getByRole('group', { name: 'GlobalTax', exact: true })
+      .getByRole('combobox', { name: 'Preset for ' + label, exact: true }).selectOption({ label });
+  }
+  await setup.getByRole('button', { name: 'Done', exact: true }).click();
+  const control = canvasBlock(page, 'Tax mode');
+  await control.getByRole('button', { name: 'Apply Low', exact: true }).click();
+  await expect(global).toHaveValue('1');
+  await expect(local).toHaveValue('4');
+  await control.getByRole('button', { name: 'Configure switch', exact: true }).click();
+  await setup.getByRole('combobox', { name: 'Connect config', exact: true }).selectOption({ label: 'LocalTax' });
+  for (const label of ['Low', 'High']) {
+    await setup.getByRole('group', { name: 'LocalTax', exact: true })
+      .getByRole('combobox', { name: 'Preset for ' + label, exact: true }).selectOption({ label });
+  }
+  await setup.getByRole('button', { name: 'Done', exact: true }).click();
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const table = page.getByRole('dialog', { name: 'Untitled table', exact: true });
+  await table.getByRole('button', { name: 'Done', exact: true }).click();
+  const inspector = page.getByRole('complementary', { name: 'Block inspector' });
+  await inspector.getByRole('combobox', { name: 'Connect input', exact: true }).selectOption({ label: 'Tax mode' });
+  await inspector.getByRole('button', { name: 'Edit table', exact: true }).click();
+  const formula = table.getByRole('textbox', { name: 'A row 1', exact: true });
+  await formula.fill('=GlobalTax.Rate+LocalTax.Rate');
+  await formula.press('Enter');
+  await expect(formula).toHaveValue('5');
+  await table.getByRole('button', { name: 'Done', exact: true }).click();
+  const output = canvasBlock(page, 'Untitled table').getByRole('textbox', { name: 'A row 1', exact: true });
+  await control.getByRole('button', { name: 'Apply Low', exact: true }).click();
+  await expect(output).toHaveValue('4');
+  await control.getByRole('button', { name: 'Switch to High', exact: true }).click();
+  await expect(output).toHaveValue('6');
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(output).toHaveValue('4');
 });
 
 test('switches the SQL card between code and scrollable results and saves the choice', async ({ page }) => {
@@ -585,10 +764,13 @@ test('places blocks from the toolbar, edits a table inline, and edits SQL and ch
   await inlineTable.getByRole('textbox', { name: 'A row 1', exact: true }).fill('2');
   await expect(columnHeader(inlineTable, 'A')).toContainText('Auto');
   await inlineTable.getByRole('textbox', { name: 'A row 2', exact: true }).fill('99');
-  await inlineTable.getByRole('spinbutton', { name: 'Title columns' }).fill('1');
-  await inlineTable.getByRole('spinbutton', { name: 'Title columns' }).press('Tab');
-  await inlineTable.getByRole('spinbutton', { name: 'Footer rows' }).fill('1');
-  await inlineTable.getByRole('spinbutton', { name: 'Footer rows' }).press('Tab');
+  const inspector = page.getByRole('complementary', { name: 'Block inspector' });
+  const tableOptions = inspector.getByRole('region', { name: 'Table options' });
+  await expect(inlineTable.getByRole('spinbutton', { name: 'Title columns' })).toHaveCount(0);
+  await tableOptions.getByRole('spinbutton', { name: 'Title columns' }).fill('1');
+  await tableOptions.getByRole('spinbutton', { name: 'Title columns' }).press('Tab');
+  await tableOptions.getByRole('spinbutton', { name: 'Footer rows' }).fill('1');
+  await tableOptions.getByRole('spinbutton', { name: 'Footer rows' }).press('Tab');
   await inlineTable.getByRole('textbox', { name: 'A row 1', exact: true }).evaluate((cell) => {
     const clipboardData = new DataTransfer();
     clipboardData.setData('text/plain', '2\n3');
@@ -604,7 +786,6 @@ test('places blocks from the toolbar, edits a table inline, and edits SQL and ch
   await expect(query.getByText('untitled_table', { exact: true })).toBeVisible();
   await query.getByRole('textbox', { name: 'SQL code' }).fill('SELECT sum("A") AS total FROM untitled_table;');
   await query.getByRole('button', { name: 'Save and run' }).click();
-  const inspector = page.getByRole('complementary', { name: 'Block inspector' });
   await inspector.getByRole('button', { name: 'Data', exact: true }).click();
   await expect(inspector.getByRole('cell', { name: '5', exact: true })).toBeVisible();
   await expect(inspector.getByRole('cell', { name: '104', exact: true })).toHaveCount(0);
@@ -990,7 +1171,7 @@ test('shows nested functions and searchable documentation for the active cell', 
   await page.getByRole('button', { name: 'Create workspace' }).click();
   await page.getByRole('button', { name: 'Add table', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Untitled table' });
-  const dialogInspector = dialog.getByRole('complementary', { name: 'Cell inspector' });
+  const dialogInspector = dialog.getByRole('complementary', { name: 'Table inspector' });
   await dialog.getByRole('textbox', { name: 'A row 1', exact: true }).fill('Groceries');
   const formula = '=CONCAT("MAX(A): ", COUNT(DISTINCT(A)), COUNT(A))';
   const dialogCell = dialog.getByRole('textbox', { name: 'B row 1', exact: true });
@@ -1444,7 +1625,7 @@ test('wraps unbroken text and grows or fits the canvas table at its edges', asyn
   await expect.poll(() => table.locator('.node-inline').evaluate((element) => element.scrollHeight - element.clientHeight)).toBeLessThanOrEqual(1);
 });
 
-test('pastes a range over a blank two-by-two table and infers the pasted column types', async ({ page }) => {
+test('pastes clipboard data directly into a selected cell and infers column types', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Add table', exact: true }).click();
   const table = page.getByRole('dialog', { name: 'Untitled table' });
@@ -1453,14 +1634,15 @@ test('pastes a range over a blank two-by-two table and infers the pasted column 
   const style = table.getByRole('combobox', { name: 'Style', exact: true });
   await expect(style).toHaveValue('grid');
   await style.selectOption('banded');
-  await table.getByRole('button', { name: 'Paste range' }).click();
-  const paste = page.getByRole('dialog', { name: 'Paste data' });
-  await paste.getByRole('textbox', { name: 'Cell range' }).fill('A\tB\n2026-01-01\t42');
-  await paste.getByRole('button', { name: 'Replace table data' }).click();
-  await expect(columnHeader(table, 'A')).toContainText('Date');
-  await expect(columnHeader(table, 'B')).toContainText('Number');
+  await expect(table.getByRole('button', { name: 'Paste range' })).toHaveCount(0);
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.evaluate(() => navigator.clipboard.writeText('2026-01-01\t42\n2026-01-02\t43'));
+  await table.getByRole('textbox', { name: 'A row 1', exact: true }).click();
+  await page.keyboard.press('ControlOrMeta+v');
+  await expect(table.getByRole('textbox', { name: 'A row 2', exact: true })).toHaveValue('2026-01-02');
+  await expect(table.getByRole('textbox', { name: 'B row 2', exact: true })).toHaveClass(/numeric/);
   await expect(style).toHaveValue('banded');
-  await expect(table.getByRole('table').locator('tbody tr')).toHaveCount(1);
+  await expect(table.getByRole('table').locator('tbody tr')).toHaveCount(2);
 });
 
 test('requires an input for a cross-table formula and recalculates it for downstream SQL', async ({ page }) => {

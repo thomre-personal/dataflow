@@ -1,6 +1,6 @@
 import type { CellStyle, CellStyles } from './cell-style.ts';
 
-export type BlockKind = 'table' | 'sql' | 'chart' | 'config' | 'group';
+export type BlockKind = 'table' | 'sql' | 'chart' | 'config' | 'switch' | 'group';
 export type ValueType = 'text' | 'decimal' | 'date' | 'boolean';
 export type ColumnType = ValueType | 'auto';
 export type NumberFormat = 'auto' | 'decimal-comma' | 'decimal-point';
@@ -59,14 +59,17 @@ export type GroupBlock = BlockBase & ExpandableBlock & { kind: 'group' };
 export type ConfigValue = string | number | boolean | string[];
 type ConfigFieldBase = { id: string; name: string };
 export type ConfigField = ConfigFieldBase & (
-  | { type: 'input'; value: string }
+  | { type: 'input'; value: string; dataType?: ColumnType }
   | { type: 'slider'; value: number; min: number; max: number; step: number }
   | { type: 'toggle'; value: boolean }
-  | { type: 'multi'; value: string[]; options: string[] }
+  | { type: 'multi'; value: string[]; options: string[]; dataType?: ColumnType }
 );
 export type ConfigPreset = { id: string; name: string; values: Record<string, ConfigValue> };
-export type ConfigBlock = BlockBase & ExpandableBlock & { kind: 'config'; fields: ConfigField[]; presets: ConfigPreset[] };
-export type Block = TableBlock | SqlBlock | ChartBlock | ConfigBlock | GroupBlock;
+export type ConfigBlock = BlockBase & ExpandableBlock & { kind: 'config'; fields: ConfigField[]; presets: ConfigPreset[]; global?: boolean };
+export type SwitchPreset = { configId: string; presetId: string };
+export type SwitchOption = { label: string; presets: SwitchPreset[] };
+export type SwitchBlock = BlockBase & { kind: 'switch'; options: [SwitchOption, SwitchOption]; active?: 0 | 1 };
+export type Block = TableBlock | SqlBlock | ChartBlock | ConfigBlock | SwitchBlock | GroupBlock;
 export type Link = { id: string; source: string; target: string; alias: string };
 export type Workspace = {
   id: string;
@@ -77,7 +80,8 @@ export type Workspace = {
 };
 export type Library = { activeId: string; workspaces: Workspace[] };
 export type TableInput = { table: TableBlock; alias: string };
-export type FormulaInput = TableInput | { config: ConfigBlock; alias: string };
+type ConfigInput = { config: ConfigBlock; alias: string; via?: string };
+export type FormulaInput = TableInput | ConfigInput;
 export type Result = {
   columns: { name: string; type: ValueType }[];
   rows: (string | null)[][];
@@ -97,12 +101,47 @@ export function dataRowCount(table: TableBlock) {
 }
 
 export function tableInputs(workspace: Workspace | undefined, tableId: string): FormulaInput[] {
-  return workspace?.links.flatMap((link): FormulaInput[] => {
+  if (!workspace) return [];
+  const inputs = workspace.links.flatMap((link): FormulaInput[] => {
     if (link.target !== tableId) return [];
     const table = workspace.blocks.find((block) => block.id === link.source);
     return table?.kind === 'table' ? [{ table, alias: link.alias }]
       : table?.kind === 'config' ? [{ config: table, alias: link.alias }] : [];
-  }) ?? [];
+  });
+  return [...inputs, ...implicitConfigInputs(workspace, tableId)];
+}
+
+export function switchConfigs(workspace: Workspace, switchId: string): ConfigBlock[] {
+  const inputs = new Set(workspace.links.filter((link) => link.target === switchId).map((link) => link.source));
+  return workspace.blocks.filter((block): block is ConfigBlock => block.kind === 'config' && Boolean(block.global || inputs.has(block.id)));
+}
+
+export function implicitConfigInputs(workspace: Workspace, targetId: string): ConfigInput[] {
+  const links = workspace.links.filter((link) => link.target === targetId);
+  const sources = new Set(links.map((link) => link.source));
+  const aliases = new Set(links.map((link) => link.alias));
+  const inputs: ConfigInput[] = [];
+  function add(config: ConfigBlock, via?: string) {
+    if (sources.has(config.id)) return;
+    sources.add(config.id);
+    const alias = availableAlias(sqlAlias(config.title), aliases);
+    aliases.add(alias);
+    inputs.push({ config, alias, via });
+  }
+  for (const block of workspace.blocks) {
+    if (block.kind === 'config' && block.global) add(block);
+  }
+  for (const block of workspace.blocks) {
+    if (block.kind !== 'switch' || !sources.has(block.id)) continue;
+    for (const config of switchConfigs(workspace, block.id)) add(config, block.title);
+  }
+  return inputs;
+}
+
+function availableAlias(base: string, used: ReadonlySet<string>) {
+  let alias = base;
+  for (let suffix = 2; used.has(alias); suffix++) alias = base + '_' + suffix;
+  return alias;
 }
 
 export function columnLetter(index: number): string {
@@ -122,6 +161,7 @@ export const kinds = {
   sql: { label: 'SQL query', plural: 'SQL queries' },
   chart: { label: 'Chart', plural: 'Charts' },
   config: { label: 'Config', plural: 'Configs' },
+  switch: { label: 'Switch', plural: 'Switches' },
   group: { label: 'Group', plural: 'Groups' },
 } satisfies Record<BlockKind, { label: string; plural: string }>;
 
@@ -146,6 +186,8 @@ export function createBlock(kind: BlockKind, position: Position): Block {
       return { ...base, kind, chart: 'bar', x: '', y: '' };
     case 'config':
       return { ...base, kind, fields: [], presets: [] };
+    case 'switch':
+      return { ...base, kind, options: [{ label: 'A', presets: [] }, { label: 'B', presets: [] }] };
     case 'group':
       return { ...base, kind };
   }
@@ -180,8 +222,12 @@ export function canConnect(workspace: Workspace, source: string, target: string)
   const from = workspace.blocks.find((block) => block.id === source);
   const to = workspace.blocks.find((block) => block.id === target);
   return Boolean(from && to && source !== target
-    && (from.kind === 'table' || from.kind === 'sql' || from.kind === 'config')
-    && (to.kind === 'sql' || (from.kind !== 'config' && to.kind === 'chart') || (from.kind !== 'sql' && to.kind === 'table'))
+    && (
+      (from.kind === 'table' && (to.kind === 'table' || to.kind === 'sql' || to.kind === 'chart'))
+      || (from.kind === 'sql' && (to.kind === 'sql' || to.kind === 'chart'))
+      || (from.kind === 'config' && (to.kind === 'table' || to.kind === 'sql' || to.kind === 'switch'))
+      || (from.kind === 'switch' && (to.kind === 'table' || to.kind === 'sql'))
+    )
     && !workspace.links.some((link) => link.source === source && link.target === target)
     && !related(workspace, target, 'outputs').has(source));
 }
@@ -192,11 +238,9 @@ export function addLink(workspace: Workspace, source: string, target: string): W
   const to = workspace.blocks.find((block) => block.id === target)!;
   const links = workspace.links.filter((link) => to.kind !== 'chart' || link.target !== target);
   const used = new Set(links.filter((link) => link.target === target).map((link) => link.alias));
-  const base = sqlAlias(from.title);
-  let alias = base;
-  for (let suffix = 2; used.has(alias); suffix++) alias = base + '_' + suffix;
+  const alias = availableAlias(sqlAlias(from.title), used);
   const next = [...links, { id: newId(), source, target, alias }];
-  const blocks = to.kind === 'sql' && to.sql === 'SELECT 42 AS value;'
+  const blocks = to.kind === 'sql' && from.kind !== 'switch' && to.sql === 'SELECT 42 AS value;'
     ? workspace.blocks.map((block) => block.id === target ? { ...to, sql: 'SELECT *\nFROM "' + alias + '";' } : block)
     : workspace.blocks;
   return { ...workspace, blocks, links: next };

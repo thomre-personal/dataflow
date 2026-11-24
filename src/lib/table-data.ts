@@ -1,6 +1,6 @@
 import { inferType, parseBoolean, parseDate, parseDecimal, validateCell } from './clipboard.ts';
 import { isFormulaEntry, parseFormula, readFormula } from './formulas.ts';
-import { configValueText } from './config.ts';
+import { evaluateConfigField } from './config.ts';
 import { dataRowCount, rowNumber, tableInputs } from './workspace.ts';
 import type { BooleanFormula, Column, Formula, FormulaInput, OrderedFunction, ScalarExpression, TableBlock, ValueType, Workspace } from './workspace.ts';
 
@@ -126,10 +126,10 @@ function createTableData(table: TableBlock, inputs: FormulaInput[], evaluate: (t
         if (!input || !('config' in input)) return { value: '', message: 'Reconnect the referenced config as an input.' };
         const field = input.config.fields.find(({ id }) => id === expression.fieldId);
         if (!field) return { value: '', message: 'The referenced config field was deleted.' };
-        const value = configValueText(field.value);
-        if (field.type === 'toggle') return { value, calculated: 'boolean' };
-        const number = field.type === 'multi' ? null : parseDecimal(value);
-        return number === null ? { value, calculated: 'text' } : { value: number, calculated: 'number' };
+        const evaluated = evaluateConfigField(field);
+        if (evaluated.message !== undefined) return { value: '', message: field.name + ': ' + evaluated.message };
+        if (evaluated.value === null) return { value: '' };
+        return { value: evaluated.value, calculated: evaluated.type === 'decimal' ? 'number' : evaluated.type };
       }
       case 'binary': {
         const left = evaluateScalar(expression.left);

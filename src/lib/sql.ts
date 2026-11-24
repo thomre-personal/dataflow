@@ -6,6 +6,7 @@ import workerEhUrl from '@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js?ur
 import { MAX_ROWS } from './clipboard';
 import { configResult, tableResult } from './format';
 import type { Block, Result, ValueType, Workspace } from './workspace';
+import { implicitConfigInputs } from './workspace';
 
 const bundles: duckdb.DuckDBBundles = {
   mvp: { mainModule: wasm, mainWorker: workerUrl },
@@ -124,11 +125,19 @@ async function execute(db: duckdb.AsyncDuckDB, workspace: Workspace, blockId: st
       } else if (block.kind === 'config') {
         await createSource(connection, name, block.title, configResult(block));
       } else if (block.kind === 'sql') {
+        const sql = selectSql(block.sql);
         const links = workspace.links.filter((link) => link.target === block.id);
         const inputs = [];
         for (const link of links) {
           const input = workspace.blocks.find((candidate) => candidate.id === link.source);
-          if (input) inputs.push({ name: await materialize(input), alias: link.alias });
+          if (input && input.kind !== 'switch') inputs.push({ name: await materialize(input), alias: link.alias });
+        }
+        const availableConfigs = implicitConfigInputs(workspace, block.id);
+        if (availableConfigs.length) {
+          const tables = new Set((await connection.getTableNames(sql)).map((table) => table.toLowerCase()));
+          for (const { config, alias } of availableConfigs) {
+            if (tables.has(alias)) inputs.push({ name: await materialize(config), alias });
+          }
         }
         const created: string[] = [];
         try {
@@ -136,7 +145,6 @@ async function execute(db: duckdb.AsyncDuckDB, workspace: Workspace, blockId: st
             await connection.query('CREATE TEMP VIEW ' + identifier(input.alias) + ' AS SELECT * FROM ' + identifier(input.name));
             created.push(input.alias);
           }
-          const sql = selectSql(block.sql);
           await connection.query('CREATE TEMP TABLE ' + identifier(name) + ' AS SELECT * FROM (\n' + sql + '\n) AS query_result LIMIT ' + (MAX_ROWS + 1));
           const count = await connection.query('SELECT count(*) AS total FROM ' + identifier(name));
           if (Number(count.get(0)?.total ?? 0) > MAX_ROWS) {

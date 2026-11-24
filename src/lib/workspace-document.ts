@@ -1,6 +1,7 @@
 import { canConnect, canGroup, isBooleanFunction, newId } from './workspace.ts';
 import type { Block, Column, ConfigField, ConfigPreset, Link, Row, Workspace } from './workspace.ts';
 import { isCellStyle } from './cell-style.ts';
+import { configDataTypes } from './config.ts';
 
 const format = 'dataflow-workspace';
 const version = 1;
@@ -89,10 +90,11 @@ const strings = (value: unknown): value is string[] => Array.isArray(value) && v
 
 function configField(value: unknown): value is ConfigField {
   if (!record(value) || !id(value.id) || typeof value.name !== 'string' || !value.name || value.name !== value.name.trim()) return false;
+  if (value.dataType !== undefined && (typeof value.dataType !== 'string' || !Object.hasOwn(configDataTypes, value.dataType))) return false;
   switch (value.type) {
     case 'input': return typeof value.value === 'string';
-    case 'toggle': return typeof value.value === 'boolean';
-    case 'slider': return finiteNumber(value.value) && finiteNumber(value.min) && finiteNumber(value.max)
+    case 'toggle': return value.dataType === undefined && typeof value.value === 'boolean';
+    case 'slider': return value.dataType === undefined && finiteNumber(value.value) && finiteNumber(value.min) && finiteNumber(value.max)
       && finiteNumber(value.step) && value.step > 0 && value.min < value.max && value.value >= value.min && value.value <= value.max;
     case 'multi': {
       const options = value.options;
@@ -128,7 +130,14 @@ function block(value: unknown): value is Block {
   switch (value.kind) {
     case 'group': return true;
     case 'config': return objectsWithIds(value.fields, configField) && objectsWithIds(value.presets, configPreset)
+      && (value.global === undefined || typeof value.global === 'boolean')
       && new Set(value.fields.map((field) => field.name.toLowerCase())).size === value.fields.length;
+    case 'switch': return (value.active === undefined || value.active === 0 || value.active === 1)
+      && Array.isArray(value.options) && value.options.length === 2 && value.options.every((option) => {
+        if (!record(option) || typeof option.label !== 'string' || !option.label.trim() || !Array.isArray(option.presets)) return false;
+        return option.presets.every((item) => record(item) && id(item.configId) && id(item.presetId))
+          && new Set(option.presets.map((item) => item.configId)).size === option.presets.length;
+      });
     case 'chart': return (value.chart === 'bar' || value.chart === 'line')
       && typeof value.x === 'string' && typeof value.y === 'string';
     case 'table': {

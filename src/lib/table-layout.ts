@@ -6,7 +6,13 @@ export function tableCardContentSize(card: HTMLElement, gridWidth?: number, rowD
 
   const editor = body.querySelector<HTMLElement>('.table-editor-content');
   const minimumWidth = parseFloat(table.style.minWidth);
-  const width = gridWidth ?? (Number.isFinite(minimumWidth) ? minimumWidth : table.scrollWidth);
+  let width = gridWidth ?? table.scrollWidth;
+  if (gridWidth === undefined && Number.isFinite(minimumWidth)) {
+    const currentWidth = table.style.width;
+    table.style.width = minimumWidth + 'px';
+    width = Math.max(minimumWidth, table.offsetWidth, table.scrollWidth);
+    table.style.width = currentWidth;
+  }
   const bodyStyle = getComputedStyle(body);
   const padding = parseFloat(bodyStyle.paddingTop) + parseFloat(bodyStyle.paddingBottom);
   const contentHeight = editor?.offsetHeight ?? table.offsetHeight + grid.offsetHeight - grid.clientHeight;

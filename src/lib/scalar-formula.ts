@@ -20,7 +20,7 @@ export function parseScalar(text: string, columns: Column[], inputs: FormulaInpu
       const configs = inputs.filter((input) => 'config' in input);
       const aliases = configs.filter((input) => input.alias.toLowerCase() === key);
       const matches = aliases.length ? aliases : configs.filter((input) => input.config.title.toLowerCase() === key);
-      if (matches.length !== 1) return { message: 'Connect a unique config named ' + source + ' as an input.' };
+      if (matches.length !== 1) return { message: 'Connect a unique config named ' + source + ' or make it global.' };
       const config = matches[0].config;
       const entry = config.fields.find((item) => item.name.toLowerCase() === nameKey(field));
       if (!entry) return { message: 'The config ' + source + ' has no field named ' + field + '.' };

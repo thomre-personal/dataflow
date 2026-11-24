@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { bindTableFormulas, cellFormulaText, parseFormula, readFormula } from '../src/lib/formulas.ts';
-import { tableResult } from '../src/lib/format.ts';
+import { configResult, tableResult } from '../src/lib/format.ts';
 import { invalidTableCells, tableData } from '../src/lib/table-data.ts';
 import { addLink, canConnect, createBlock, createWorkspace, tableInputs } from '../src/lib/workspace.ts';
 
@@ -22,6 +22,21 @@ test('uses linked config values in exact arithmetic and keeps references after a
   assert.equal(tableData(bound, linked).display(0, 1), '14');
   assert.equal(cellFormulaText(bound.rows[0], bound.columns, 1, tableInputs(linked, table.id)), '=(A1+20)*Tax.Rate');
   assert.match(tableData(bound, workspace).cell(0, 1).message ?? '', /Reconnect the referenced config/);
+});
+
+test('validates config data types and normalizes the values seen in SQL', () => {
+  const config = createBlock('config', { x: 0, y: 0 });
+  config.fields = [
+    { id: 'code', name: 'Code', type: 'input', dataType: 'text', value: '0012' },
+    { id: 'date', name: 'Day', type: 'input', dataType: 'date', value: '05.01.2026' },
+    { id: 'choice', name: 'Factors', type: 'multi', dataType: 'decimal', options: ['0,5', '1,25'], value: ['1,25'] },
+  ];
+  assert.deepEqual(configResult(config), {
+    columns: [{ name: 'Code', type: 'text' }, { name: 'Day', type: 'date' }, { name: 'Factors', type: 'text' }],
+    rows: [['0012', '2026-01-05', '["1.25"]']],
+  });
+  config.fields[1] = { id: 'date', name: 'Day', type: 'input', dataType: 'date', value: 'tomorrow' };
+  assert.throws(() => configResult(config), /Day: Enter a valid date/);
 });
 
 test('evaluates aggregates for text, numbers, and dates with footer rows excluded', () => {
