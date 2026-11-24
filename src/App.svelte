@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Background, BackgroundVariant, MarkerType, MiniMap, SvelteFlow } from '@xyflow/svelte';
-  import type { Connection, Edge, Node } from '@xyflow/svelte';
+  import type { Connection, Edge, Node, OnConnectEnd } from '@xyflow/svelte';
   import {
     ArrowDownLeft, ArrowRight, ArrowUpRight, Braces, ChartColumnIncreasing, Check,
     ChevronDown, CircleAlert, ClipboardPlus, CloudOff, Focus, Folder, Layers3, Link2, Maximize,
@@ -16,10 +16,10 @@
   import TableEditor from './components/TableEditor.svelte';
   import ResultGrid from './components/ResultGrid.svelte';
   import MiniChart from './components/MiniChart.svelte';
-  import { absolutePosition, addLink, canConnect, canGroup, createBlock, createWorkspace, kinds, related, starterWorkspace } from './lib/workspace';
-  import type { Block, BlockKind, ChartBlock, Library, NumberFormat, Result, SqlBlock, Workspace } from './lib/workspace';
-  import { importGrid, parseDelimited } from './lib/clipboard';
-  import { chartSeries, countLabel, tableResult } from './lib/format';
+  import { absolutePosition, addLink, canConnect, canGroup, createBlock, createWorkspace, kinds, related, sqlAlias, starterWorkspace } from './lib/workspace';
+  import type { Block, BlockKind, ChartBlock, Library, NumberFormat, Position, Result, SqlBlock, Workspace } from './lib/workspace';
+  import { describeCellIssue, importGrid, invalidTableCells, parseDelimited } from './lib/clipboard';
+  import { chartSeries, countLabel, tablePreview, tableResult } from './lib/format';
   import { loadLibrary, saveLibrary } from './lib/storage';
 
   const icons = { table: Table2, sql: Braces, chart: ChartColumnIncreasing, group: Folder };
@@ -41,7 +41,12 @@
   let focused = $state('');
   let workspaceMenu = $state(false);
   let activeTab = $state<'sql' | 'data'>('sql');
-  let modal = $state<'paste' | 'table' | 'search' | 'chart' | 'workspace' | null>(null);
+  let modal = $state<'paste' | 'table' | 'search' | 'chart' | 'workspace' | 'quick-create' | 'configure' | null>(null);
+  let quickSource = $state('');
+  let quickPosition = $state<Position>({ x: 0, y: 0 });
+  let quickPointer = $state<Position>({ x: 0, y: 0 });
+  let draftBlock = $state<SqlBlock | ChartBlock | undefined>();
+  let quickFirstButton = $state<HTMLButtonElement>();
   let workspaceTitle = $state('');
   let renamingWorkspace = $state(false);
   let pasteText = $state('');
@@ -161,12 +166,31 @@
     }
   });
 
-  function chartInput(block: ChartBlock): { result?: Result; state?: 'ready' | 'stale' | 'running' | 'error' } {
+  function chartInput(block: ChartBlock): { result?: Result; state?: 'ready' | 'stale' | 'running' | 'error'; error?: string } {
     const link = workspace.links.find((item) => item.target === block.id);
     const source = workspace.blocks.find((item) => item.id === link?.source);
-    if (source?.kind === 'table') return { result: tableResult(source), state: 'ready' };
+    if (source?.kind === 'table') {
+      try { return { result: tableResult(source), state: 'ready' }; }
+      catch (error) { return { state: 'error', error: error instanceof Error ? error.message : String(error) }; }
+    }
     if (source?.kind === 'sql') return runtime[source.id] ?? {};
     return {};
+  }
+
+  function tableProblem(block: Block) {
+    if (block.kind !== 'table') return undefined;
+    const issue = invalidTableCells(block).next().value;
+    return issue ? describeCellIssue(block, issue) : undefined;
+  }
+
+  function nodeSize(block: Block): { width: number; height: number } {
+    if (block.kind === 'table' && block.expanded) return { width: 320, height: 132 + Math.max(1, Math.min(block.rows.length, 13)) * 28 };
+    if (block.kind !== 'group') return { width: 260, height: 228 };
+    const children = workspace.blocks.filter((item) => item.parentId === block.id);
+    return children.reduce((size, child) => {
+      const bounds = nodeSize(child);
+      return { width: Math.max(size.width, child.position.x + bounds.width + 24), height: Math.max(size.height, child.position.y + bounds.height + 24) };
+    }, { width: 330, height: 280 });
   }
 
   $effect(() => {
@@ -192,18 +216,20 @@
     };
     flowNodes = workspace.blocks.filter((block) => !focused || focusPositions.has(block.id)).sort((a, b) => depth(a) - depth(b)).map((block) => {
       const result = block.kind === 'chart' ? chartInput(block) : runtime[block.id] ?? {};
-      const children = workspace.blocks.filter((item) => item.parentId === block.id);
+      const size = nodeSize(block);
       return {
         id: block.id, type: 'block', position: focusPositions.get(block.id) ?? { ...block.position }, parentId: focused ? undefined : block.parentId,
         selected: block.id === selectedId,
         dragHandle: block.kind === 'group' ? '.group-title' : '.node-heading',
-        width: block.kind === 'group' ? Math.max(330, ...children.map((item) => item.position.x + 300)) : 260,
-        ...(block.kind === 'group' ? { height: Math.max(280, ...children.map((item) => item.position.y + 260)), zIndex: depth(block) } : { zIndex: 10 + depth(block) }),
+        ...size,
+        zIndex: block.kind === 'group' ? depth(block) : 10 + depth(block),
         ariaLabel: kinds[block.kind].label + ': ' + block.title,
         data: {
           block, result: result.result, dataState: result.state, dark,
+          issue: block.kind === 'table' ? tableProblem(block) : result.error,
           focusSide: inputs.has(block.id) ? 'input' : outputs.has(block.id) ? 'output' : undefined,
           open: () => openBlock(block.id),
+          toggleTable: block.kind === 'table' ? () => patchBlock(block.id, { expanded: !block.expanded }) : undefined,
         },
       };
     });
@@ -261,6 +287,45 @@
 
   function onConnect(connection: Connection) {
     connect(connection.source, connection.target);
+  }
+
+  const quickDrop: OnConnectEnd = async (event, connection) => {
+    if (connection.fromHandle?.id !== 'quick-create' || connection.toHandle || !connection.fromNode || !connection.to) return;
+    const pointer = event instanceof MouseEvent ? event : event.changedTouches[0];
+    if (!pointer) return;
+    const hit = document.elementFromPoint(pointer.clientX, pointer.clientY);
+    if (!hit?.closest('.svelte-flow__pane') || hit.closest('.svelte-flow__node')) return;
+    quickSource = connection.fromNode.id;
+    quickPosition = { ...connection.to };
+    quickPointer = { x: Math.max(8, Math.min(pointer.clientX, innerWidth - 256)), y: Math.max(8, Math.min(pointer.clientY, innerHeight - 140)) };
+    modal = 'quick-create';
+    await tick();
+    quickFirstButton?.focus();
+  };
+
+  function configureNewBlock(kind: 'sql' | 'chart') {
+    const source = workspace.blocks.find((block) => block.id === quickSource);
+    if (!source) return closeModal();
+    const created = createBlock(kind, quickPosition);
+    if (created.kind !== 'sql' && created.kind !== 'chart') return;
+    draftBlock = created.kind === 'sql'
+      ? { ...created, title: source.title + ' query', sql: 'SELECT *\nFROM "' + sqlAlias(source.title) + '";' }
+      : { ...created, title: source.title + ' chart' };
+    modal = 'configure';
+  }
+
+  function createConnectedBlock() {
+    if (!draftBlock?.title.trim()) return;
+    const created = { ...draftBlock, title: draftBlock.title.trim() };
+    const next = { ...workspace, blocks: [...workspace.blocks, created] };
+    const connected = addLink(next, quickSource, created.id);
+    if (connected === next) return closeModal();
+    const wasFocused = Boolean(focused);
+    focused = '';
+    replaceWorkspace(connected);
+    select(created.id);
+    closeModal();
+    if (wasFocused) void fitCanvas();
   }
 
   function disconnect(id: string) {
@@ -330,17 +395,21 @@
     pasteText = '';
     pasteError = '';
     pasteHeader = true;
-    pasteNumberFormat = 'auto';
+    const target = workspace.blocks.find((block) => block.id === id);
+    pasteNumberFormat = target?.kind === 'table' ? target.numberFormat : 'auto';
     pasteTarget = id;
     modal = 'paste';
   }
 
   function importPaste() {
     try {
-      const data = importGrid(parseDelimited(pasteText), pasteHeader, pasteNumberFormat);
       const target = workspace.blocks.find((item) => item.id === pasteTarget);
+      const hasValues = target?.kind === 'table' && target.rows.some((row) => row.cells.some((cell) => cell.trim()));
+      const defaultColumn = target?.kind === 'table' && target.columns.length === 1 && target.columns[0].name === 'Column 1' && target.columns[0].type === 'text';
+      const existing = target?.kind === 'table' && (hasValues || !defaultColumn) ? target.columns : undefined;
+      const data = importGrid(parseDelimited(pasteText), pasteHeader, pasteNumberFormat, existing);
       if (target?.kind === 'table') {
-        if (target.rows.some((row) => row.cells.some((cell) => cell.trim())) && !confirm('Replace the existing data in “' + target.title + '”?')) return;
+        if (hasValues && !confirm('Replace the existing data in “' + target.title + '”?')) return;
         patchBlock(target.id, { ...data, numberFormat: pasteNumberFormat });
         modal = 'table';
       } else {
@@ -360,9 +429,13 @@
     }
   }
 
-  function closeModal() { modal = modal === 'paste' && pasteTarget ? 'table' : null; }
+  function closeModal() {
+    modal = modal === 'paste' && pasteTarget ? 'table' : null;
+    draftBlock = undefined;
+  }
   function openSearch() { search = ''; modal = 'search'; }
   function keyboard(event: KeyboardEvent) {
+    if (event.key === 'Escape' && modal === 'quick-create') closeModal();
     const withModifier = event.metaKey || event.ctrlKey;
     if (withModifier && event.key.toLowerCase() === 'k') {
       event.preventDefault();
@@ -376,6 +449,8 @@
 
   let selectedChart = $derived(selected?.kind === 'chart' ? chartInput(selected) : {});
   let selectedSeries = $derived(selected?.kind === 'chart' ? chartSeries(selected, selectedChart.result) : undefined);
+  let quickInput = $derived(workspace.blocks.find((block) => block.id === quickSource));
+  let quickColumns = $derived(quickInput?.kind === 'table' ? quickInput.columns : quickInput?.kind === 'sql' ? runtime[quickInput.id]?.result?.columns ?? [] : []);
   let searchResults = $derived(workspace.blocks.filter((block) => (block.title + ' ' + kinds[block.kind].label).toLowerCase().includes(search.trim().toLowerCase())));
   let candidates = $derived(selected ? workspace.blocks.filter((block) => canConnect(workspace, block.id, selected!.id)) : []);
 </script>
@@ -461,7 +536,8 @@
             nodesDraggable={!focused}
             deleteKey={null}
             onconnect={onConnect}
-            isValidConnection={({ source, target }) => canConnect(workspace, source, target)}
+            onconnectend={quickDrop}
+            isValidConnection={({ source, target, sourceHandle }) => sourceHandle !== 'quick-create' && canConnect(workspace, source, target)}
             onnodeclick={({ node }) => select(node.id)}
             onnodedragstop={({ targetNode }) => { if (targetNode) patchBlock(targetNode.id, { position: { ...targetNode.position } }); }}
             proOptions={{ hideAttribution: true }}
@@ -503,17 +579,20 @@
                 <p class="inspector-empty">Run the query to see its result.</p>
               {/if}
               {#if runtime[block.id]?.error}<p class="inline-error" role="alert"><CircleAlert size={15} />{runtime[block.id].error}</p>{/if}
-              <button class="button primary run-button" onclick={() => void runSQL(block)} disabled={runtime[block.id]?.state === 'running'}><Play size={14} fill="currentColor" /> {runtime[block.id]?.state === 'running' ? 'Running…' : 'Run query'}<kbd>⌘ ↵</kbd></button>
+              <button class="button primary run-button" onclick={() => void runSQL(block)} disabled={runtime[block.id]?.state === 'running'}><Play size={14} fill="currentColor" /> {runtime[block.id]?.state === 'running' ? 'Running…' : 'Run query'}<kbd aria-hidden="true">⌘ ↵</kbd></button>
             </div>
           {:else if block.kind === 'table'}
+            {@const issue = tableProblem(block)}
             <div class="inspector-body">
               <div class="result-summary"><span>{countLabel(block.rows.length, 'row')} <span class="separator">·</span> {countLabel(block.columns.length, 'column')}</span></div>
-              <ResultGrid result={tableResult(block)} limit={5} />
+              <ResultGrid result={tablePreview(block, 5)} limit={5} />
+              {#if issue}<p class="inline-error"><CircleAlert size={15} />{issue}</p>{/if}
               <button class="button primary full-width" onclick={() => modal = 'table'}><Table2 size={15} /> Edit table</button>
             </div>
           {:else if block.kind === 'chart'}
             <div class="inspector-body">
-              {#if selectedChart.state && selectedChart.state !== 'ready'}<p class="inline-warning">{selectedChart.state === 'running' ? 'Refreshing data…' : 'Source result may be out of date'}</p>{/if}
+              {#if selectedChart.error}<p class="inline-error" role="alert"><CircleAlert size={15} />{selectedChart.error}</p>
+              {:else if selectedChart.state && selectedChart.state !== 'ready'}<p class="inline-warning">{selectedChart.state === 'running' ? 'Refreshing data…' : 'Source result may be out of date'}</p>{/if}
               {#if selectedSeries}<div class="inspector-chart"><MiniChart series={selectedSeries} type={block.chart} {dark} compact /></div>{/if}
               <label class="field">Chart type<select value={block.chart} onchange={(event) => patchBlock(block.id, { chart: event.currentTarget.value as ChartBlock['chart'] })}><option value="bar">Bar</option><option value="line">Line</option></select></label>
               {#if selectedChart.result}
@@ -563,7 +642,35 @@
   {#if notice}<div class="toast" role="status"><Check size={15} /><span>{notice}</span><button class="icon-button small" aria-label="Dismiss message" onclick={() => notice = ''}><X size={14} /></button></div>{/if}
 </div>
 
-{#if modal === 'search'}
+{#if modal === 'quick-create'}
+  <div class="quick-overlay">
+    <button class="quick-backdrop" aria-label="Cancel adding a connected block" tabindex="-1" onclick={closeModal}></button>
+    <div class="quick-picker" role="group" aria-label="Add connected block" style:left={quickPointer.x + 'px'} style:top={quickPointer.y + 'px'}>
+      <p>Connect from <strong>{quickInput?.title}</strong></p>
+      <button bind:this={quickFirstButton} onclick={() => configureNewBlock('sql')}><span class="kind-icon sql"><Braces size={16} /></span><span>SQL query<small>Filter or calculate</small></span></button>
+      <button onclick={() => configureNewBlock('chart')}><span class="kind-icon chart"><ChartColumnIncreasing size={16} /></span><span>Chart<small>Plot the source data</small></span></button>
+    </div>
+  </div>
+{:else if modal === 'configure' && draftBlock}
+  {@const draft = draftBlock}
+  {#snippet content()}
+    <label class="field">Name<input maxlength="100" bind:value={draft.title} /></label>
+    {#if draft.kind === 'sql'}
+      <label class="field">SQL<textarea class="paste-editor" bind:value={draft.sql} spellcheck="false"></textarea></label>
+    {:else}
+      <label class="field">Chart type<select bind:value={draft.chart}><option value="bar">Bar</option><option value="line">Line</option></select></label>
+      {#if quickColumns.length}
+        <label class="field">X axis<select bind:value={draft.x}><option value="">Automatic</option>{#each quickColumns as column}<option value={column.name}>{column.name}</option>{/each}</select></label>
+        <label class="field">Y axis<select bind:value={draft.y}><option value="">Automatic</option>{#each quickColumns.filter((column) => column.type === 'decimal') as column}<option value={column.name}>{column.name}</option>{/each}</select></label>
+      {/if}
+    {/if}
+  {/snippet}
+  {#snippet footer()}
+    <button class="button secondary" onclick={closeModal}>Cancel</button>
+    <button class="button primary" onclick={createConnectedBlock} disabled={!draft.title.trim() || (draft.kind === 'sql' && !draft.sql.trim())}>{draft.kind === 'sql' ? 'Create SQL query' : 'Create chart'}</button>
+  {/snippet}
+  <Modal title={draft.kind === 'sql' ? 'Configure SQL query' : 'Configure chart'} subtitle={'Input: ' + (quickInput?.title ?? '')} close={closeModal} children={content} {footer} />
+{:else if modal === 'search'}
   {#snippet content()}
     <label class="search-field"><Search size={19} /><input aria-label="Search by block name" placeholder="Search by block name…" bind:value={search} onkeydown={(event) => { if (event.key === 'Enter' && searchResults[0]) focusBlock(searchResults[0].id); }} /></label>
     <div class="search-results">
@@ -601,6 +708,7 @@
   {#snippet content()}
     {#if selectedSeries}<div class="expanded-chart"><MiniChart series={selectedSeries} type={chart.chart} {dark} /></div>
       {#if selectedSeries.truncated}<p class="helper-text">Showing the first 100 rows.</p>{/if}
+    {:else if selectedChart.error}<p class="inline-error"><CircleAlert size={15} />{selectedChart.error}</p>
     {:else}<p class="inspector-empty">Connect a source with a number column to plot.</p>{/if}
   {/snippet}
   <Modal title={chart.title} subtitle={chart.chart === 'bar' ? 'Bar chart' : 'Line chart'} wide close={closeModal} children={content} />

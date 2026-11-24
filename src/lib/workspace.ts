@@ -14,6 +14,7 @@ export type TableBlock = BlockBase & {
   rows: Row[];
   numberFormat: NumberFormat;
   style: TableStyle;
+  expanded?: boolean;
 };
 export type SqlBlock = BlockBase & { kind: 'sql'; sql: string };
 export type ChartBlock = BlockBase & { kind: 'chart'; chart: 'bar' | 'line'; x: string; y: string };

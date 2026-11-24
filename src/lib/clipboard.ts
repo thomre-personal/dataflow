@@ -1,4 +1,4 @@
-import type { Column, ColumnType, NumberFormat, Row } from './workspace.ts';
+import type { Column, ColumnType, NumberFormat, Row, TableBlock } from './workspace.ts';
 import { newId } from './workspace.ts';
 
 export const MAX_ROWS = 10_000;
@@ -116,6 +116,33 @@ export function normalizedCell(value: string, type: ColumnType, numberFormat: Nu
   }
 }
 
+export function validateCell(value: string, type: ColumnType, numberFormat: NumberFormat):
+  { value: string | null; message?: undefined } | { message: string; value?: undefined } {
+  const normalized = normalizedCell(value, type, numberFormat);
+  if (normalized !== null || !value.trim()) return { value: normalized };
+  if (type === 'date') return { message: 'Enter a valid date (YYYY-MM-DD or DD.MM.YYYY).' };
+  if (type === 'boolean') return { message: 'Enter true or false.' };
+  const example = numberFormat === 'decimal-comma' ? '1.234,56' : numberFormat === 'decimal-point' ? '1,234.56' : '1234.56 or 1234,56';
+  return { message: 'Enter a number such as ' + example + '.' };
+}
+
+type CellIssue = { row: number; column: number; message: string };
+
+export function* invalidTableCells(table: TableBlock): Generator<CellIssue, void> {
+  const typed = table.columns.flatMap((column, index) => column.type === 'text' ? [] : [{ column, index }]);
+  if (!typed.length) return;
+  for (const [row, item] of table.rows.entries()) {
+    for (const { column, index } of typed) {
+      const { message } = validateCell(item.cells[index] ?? '', column.type, table.numberFormat);
+      if (message) yield { row, column: index, message };
+    }
+  }
+}
+
+export function describeCellIssue(table: TableBlock, issue: CellIssue): string {
+  return table.title + ', row ' + (issue.row + 1) + ', ' + table.columns[issue.column].name + ': ' + issue.message;
+}
+
 function inferType(values: string[], numberFormat: NumberFormat): ColumnType {
   const nonempty = values.filter((value) => value.trim());
   if (!nonempty.length) return 'text';
@@ -125,18 +152,19 @@ function inferType(values: string[], numberFormat: NumberFormat): ColumnType {
   return 'text';
 }
 
-export function importGrid(grid: string[][], header: boolean, numberFormat: NumberFormat): { columns: Column[]; rows: Row[] } {
+export function importGrid(grid: string[][], header: boolean, numberFormat: NumberFormat, existing: Column[] = []): { columns: Column[]; rows: Row[] } {
   if (!grid.length || !grid.some((row) => row.some((cell) => cell.trim()))) throw new Error('Paste a cell range to continue.');
   const width = Math.max(...grid.map((item) => item.length));
   const body = header ? grid.slice(1) : grid;
   if (body.length > MAX_ROWS) throw new Error('Paste up to ' + MAX_ROWS.toLocaleString() + ' data rows at a time.');
   const used = new Set<string>();
   const columns = Array.from({ length: width }, (_, index): Column => {
-    const title = (header ? grid[0][index]?.trim() : '') || 'Column ' + (index + 1);
+    const title = (header ? grid[0][index]?.trim() : existing[index]?.name) || 'Column ' + (index + 1);
     let name = title;
     for (let i = 2; used.has(name.toLowerCase()); i++) name = title + ' ' + i;
     used.add(name.toLowerCase());
-    return { id: newId(), name, type: inferType(body.map((row) => row[index] ?? ''), numberFormat) };
+    const previous = header ? existing.find((column) => column.name.trim().toLowerCase() === name.toLowerCase()) : existing[index];
+    return { id: previous?.id ?? newId(), name, type: previous?.type ?? inferType(body.map((row) => row[index] ?? ''), numberFormat) };
   });
   return { columns, rows: body.map((cells) => ({ id: newId(), cells })) };
 }

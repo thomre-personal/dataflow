@@ -3,7 +3,7 @@ import wasm from '@duckdb/duckdb-wasm/dist/duckdb-mvp.wasm?url';
 import workerUrl from '@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js?url';
 import wasmEh from '@duckdb/duckdb-wasm/dist/duckdb-eh.wasm?url';
 import workerEhUrl from '@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js?url';
-import { normalizedCell, MAX_ROWS } from './clipboard';
+import { describeCellIssue, validateCell, MAX_ROWS } from './clipboard';
 import type { Block, ColumnType, Result, TableBlock, Workspace } from './workspace';
 
 const bundles: duckdb.DuckDBBundles = {
@@ -75,12 +75,10 @@ async function createSource(connection: duckdb.AsyncDuckDBConnection, name: stri
   const scales = columns.map(() => 0);
   const integralWidths = columns.map(() => 0);
   const values = table.rows.map((row, rowIndex) => '(' + columns.map((column, index) => {
-    const raw = row.cells[index] ?? '';
-    const value = normalizedCell(raw, column.type, table.numberFormat);
-    if (value === null) {
-      if (raw.trim()) throw new Error(table.title + ', row ' + (rowIndex + 1) + ': “' + raw + '” is not a valid ' + column.type + ' for ' + column.name + '.');
-      return 'NULL';
-    }
+    const cell = validateCell(row.cells[index] ?? '', column.type, table.numberFormat);
+    if (cell.message !== undefined) throw new Error(describeCellIssue(table, { row: rowIndex, column: index, message: cell.message }));
+    const value = cell.value;
+    if (value === null) return 'NULL';
     if (column.type === 'decimal') {
       const [integer, fraction = ''] = value.replace(/^-/, '').split('.');
       scales[index] = Math.max(scales[index], fraction.length);

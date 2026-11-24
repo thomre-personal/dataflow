@@ -156,6 +156,10 @@ code { font-family: var(--mono); }
 .svelte-flow .svelte-flow__handle:hover, .svelte-flow .svelte-flow__handle.connectingfrom { background: var(--accent); }
 .svelte-flow .svelte-flow__handle-left { left: -6px; }
 .svelte-flow .svelte-flow__handle-right { right: -6px; }
+.svelte-flow .svelte-flow__handle.quick-exit { display: grid; place-items: center; right: -17px; top: calc(50% - 30px); width: 24px; height: 24px; background: var(--accent-soft); color: var(--accent); opacity: 0; pointer-events: none; box-shadow: var(--shadow); cursor: crosshair; }
+.svelte-flow__node:hover .quick-exit, .graph-card:focus-within .quick-exit, .svelte-flow .svelte-flow__handle.quick-exit.connectingfrom { opacity: 1; pointer-events: auto; }
+.svelte-flow .svelte-flow__handle.quick-exit:hover, .svelte-flow .svelte-flow__handle.quick-exit.connectingfrom { color: var(--surface); background: var(--accent); }
+.quick-exit svg { pointer-events: none; }
 .canvas-footer { display: flex; align-items: center; gap: 16px; border-top: 1px solid var(--divider); background: var(--surface); padding: 0 14px; color: var(--muted); font-size: 11px; white-space: nowrap; }
 .canvas-footer > span:first-child { display: flex; align-items: center; gap: 6px; font-weight: 570; }
 .canvas-footer .canvas-hint { margin-left: auto; color: var(--subtle); }
@@ -171,6 +175,7 @@ code { font-family: var(--mono); }
 
 .graph-card { position: relative; width: 260px; height: 228px; display: grid; grid-template-rows: 54px minmax(0, 1fr) 33px; overflow: visible; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
 .graph-card.selected { border-color: var(--accent-line); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-line), transparent 65%), var(--shadow); }
+.graph-card.expanded { width: 100%; height: 100%; }
 .graph-card.related:not(.selected) { border-color: color-mix(in srgb, var(--accent), var(--border) 48%); }
 .node-heading { cursor: grab; padding: 8px 11px; display: flex; align-items: center; gap: 9px; min-width: 0; border-bottom: 1px solid var(--divider); border-radius: 10px 10px 0 0; }
 .node-heading:active { cursor: grabbing; }
@@ -261,9 +266,14 @@ code { font-family: var(--mono); }
 .result-grid th { background: var(--raised); color: var(--muted); font-weight: 670; }
 .result-grid td { font-variant-numeric: tabular-nums; }
 .result-grid tr:last-child td { border-bottom: 0; }
-.result-grid tr:nth-child(even) td { background: color-mix(in srgb, var(--raised), var(--surface) 40%); }
+.result-grid tr.grid-even td { background: color-mix(in srgb, var(--raised), var(--surface) 40%); }
 .result-grid .numeric, .editor-grid .numeric { text-align: right; }
 .grid-empty { padding: 11px; font-size: 11px; color: var(--muted); }
+.full-grid { height: 100%; overflow-anchor: none; overscroll-behavior: contain; }
+.full-grid table { min-width: 100%; }
+.full-grid thead { position: sticky; top: 0; z-index: 1; }
+.full-grid td, .full-grid th { height: 28px; padding: 0 8px; line-height: 27px; max-width: none; min-width: 82px; }
+.full-grid .grid-spacer td { padding: 0; border: 0; }
 
 dialog { width: min(calc(100vw - 34px), 510px); max-height: min(calc(100dvh - 38px), 790px); padding: 0; margin: auto; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 13px; box-shadow: 0 20px 70px #18233750; overflow: auto; }
 dialog.wide { width: min(calc(100vw - 34px), 920px); }
@@ -293,6 +303,11 @@ dialog::backdrop { background: #151f386d; backdrop-filter: blur(2px); }
 .editor-grid.banded tr:nth-child(even) td { background: var(--raised); }
 .editor-grid.emphasis thead th { background: var(--accent-soft); }
 .editor-grid.grid td, .editor-grid.grid th { border-right: 1px solid var(--divider); }
+.table-validation { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 10px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--error) 32%, var(--divider)); border-radius: 6px; color: var(--error); background: color-mix(in srgb, var(--error) 8%, var(--surface)); font-size: 11px; }
+.table-validation svg { flex-shrink: 0; margin-top: 1px; }
+.table-validation button { margin-left: auto; white-space: nowrap; }
+.editor-grid td.invalid-cell { box-shadow: inset 0 0 0 1px var(--error); background: color-mix(in srgb, var(--error) 7%, var(--surface)); }
+.cell-validation-message { display: block; max-width: 190px; padding: 0 8px 5px; white-space: normal; color: var(--error); font-size: 10px; }
 .row-actions { width: 30px; }
 .table-count { display: flex; justify-content: space-between; margin-top: 8px; color: var(--muted); font-size: 11px; }
 .text-button { color: var(--accent); font-weight: 620; }
@@ -306,6 +321,14 @@ dialog::backdrop { background: #151f386d; backdrop-filter: blur(2px); }
 .search-results small { display: block; color: var(--muted); font-size: 10px; font-weight: 510; }
 .expanded-chart { height: min(52dvh, 400px); }
 .chart-figure { position: relative; height: 100%; width: 100%; }
+.quick-overlay, .quick-backdrop { position: fixed; inset: 0; }
+.quick-overlay { z-index: 15; }
+.quick-backdrop { width: 100%; height: 100%; cursor: default; }
+.quick-picker { position: fixed; width: min(248px, calc(100vw - 16px)); padding: 7px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 9px; box-shadow: var(--shadow); }
+.quick-picker p { padding: 4px 6px 7px; color: var(--muted); font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.quick-picker button { display: flex; width: 100%; align-items: center; gap: 8px; padding: 6px; text-align: left; font-size: 12px; font-weight: 650; border-radius: 6px; }
+.quick-picker button:hover { background: var(--raised); }
+.quick-picker small { display: block; color: var(--muted); font-size: 10px; font-weight: 500; }
 .toast { z-index: 15; position: fixed; bottom: 45px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; width: max-content; max-width: 85vw; padding: 5px 7px 5px 10px; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); border-radius: 8px; color: var(--text); }
 .toast > svg { color: var(--success); flex-shrink: 0; }
 

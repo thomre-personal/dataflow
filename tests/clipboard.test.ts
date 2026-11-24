@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { importGrid, parseDate, parseDecimal, parseDelimited } from '../src/lib/clipboard.ts';
+import { importGrid, invalidTableCells, parseDate, parseDecimal, parseDelimited } from '../src/lib/clipboard.ts';
 import { addLink, canConnect, createBlock, createWorkspace } from '../src/lib/workspace.ts';
 
 test('preserves quoted tabs and newlines, blank cells, and CRLF in spreadsheet ranges', () => {
@@ -31,4 +31,15 @@ test('uses stable SQL aliases and prevents data-flow cycles', () => {
   const connected = addLink(addLink(workspace, a.id, b.id), b.id, c.id);
   assert.equal(connected.links[0].alias, 'august_expenses');
   assert.equal(canConnect(connected, c.id, b.id), false);
+});
+
+test('replacing a named column keeps its type and reports invalid pasted data', () => {
+  const initial = importGrid([['Date', 'Amount'], ['2026-01-03', '21.40']], true, 'auto');
+  const replacement = importGrid([['Amount', 'Date'], ['', '31.02.2026']], true, 'auto', initial.columns);
+  assert.deepEqual(replacement.columns.map((column) => column.id), initial.columns.map((column) => column.id).reverse());
+  const block = createBlock('table', { x: 0, y: 0 });
+  assert.ok(block.kind === 'table');
+  assert.deepEqual([...invalidTableCells({ ...block, ...replacement })], [
+    { row: 0, column: 1, message: 'Enter a valid date (YYYY-MM-DD or DD.MM.YYYY).' },
+  ]);
 });

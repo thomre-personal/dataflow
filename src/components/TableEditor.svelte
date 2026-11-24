@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { ClipboardPlus, Plus, Trash2 } from 'lucide-svelte';
+  import { CircleAlert, ClipboardPlus, Plus, Trash2 } from 'lucide-svelte';
+  import { tick } from 'svelte';
   import { newId } from '../lib/workspace';
   import { countLabel } from '../lib/format';
-  import { MAX_COLUMNS, MAX_ROWS, parseDelimited } from '../lib/clipboard';
+  import { describeCellIssue, invalidTableCells, MAX_COLUMNS, MAX_ROWS, parseDelimited } from '../lib/clipboard';
   import type { ColumnType, TableBlock, TableStyle } from '../lib/workspace';
 
   let { block, change, paste, error }: {
@@ -15,6 +16,16 @@
   const types: [ColumnType, string][] = [['text', 'Text'], ['decimal', 'Number'], ['date', 'Date'], ['boolean', 'Boolean']];
   const styles: [TableStyle, string][] = [['plain', 'Plain'], ['banded', 'Banded'], ['emphasis', 'Emphasis'], ['grid', 'Grid']];
   let limit = $state(60);
+  let issues = $derived([...invalidTableCells(block)]);
+  let issueByCell = $derived(new Map(issues.map((issue) => [issue.row + ':' + issue.column, issue.message])));
+
+  const cellId = (rowId: string, columnId: string) => 'cell-' + rowId + '-' + columnId;
+
+  async function focusCell(rowIndex: number, rowId: string, columnId: string) {
+    limit = Math.max(limit, rowIndex + 1);
+    await tick();
+    document.getElementById(cellId(rowId, columnId))?.focus();
+  }
 
   function updateCell(rowIndex: number, colIndex: number, value: string) {
     const rows = block.rows.map((row, i) => i === rowIndex
@@ -44,21 +55,41 @@
     }
   }
 
-  function addRow() {
-    if (block.rows.length >= MAX_ROWS) return error('This table has reached the row limit.');
-    change({ rows: [...block.rows, { id: newId(), cells: block.columns.map(() => '') }] });
-    limit = Math.max(limit, block.rows.length + 1);
+  function insertRow(index: number) {
+    if (block.rows.length >= MAX_ROWS) { error('This table has reached the row limit.'); return; }
+    const row = { id: newId(), cells: block.columns.map(() => '') };
+    change({ rows: [...block.rows.slice(0, index), row, ...block.rows.slice(index)] });
+    limit = Math.max(limit, index + 1);
+    return row.id;
   }
 
-  function addColumn() {
-    if (block.columns.length >= MAX_COLUMNS) return error('This table has reached the column limit.');
+  function insertColumn(index: number) {
+    if (block.columns.length >= MAX_COLUMNS) { error('This table has reached the column limit.'); return; }
     const first = block.columns.length + 1;
     let name = 'Column ' + first;
     for (let i = first + 1; block.columns.some((column) => column.name.toLowerCase() === name.toLowerCase()); i++) name = 'Column ' + i;
+    const column = { id: newId(), name, type: 'text' as const };
     change({
-      columns: [...block.columns, { id: newId(), name, type: 'text' }],
-      rows: block.rows.map((row) => ({ ...row, cells: [...row.cells, ''] })),
+      columns: [...block.columns.slice(0, index), column, ...block.columns.slice(index)],
+      rows: block.rows.map((row) => ({ ...row, cells: [...row.cells.slice(0, index), '', ...row.cells.slice(index)] })),
     });
+    return column.id;
+  }
+
+  function insertWithArrow(event: KeyboardEvent, row: number, column: number) {
+    if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.isComposing) return;
+    if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    event.preventDefault();
+    if (event.repeat) return;
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      const index = row + Number(event.key === 'ArrowDown');
+      const id = insertRow(index);
+      if (id) void focusCell(index, id, block.columns[column].id);
+    } else {
+      const index = column + Number(event.key === 'ArrowRight');
+      const id = insertColumn(index);
+      if (id) void focusCell(row, block.rows[row].id, id);
+    }
   }
 
   function updateColumn(index: number, patch: { name?: string; type?: ColumnType }) {
@@ -68,14 +99,22 @@
 
 <div class="table-tools">
   <button class="button secondary" onclick={paste}><ClipboardPlus size={15} /> Paste range</button>
-  <button class="button ghost" onclick={addRow}><Plus size={15} /> Row</button>
-  <button class="button ghost" onclick={addColumn}><Plus size={15} /> Column</button>
+  <button class="button ghost" title="In a cell: ⌥↑ inserts above, ⌥↓ inserts below" onclick={() => insertRow(block.rows.length)}><Plus size={15} /> Row</button>
+  <button class="button ghost" title="In a cell: ⌥← inserts left, ⌥→ inserts right" onclick={() => insertColumn(block.columns.length)}><Plus size={15} /> Column</button>
   <label class="table-style-label">Style
     <select value={block.style} onchange={(event) => change({ style: event.currentTarget.value as TableStyle })}>
       {#each styles as [value, name]}<option {value}>{name}</option>{/each}
     </select>
   </label>
 </div>
+{#if issues.length}
+  {@const first = issues[0]}
+  <div class="table-validation" role="status">
+    <CircleAlert size={16} />
+    <div><strong>{countLabel(issues.length, 'invalid cell')}</strong><p>{describeCellIssue(block, first)}</p></div>
+    <button class="text-button" onclick={() => void focusCell(first.row, block.rows[first.row].id, block.columns[first.column].id)}>Go to cell</button>
+  </div>
+{/if}
 <div class="editor-grid {block.style}">
   <table>
     <thead><tr><th scope="col" class="row-index">#</th>
@@ -92,13 +131,19 @@
     <tbody>{#each block.rows.slice(0, limit) as row, rowIndex (row.id)}
       <tr><th scope="row" class="row-index">{rowIndex + 1}</th>
         {#each block.columns as column, columnIndex (column.id)}
-          <td><input
+          {@const id = cellId(row.id, column.id)}
+          {@const issue = issueByCell.get(rowIndex + ':' + columnIndex)}
+          <td class:invalid-cell={Boolean(issue)}><input
+            {id}
             class:numeric={column.type === 'decimal'}
             value={row.cells[columnIndex] ?? ''}
             aria-label={column.name + ' row ' + (rowIndex + 1)}
+            aria-invalid={issue ? true : undefined}
+            aria-describedby={issue ? id + '-error' : undefined}
             oninput={(event) => updateCell(rowIndex, columnIndex, event.currentTarget.value)}
+            onkeydown={(event) => insertWithArrow(event, rowIndex, columnIndex)}
             onpaste={(event) => pasteCells(event, rowIndex, columnIndex)}
-          /></td>
+          />{#if issue}<span id={id + '-error'} class="cell-validation-message">{issue}</span>{/if}</td>
         {/each}
         <td class="row-actions"><button class="icon-button small" aria-label={'Delete row ' + (rowIndex + 1)} onclick={() => change({ rows: block.rows.filter((candidate) => candidate.id !== row.id) })}><Trash2 size={13} /></button></td>
       </tr>
