@@ -49,6 +49,7 @@ export type Result = {
   rows: (string | null)[][];
   titleColumns?: number;
   footerRows?: number;
+  tableStyle?: TableStyle;
 };
 
 export function dataRowCount(table: TableBlock) {
@@ -88,13 +89,14 @@ export function createWorkspace(title: string): Workspace {
   return { id: newId(), title, blocks: [], links: [] };
 }
 
+export function createBlock<Kind extends BlockKind>(kind: Kind, position: Position): Extract<Block, { kind: Kind }>;
 export function createBlock(kind: BlockKind, position: Position): Block {
   const base = { id: newId(), position, title: 'Untitled ' + (kind === 'sql' ? 'SQL query' : kinds[kind].label.toLowerCase()) };
   switch (kind) {
     case 'table': {
       const columns: Column[] = ['A', 'B'].map((name) => ({ id: newId(), name, type: 'auto' }));
       const rows = Array.from({ length: 2 }, () => ({ id: newId(), cells: columns.map(() => '') }));
-      return { ...base, kind, columns, rows, numberFormat: 'auto', style: 'banded' };
+      return { ...base, kind, columns, rows, numberFormat: 'auto', style: 'grid' };
     }
     case 'sql':
       return { ...base, kind, sql: 'SELECT 42 AS value;' };

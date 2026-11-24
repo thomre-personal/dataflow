@@ -21,7 +21,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex (The full table must be reachable for keyboard scrolling.) -->
-<div bind:this={scroller} class="result-grid" class:compact class:full-grid={full} class:nowheel={full} class:nopan={full} class:nodrag={full}
+<div bind:this={scroller} class="result-grid" data-table-style={result.tableStyle ?? 'banded'} class:compact class:full-grid={full} class:nowheel={full} class:nopan={full} class:nodrag={full}
   role={full ? 'region' : undefined} aria-label={full ? 'Full table data' : undefined} tabindex={full ? 0 : undefined}
   onscroll={(event) => { if (full) scrollTop = event.currentTarget.scrollTop; }}>
   <table aria-rowcount={full ? result.rows.length + 1 : undefined}>

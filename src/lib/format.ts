@@ -22,6 +22,7 @@ export function tablePreview(table: TableBlock, limit: number, workspace?: Works
   return {
     columns: data.columns,
     rows: table.rows.slice(0, limit).map((_, row) => data.columns.map((_, column) => data.display(row, column) || null)),
+    tableStyle: table.style,
     titleColumns: table.titleColumns,
     footerRows: Math.max(0, Math.min(limit, table.rows.length) - dataRowCount(table)),
   };

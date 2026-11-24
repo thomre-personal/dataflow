@@ -25,6 +25,7 @@ test('pastes a Numbers-style range, queries exact values, links a chart and rest
   await page.getByRole('combobox', { name: 'Number format' }).selectOption('decimal-comma');
   await page.getByRole('button', { name: 'Create table' }).click();
   const pastedTable = page.getByRole('dialog', { name: 'Pasted data' });
+  await expect(pastedTable.getByRole('combobox', { name: 'Style', exact: true })).toHaveValue('grid');
   await expect(pastedTable.getByRole('textbox', { name: 'Note row 1' })).toHaveValue('');
   await expect(pastedTable.getByRole('textbox', { name: 'Amount row 1' })).toHaveValue('1.234,50');
   await pastedTable.getByRole('textbox', { name: 'Amount row 2' }).fill('12,95');
@@ -158,6 +159,8 @@ test('resizes an expanded table, scrolls to its last row and restores the size',
   await expect.poll(async () => (await cardSize(table)).height).toBeGreaterThan(initial.height);
   const resized = await cardSize(table);
   const full = page.getByRole('region', { name: 'Full table data' });
+  await expect(full).toHaveAttribute('data-table-style', 'grid');
+  await expect(full.getByRole('columnheader', { name: 'Item' })).toHaveCSS('border-right-width', '1px');
   await expect(full.getByRole('table')).toHaveAttribute('aria-rowcount', '73');
   await full.evaluate((element) => { element.scrollTop = element.scrollHeight; });
   await expect(full.getByRole('cell', { name: 'Item 72', exact: true })).toBeVisible();
@@ -531,12 +534,16 @@ test('pastes a range over a blank two-by-two table and infers the pasted column 
   const table = page.getByRole('dialog', { name: 'Untitled table' });
   await expect(table.getByRole('textbox', { name: /^[AB] row [12]$/ })).toHaveCount(4);
   await expect(table.getByRole('combobox', { name: 'B type' })).toHaveValue('auto');
+  const style = table.getByRole('combobox', { name: 'Style', exact: true });
+  await expect(style).toHaveValue('grid');
+  await style.selectOption('banded');
   await table.getByRole('button', { name: 'Paste range' }).click();
   const paste = page.getByRole('dialog', { name: 'Paste data' });
   await paste.getByRole('textbox', { name: 'Cell range' }).fill('A\tB\n2026-01-01\t42');
   await paste.getByRole('button', { name: 'Replace table data' }).click();
   await expect(table.getByRole('combobox', { name: 'A type' })).toHaveValue('date');
   await expect(table.getByRole('combobox', { name: 'B type' })).toHaveValue('decimal');
+  await expect(style).toHaveValue('banded');
   await expect(table.getByRole('table').locator('tbody tr')).toHaveCount(1);
 });
 

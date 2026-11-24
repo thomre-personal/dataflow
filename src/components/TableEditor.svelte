@@ -218,7 +218,7 @@
     <button class="text-button" onclick={() => void focusCell(first.row, block.rows[first.row].id, block.columns[first.column].id)}>Go to cell</button>
   </div>
 {/if}
-<div class="editor-grid {block.style}">
+<div class="editor-grid" data-table-style={block.style}>
   <table>
     <thead><tr><th scope="col" class="row-index">#</th>
       {#each block.columns as column, index (column.id)}

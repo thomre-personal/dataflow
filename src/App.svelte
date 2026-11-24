@@ -717,9 +717,9 @@
         });
         modal = pasteFromTableDialog ? 'table' : null;
       } else {
-        const block: Block = {
+        const block = {
           ...createBlock('table', { x: 0, y: 0 }),
-          kind: 'table', ...data, title: 'Pasted data', numberFormat: pasteNumberFormat, style: 'banded',
+          ...data, title: 'Pasted data', numberFormat: pasteNumberFormat,
         };
         block.position = nextBlockPosition(block);
         replaceWorkspace({ ...workspace, blocks: [...workspace.blocks, block] });
