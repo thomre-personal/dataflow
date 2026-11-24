@@ -29,7 +29,7 @@ Click a connection line and press **Delete** to disconnect two blocks. You can a
 
 Drag a block type from the canvas toolbar to place it. A dropped table is ready to edit on the canvas. A dropped query or chart opens its dialog.
 
-Drag a block by its header into an open group. Drag it outside the group to move it out. Groups can contain other groups. Resize a group at its edges or corners, or collapse it to hide its contents while keeping connections to other blocks visible. Focusing a group reveals all of its blocks and nested groups. Connections from its members lead to upstream blocks on the left and downstream blocks on the right.
+Drag a block by its header into an open group. Drag it outside the group to move it out. Drag the background of a group to move the entire group. Groups can contain other groups. Resize a group at its edges or corners, or collapse it to hide its contents while keeping connections to other blocks visible. Focusing a group reveals all of its blocks and nested groups. Connections from its members lead to upstream blocks on the left and downstream blocks on the right.
 
 Use **Undo** and **Redo** in the top bar to step through workspace changes during the current browser session. DataFlow saves the workspace after each step.
 

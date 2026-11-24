@@ -381,7 +381,7 @@
       return {
         id: block.id, type: 'block', position: focusPositions.get(block.id) ?? { ...block.position }, parentId,
         selected: block.id === selectedId,
-        dragHandle: block.kind === 'group' ? '.group-title' : '.node-heading',
+        dragHandle: block.kind === 'group' ? '.group-card' : '.node-heading',
         ...size,
         zIndex: block.kind === 'group' ? depth(block) : 10 + depth(block),
         ariaLabel: kinds[block.kind].label + ': ' + block.title,
@@ -397,6 +397,7 @@
           group: block.kind === 'group' ? {
             drop: groupDrop,
             count: childrenByParent.get(block.id)?.length ?? 0,
+            focused: block.id === center?.id,
             focusExpanded: members.has(block.id),
             hasInput: visibleLinks.some((link) => link.target === block.id),
             hasOutput: visibleLinks.some((link) => link.source === block.id),

@@ -14,7 +14,7 @@
     toggleExpanded?: () => void;
     resize?: (bounds: ResizeParams) => void;
     canResize?: (bounds: ResizeParams) => boolean;
-    group?: { count: number; drop: { target: string }; focusExpanded: boolean; hasInput: boolean; hasOutput: boolean };
+    group?: { count: number; drop: { target: string }; focused: boolean; focusExpanded: boolean; hasInput: boolean; hasOutput: boolean };
     edit?: {
       workspace: Workspace;
       toggleLock: () => void;
@@ -69,7 +69,7 @@
 {/if}
 
 {#if block.kind === 'group'}
-  <div class="group-card" class:selected class:collapsed={!expanded} class:drop-target={data.group?.drop.target === block.id}>
+  <div class="group-card" class:selected class:focused={data.group?.focused} class:collapsed={!expanded} class:drop-target={data.group?.drop.target === block.id}>
     {#if data.group?.hasInput}<Handle type="target" position={Position.Left} isConnectable={false} class="group-proxy-port" />{/if}
     {#if data.group?.hasOutput}<Handle type="source" position={Position.Right} isConnectable={false} class="group-proxy-port" />{/if}
     <header class="group-title">

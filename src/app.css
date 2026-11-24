@@ -250,10 +250,13 @@ code { font-family: var(--mono); }
 .node-state.error { color: var(--error); }
 .node-state.error i { background: var(--error); }
 .group-card { width: 100%; height: 100%; border-radius: 13px; background: color-mix(in srgb, var(--accent-soft), transparent 35%); border: 1px dashed var(--accent-line); }
+.svelte-flow__node.draggable > .group-card { cursor: grab; }
+.svelte-flow__node.dragging > .group-card { cursor: grabbing; }
 .group-card.selected { border-style: solid; }
 .group-card.collapsed { background: var(--surface); border-style: solid; box-shadow: var(--shadow); }
 .group-card.drop-target { border-style: solid; border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent-line); }
-.group-title { display: flex; align-items: center; gap: 8px; margin: 6px 9px; padding: 4px 7px; color: var(--accent); border-radius: 6px; background: var(--accent-soft); cursor: grab; font-weight: 650; }
+.group-card.focused { border: 2px solid var(--accent); }
+.group-title { display: flex; align-items: center; gap: 8px; margin: 6px 9px; padding: 4px 7px; color: var(--accent); border-radius: 6px; background: var(--accent-soft); font-weight: 650; }
 .group-title > div { min-width: 0; flex: 1; }
 .group-title .block-name-button { display: flex; width: 100%; }
 .group-title p { color: var(--muted); font-size: 10px; }

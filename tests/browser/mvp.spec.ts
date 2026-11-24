@@ -386,6 +386,20 @@ test('resizes and collapses groups and moves canvas blocks in and out of nested 
   await dragBlock(page, table.locator('.node-heading'), innerBox.x + 70, innerBox.y + 78);
   await expect(parent).toHaveValue((await inner.getAttribute('data-id'))!);
 
+  const beforeGroupDrag = (await outerCard.boundingBox())!;
+  const beforeChildDrag = (await table.boundingBox())!;
+  const zoom = beforeGroupDrag.width / (await outerSize()).width;
+  const dragStart = { x: beforeGroupDrag.x + 12 * zoom, y: beforeGroupDrag.y + 82 * zoom };
+  await page.mouse.move(dragStart.x, dragStart.y);
+  await page.mouse.down();
+  await page.mouse.move(dragStart.x - 40, dragStart.y + 25, { steps: 12 });
+  await page.mouse.up();
+  await expect.poll(async () => (await outerCard.boundingBox())!.x).toBeLessThan(beforeGroupDrag.x - 30);
+  const afterGroupDrag = (await outerCard.boundingBox())!;
+  const afterChildDrag = (await table.boundingBox())!;
+  expect(afterChildDrag.x - afterGroupDrag.x).toBeCloseTo(beforeChildDrag.x - beforeGroupDrag.x);
+  expect(afterChildDrag.y - afterGroupDrag.y).toBeCloseTo(beforeChildDrag.y - beforeGroupDrag.y);
+
   await outer.getByRole('button', { name: 'Collapse group Budget group' }).click();
   await expect(inner).toHaveCount(0);
   await expect(table).toHaveCount(0);
@@ -440,6 +454,8 @@ test('focusing a collapsed group shows nested members and their external inputs 
   await search.fill('Budget group');
   await search.press('Enter');
   await expect(outer.locator('.group-card')).not.toHaveClass(/collapsed/);
+  await expect(outer.locator('.group-card')).toHaveCSS('border-top-width', '2px');
+  await expect(inner.locator('.group-card')).toHaveCSS('border-top-width', '1px');
   await expect(inner.locator('.group-card')).not.toHaveClass(/collapsed/);
   await expect(query).toBeVisible();
   await expect(canvasBlock(page, 'Unrelated group')).toHaveCount(0);
