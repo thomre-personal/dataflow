@@ -35,7 +35,7 @@ Open **Settings** from the gear in the top right to choose Light, Dark, or Auto,
 
 In the table editor, select a cell and press **Option+↑** or **Option+↓** to insert a row above or below. Press **Option+←** or **Option+→** to insert a column to the left or right. Use **Alt** on a non-Mac keyboard.
 
-Set **Title columns** to highlight columns on the left. Set **Footer rows** to keep summary rows at the bottom. SQL queries and charts include title columns and skip footer rows.
+Set **Title columns** to highlight columns on the left. Set **Footer rows** to keep summary rows at the bottom. Footer cells can contain text or formulas in any column. DataFlow still checks for formula errors. SQL queries and charts include title columns and skip footer rows.
 
 New columns start with letter names and the **Auto** type. Auto uses the data rows to infer a column type for SQL and charts. Use **First row** to switch between starting at 1 and starting at 0. Use the trash button in a column header to delete that column.
 
@@ -54,7 +54,7 @@ Type `=` to see formula suggestions. Use the arrow keys and **Return** to choose
 
 Column totals, averages, counts, and date aggregates use data rows and skip footer rows. Direct column references in `CONCAT` use the row that contains the formula. You can also pass a function result to `CONCAT`. For example, `=CONCAT("DISTINCT:", COUNT(DISTINCT(Category)))` displays `DISTINCT:3` when there are three unique nonempty categories.
 
-Date, number, and Boolean columns validate their cells as you edit or paste. Empty cells are allowed. DataFlow shows invalid values so you can correct them before running a query or plotting the table.
+Date, number, and Boolean columns validate their data rows as you edit or paste. Empty cells are allowed. DataFlow shows invalid values so you can correct them before running a query or plotting the table.
 
 The app saves drafts and canvas positions in IndexedDB. DuckDB runs in a local browser worker. A separate browser profile or address has separate storage. Clearing that storage deletes its local workspaces.
 

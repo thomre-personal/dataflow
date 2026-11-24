@@ -421,6 +421,7 @@ test('calculates table sums, keeps formula references after rename, and handles 
   const name = table.getByRole('textbox', { name: 'Column 1 name' });
   await name.fill('Amount');
   await name.press('Tab');
+  await table.getByRole('combobox', { name: 'Amount type' }).selectOption('decimal');
   await table.getByRole('button', { name: 'Column', exact: true }).click();
   await table.getByRole('button', { name: 'Row', exact: true }).click();
   await table.getByRole('button', { name: 'Row', exact: true }).click();
@@ -436,6 +437,11 @@ test('calculates table sums, keeps formula references after rename, and handles 
   await namedSum.press('Tab');
   await expect(namedSum).toHaveValue('0.3');
   await expect(footer).toHaveValue('0.3');
+  await footer.fill('=CONCAT("Summe: ", SUM())');
+  await footer.press('Enter');
+  await expect(footer).toHaveValue('Summe: 0.3');
+  await expect(footer).not.toHaveAttribute('aria-invalid', 'true');
+  await expect(table.getByRole('status')).toHaveCount(0);
   await name.fill('Revenue');
   await name.press('Tab');
   await expect(namedSum).toHaveValue('0.3');

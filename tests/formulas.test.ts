@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { bindTableFormulas, cellFormulaText } from '../src/lib/formulas.ts';
 import { tableResult } from '../src/lib/format.ts';
-import { tableData } from '../src/lib/table-data.ts';
+import { invalidTableCells, tableData } from '../src/lib/table-data.ts';
 import { createBlock } from '../src/lib/workspace.ts';
 
 test('evaluates aggregates for text, numbers, and dates with footer rows excluded', () => {
@@ -75,4 +75,26 @@ test('binds nested CONCAT expressions and keeps their column references after a 
   const renamed = [{ ...columns[0], name: 'Expense category' }, columns[1]];
   assert.equal(cellFormulaText(bound.rows[0], renamed, 1), '=CONCAT("DISTINCT:", COUNT(DISTINCT(Expense category)))');
   assert.equal(tableData(bindTableFormulas({ ...bound, columns: renamed })).display(0, 1), 'DISTINCT:2');
+});
+
+test('allows text summaries in typed footers and still reports broken formulas', () => {
+  const table = createBlock('table', { x: 0, y: 0 });
+  assert.ok(table.kind === 'table');
+  const columns = [{ ...table.columns[0], name: 'Amount', type: 'decimal' as const }];
+  const rows = [
+    { id: 'value', cells: ['2.50'] },
+    { id: 'wrong-type', cells: ['=CONCAT("Amount: ", "text")'] },
+    { id: 'text', cells: ['Total'] },
+    { id: 'broken', cells: ['=SUM(Missing)'] },
+  ];
+  const block = bindTableFormulas({ ...table, columns, rows, footerRows: 2 });
+  assert.deepEqual([...invalidTableCells(block)].map(({ row }) => row), [1, 3]);
+
+  const summary = bindTableFormulas({ ...table, columns, footerRows: 1, rows: [
+    rows[0], { id: 'summary', cells: ['=CONCAT("Summe: ", SUM())'] },
+  ] });
+  const data = tableData(summary);
+  assert.equal(data.display(1, 0), 'Summe: 2.50');
+  assert.deepEqual(data.cell(1, 0), { value: 'Summe: 2.50' });
+  assert.deepEqual(tableResult(summary).rows, [['2.50']]);
 });

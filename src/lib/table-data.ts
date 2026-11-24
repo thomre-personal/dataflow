@@ -238,7 +238,7 @@ export function tableData(table: TableBlock) {
   function cell(row: number, column: number) {
     const value = read(row, column);
     if (value.message) return { message: value.message };
-    const type = columns[column].type;
+    const type = row < rowCount ? columns[column].type : 'text';
     if ((value.forcedText || value.calculated === 'text') && value.value && type !== 'text') {
       return { message: 'This is text. Use Auto or Text for this column.' };
     }
