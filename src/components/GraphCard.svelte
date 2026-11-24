@@ -2,7 +2,7 @@
   import type { ResizeParams } from '@xyflow/svelte';
   import type { Block, Result, TableBlock, Workspace } from '../lib/workspace';
   import type { Hotkeys } from '../lib/preferences';
-  import type { CellAddress, CellSelection } from '../lib/cell-style';
+  import type { CellSelection } from '../lib/cell-style';
   export type CardData = Record<string, unknown> & {
     block: Block;
     result?: Result;
@@ -24,7 +24,7 @@
       paste: () => void;
       error: (message: string) => void;
       activeCell?: CellSelection;
-      selectCell: (cell: CellAddress, extend?: boolean) => void;
+      selectCell: (cell: CellSelection, extend?: boolean) => void;
     };
   };
 </script>

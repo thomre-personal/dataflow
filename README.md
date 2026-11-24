@@ -37,13 +37,15 @@ Open **Settings** from the gear in the top right to choose Light, Dark, or Auto,
 
 Click a cell once to select it. Drag from one cell to another to select the rectangle between them. You can also select a cell and Shift-click the other corner. Click a selected cell again or press **Enter** to edit. Press **Shift+Enter** while editing to insert a line break and **Enter** to confirm. Long text wraps within the width of the cell. This visual wrapping leaves the stored text as entered.
 
+Click a row number or a column header to select the entire row or column. This includes cells beyond the visible rows. Double-click a column header or press **F2** while it has focus to open its settings.
+
 Drag the divider at the right edge of a column header or the bottom edge of a row number to resize it. Double-click a divider to fit its contents. The canvas card grows if the resized grid needs more room. Double-click an outer card edge to fit the table along that edge.
 
 In the table editor, select a cell and press **Option+↑** or **Option+↓** to insert a row above or below. Press **Option+←** or **Option+→** to insert a column to the left or right. Use **Alt** on a non-Mac keyboard.
 
 Set **Title columns** to highlight columns on the left. Set **Footer rows** to keep summary rows at the bottom. Footer cells can contain text or formulas in any column. DataFlow still checks for formula errors. SQL queries and charts include title columns and skip footer rows.
 
-New tables use the **Grid** style by default. Blank tables start with two rows and two columns, **A** and **B**. New columns use the **Auto** type. Auto uses the data rows to infer a column type for SQL and charts. Use **First row** to switch between starting at 1 and starting at 0. Use the trash button in a column header to delete that column.
+New tables use the **Grid** style by default. Blank tables start with two rows and two columns, **A** and **B**. New columns use the **Auto** type. Auto uses the data rows to infer a column type for SQL and charts. Use **First row** to switch between starting at 1 and starting at 0. In **Column settings**, edit the name, set the data type, or delete the column.
 
 Enter `=SUM()` in a footer cell to total its own column. Enter `=SUM(Amount)` in another column to total `Amount`. You can use a column letter such as `=SUM(A)` as well. A matching column name takes precedence over a letter. Sums include data rows and skip footer rows. Click a calculated cell to see its formula. Renaming a column updates formulas that refer to its name.
 

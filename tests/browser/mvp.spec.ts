@@ -104,6 +104,10 @@ function canvasBlock(page: Page, title: string) {
   return page.locator('.svelte-flow__node').filter({ has: page.getByRole('heading', { name: title, exact: true }) });
 }
 
+function columnHeader(table: Locator, name: string) {
+  return table.getByRole('button', { name: 'Select column ' + name, exact: true });
+}
+
 function cardSize(node: Locator) {
   return node.locator('.graph-card').evaluate((element: HTMLElement) => ({ width: element.offsetWidth, height: element.offsetHeight }));
 }
@@ -379,7 +383,7 @@ test('places blocks from the toolbar, edits a table inline, and edits SQL and ch
   await expect(inlineTable.getByRole('textbox', { name: /^[AB] row [12]$/ })).toHaveCount(4);
   await expect(inlineTable.getByRole('table').locator('tbody tr')).toHaveCount(2);
   await inlineTable.getByRole('textbox', { name: 'A row 1', exact: true }).fill('2');
-  await expect(inlineTable.getByRole('combobox', { name: 'A type' })).toHaveValue('auto');
+  await expect(columnHeader(inlineTable, 'A')).toContainText('Auto');
   await inlineTable.getByRole('textbox', { name: 'A row 2', exact: true }).fill('99');
   await inlineTable.getByRole('spinbutton', { name: 'Title columns' }).fill('1');
   await inlineTable.getByRole('spinbutton', { name: 'Title columns' }).press('Tab');
@@ -585,12 +589,14 @@ test('calculates table sums, keeps formula references after rename, and handles 
   await page.getByRole('button', { name: 'Create workspace' }).click();
   await page.getByRole('button', { name: 'Add table', exact: true }).click();
   const table = page.getByRole('dialog', { name: 'Untitled table' });
-  await expect(table.getByRole('combobox', { name: 'A type' })).toHaveValue('auto');
+  await expect(columnHeader(table, 'A')).toContainText('Auto');
   await table.getByRole('combobox', { name: 'First row' }).selectOption('0');
-  const name = table.getByRole('textbox', { name: 'Column 1 name' });
+  const columnSettings = page.getByRole('dialog', { name: 'Column settings', exact: true });
+  await columnHeader(table, 'A').dblclick();
+  const name = columnSettings.getByRole('textbox', { name: 'Name', exact: true });
   await name.fill('Amount');
-  await name.press('Tab');
-  await table.getByRole('combobox', { name: 'Amount type' }).selectOption('decimal');
+  await columnSettings.getByRole('combobox', { name: 'Data type' }).selectOption('decimal');
+  await columnSettings.getByRole('button', { name: 'Save', exact: true }).click();
   await table.getByRole('button', { name: 'Row', exact: true }).click();
   const footerCount = table.getByRole('spinbutton', { name: 'Footer rows' });
   await footerCount.fill('1');
@@ -609,15 +615,19 @@ test('calculates table sums, keeps formula references after rename, and handles 
   await expect(footer).toHaveValue('Summe: 0.3');
   await expect(footer).not.toHaveAttribute('aria-invalid', 'true');
   await expect(table.getByRole('status')).toHaveCount(0);
+  await columnHeader(table, 'Amount').dblclick();
   await name.fill('Revenue');
-  await name.press('Tab');
+  await name.press('Enter');
   await expect(namedSum).toHaveValue('0.3');
   await namedSum.focus();
   await expect(namedSum).toHaveValue('=SUM(Revenue)');
-  await table.getByRole('button', { name: 'Delete column Revenue', exact: true }).click();
+  await columnHeader(table, 'Revenue').dblclick();
+  await columnSettings.getByRole('button', { name: 'Delete column Revenue', exact: true }).click();
   await expect(namedSum).toHaveAttribute('aria-invalid', 'true');
   await expect(namedSum).toHaveValue('#ERROR');
-  await expect(table.getByRole('button', { name: 'Delete column B', exact: true })).toBeDisabled();
+  await columnHeader(table, 'B').dblclick();
+  await expect(columnSettings.getByRole('button', { name: 'Delete column B', exact: true })).toBeDisabled();
+  await columnSettings.getByRole('button', { name: 'Cancel', exact: true }).click();
   await table.getByRole('button', { name: 'Done' }).click();
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   const canvasTable = canvasBlock(page, 'Untitled table');
@@ -663,9 +673,10 @@ test('suggests formulas in both table editors and uses Return to accept suggesti
   await inline.fill('=COUNT(DISTINCT(A))');
   await inline.press('Enter');
   await expect(inline).toHaveValue('1');
-  const category = canvasBlock(page, 'Untitled table').getByRole('textbox', { name: 'Column 1 name' });
-  await category.fill('Category');
-  await category.press('Tab');
+  await columnHeader(canvasBlock(page, 'Untitled table'), 'A').dblclick();
+  const columnSettings = page.getByRole('dialog', { name: 'Column settings', exact: true });
+  await columnSettings.getByRole('textbox', { name: 'Name', exact: true }).fill('Category');
+  await columnSettings.getByRole('button', { name: 'Save', exact: true }).click();
   await inline.fill('=CONCAT("DISTINCT:", COUNT(DISTINCT(Category)))');
   await inline.press('Enter');
   await expect(inline).toHaveValue('DISTINCT:1');
@@ -848,6 +859,62 @@ test('formats cells and pastes a copied style into a range without changing its 
   await expect(styled).toHaveCSS('font-size', '25px');
 });
 
+test('selects all cells in a row or column from its header and opens settings on double-click', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New workspace', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Workspace name' }).fill('Header selection');
+  await page.getByRole('button', { name: 'Create workspace' }).click();
+  await page.getByRole('button', { name: 'Paste data', exact: true }).first().click();
+  const paste = page.getByRole('dialog', { name: 'Paste data', exact: true });
+  const rows = Array.from({ length: 61 }, (_, index) => (index + 1) + '\tkeep ' + (index + 1));
+  await paste.getByRole('textbox', { name: 'Cell range' }).fill('A\tB\n' + rows.join('\n'));
+  await paste.getByRole('button', { name: 'Create table', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Pasted data', exact: true });
+  const settings = page.getByRole('dialog', { name: 'Column settings', exact: true });
+  const firstRow = dialog.getByRole('button', { name: 'Select row 1', exact: true });
+  const firstColumn = columnHeader(dialog, 'A');
+  const selectedCells = dialog.locator('td.range-cell');
+
+  await firstRow.click();
+  await expect(firstRow).toHaveAttribute('aria-pressed', 'true');
+  await expect(selectedCells).toHaveCount(2);
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.keyboard.press('ControlOrMeta+c');
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(rows[0]);
+
+  await firstColumn.click();
+  await expect(firstRow).toHaveAttribute('aria-pressed', 'false');
+  await expect(firstColumn).toHaveAttribute('aria-pressed', 'true');
+  await expect(selectedCells).toHaveCount(60);
+  await expect(settings).toHaveCount(0);
+  await firstColumn.dblclick();
+  const name = settings.getByRole('textbox', { name: 'Name', exact: true });
+  await expect(name).toBeFocused();
+  await name.fill('Discarded');
+  await name.press('Escape');
+  await expect(firstColumn).toBeFocused();
+  await expect(firstColumn).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('Delete');
+  await page.keyboard.press('ControlOrMeta+c');
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('\n'.repeat(60));
+
+  await dialog.getByRole('button', { name: 'Show more', exact: true }).click();
+  await expect(dialog.getByRole('textbox', { name: 'A row 61', exact: true })).toHaveValue('');
+  await expect(dialog.getByRole('textbox', { name: 'B row 61', exact: true })).toHaveValue('keep 61');
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(dialog.getByRole('textbox', { name: 'A row 61', exact: true })).toHaveValue('61');
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+  await page.getByRole('button', { name: 'Fit canvas', exact: true }).click();
+  await waitForCanvasFit(page);
+  const card = canvasBlock(page, 'Pasted data');
+  await card.getByRole('button', { name: 'Select row 1', exact: true }).click();
+  await expect(card.locator('td.range-cell')).toHaveCount(2);
+  await page.keyboard.press('Backspace');
+  await expect(card.getByRole('textbox', { name: 'A row 1', exact: true })).toHaveValue('');
+  await expect(card.getByRole('textbox', { name: 'B row 1', exact: true })).toHaveValue('');
+  await expect(card.getByRole('textbox', { name: 'B row 2', exact: true })).toHaveValue('keep 2');
+});
+
 test('drags, copies and clears rectangular cell ranges in both table editors', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New workspace', exact: true }).click();
@@ -1026,7 +1093,7 @@ test('pastes a range over a blank two-by-two table and infers the pasted column 
   await page.getByRole('button', { name: 'Add table', exact: true }).click();
   const table = page.getByRole('dialog', { name: 'Untitled table' });
   await expect(table.getByRole('textbox', { name: /^[AB] row [12]$/ })).toHaveCount(4);
-  await expect(table.getByRole('combobox', { name: 'B type' })).toHaveValue('auto');
+  await expect(columnHeader(table, 'B')).toContainText('Auto');
   const style = table.getByRole('combobox', { name: 'Style', exact: true });
   await expect(style).toHaveValue('grid');
   await style.selectOption('banded');
@@ -1034,8 +1101,8 @@ test('pastes a range over a blank two-by-two table and infers the pasted column 
   const paste = page.getByRole('dialog', { name: 'Paste data' });
   await paste.getByRole('textbox', { name: 'Cell range' }).fill('A\tB\n2026-01-01\t42');
   await paste.getByRole('button', { name: 'Replace table data' }).click();
-  await expect(table.getByRole('combobox', { name: 'A type' })).toHaveValue('date');
-  await expect(table.getByRole('combobox', { name: 'B type' })).toHaveValue('decimal');
+  await expect(columnHeader(table, 'A')).toContainText('Date');
+  await expect(columnHeader(table, 'B')).toContainText('Number');
   await expect(style).toHaveValue('banded');
   await expect(table.getByRole('table').locator('tbody tr')).toHaveCount(1);
 });

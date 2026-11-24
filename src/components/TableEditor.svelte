@@ -11,8 +11,9 @@
   import { eventHotkey, hotkeyLabel } from '../lib/preferences';
   import type { Hotkeys } from '../lib/preferences';
   import { tableCardContentSize } from '../lib/table-layout';
-  import type { ColumnType, Formula, TableBlock, TableStyle, Workspace } from '../lib/workspace';
+  import type { Column, ColumnType, Formula, TableBlock, TableStyle, Workspace } from '../lib/workspace';
   import FormulaSuggestions from './FormulaSuggestions.svelte';
+  import Modal from './Modal.svelte';
 
   let { block, workspace, hotkeys, change, paste, error, activeCell, selectCell, inline = false }: {
     block: TableBlock;
@@ -22,7 +23,7 @@
     paste: () => void;
     error: (message: string) => void;
     activeCell?: CellSelection;
-    selectCell: (cell: CellAddress, extend?: boolean) => void;
+    selectCell: (cell: CellSelection, extend?: boolean) => void;
     inline?: boolean;
   } = $props();
 
@@ -42,8 +43,12 @@
   let issues = $derived([...invalidTableCells(block, data)].filter((issue) =>
     issue.row !== editing?.row || issue.column !== editing.column || !isFormulaEntry(cellDraft)));
   let issueByCell = $derived(new Map(issues.map((issue) => [issue.row + ':' + issue.column, issue.message])));
+  let cellAnchor = $derived(activeCell?.axis ? undefined : activeCell);
   let bounds = $derived(cellSelectionBounds(block, activeCell));
-  let range = $derived(activeCell?.end ? bounds : undefined);
+  let range = $derived(activeCell?.axis || cellAnchor?.end ? bounds : undefined);
+  let columnSettings = $state<Column>();
+  let columnSettingsTrigger: HTMLButtonElement | undefined;
+  let settingsColumnIndex = $derived(block.columns.findIndex(({ id }) => id === columnSettings?.id));
   const rowIndexWidth = 35;
   const rowActionsWidth = 30;
   let table = $state<HTMLTableElement>();
@@ -57,6 +62,7 @@
 
   const editorId = $props.id();
   const suggestionsId = editorId + '-formulas';
+  const settingsFormId = editorId + '-column-settings';
   const cellId = (rowId: string, columnId: string) => editorId + '-cell-' + rowId + '-' + columnId;
 
   function renderedColumnWidths() {
@@ -142,14 +148,14 @@
 
   function fitColumn(id: string, index: number) {
     const header = table?.tHead?.rows[0].cells[index + 1];
-    const name = header?.querySelector('input');
+    const name = header?.querySelector<HTMLElement>('.column-name');
     if (!header || !name) return;
     const context = document.createElement('canvas').getContext('2d');
     if (!context) return;
     const heading = getComputedStyle(name);
     context.font = heading.font;
     const padding = (style: CSSStyleDeclaration) => parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
-    let width = Math.max(defaultTableColumnWidth, context.measureText(name.value).width
+    let width = Math.max(defaultTableColumnWidth, context.measureText(name.textContent ?? '').width
       + padding(heading) + header.offsetWidth - name.offsetWidth);
     const sample = table?.tBodies[0]?.rows[0]?.cells[index + 1]?.querySelector('textarea');
     if (sample && table) {
@@ -219,6 +225,7 @@
   function copyCells(event: ClipboardEvent) {
     const selection = bounds;
     if (event.target !== event.currentTarget || !selection || !event.clipboardData) return;
+    if (event.currentTarget instanceof HTMLButtonElement && event.currentTarget.ariaPressed !== 'true') return;
     const rows = block.rows.slice(selection.top, selection.bottom + 1);
     const columns = block.columns.slice(selection.left, selection.right + 1);
     copyGrid(event.clipboardData, rows.map((row) => columns.map((column, index) => ({
@@ -354,18 +361,18 @@
   function cellPointer(event: PointerEvent & { currentTarget: HTMLTableCellElement }, address: CellAddress) {
     if (event.button !== 0 || cellDrag) return;
     const cell = event.currentTarget;
-    if (event.shiftKey && activeCell) {
+    if (event.shiftKey && cellAnchor) {
       event.preventDefault();
-      document.getElementById(cellId(activeCell.rowId, activeCell.columnId))?.closest('td')?.focus({ preventScroll: true });
+      document.getElementById(cellId(cellAnchor.rowId, cellAnchor.columnId))?.closest('td')?.focus({ preventScroll: true });
       selectCell(address, true);
       return;
     }
     if (editing && event.target === editing.input) return;
 
-    const isAnchor = activeCell?.rowId === address.rowId && activeCell.columnId === address.columnId;
+    const isAnchor = cellAnchor?.rowId === address.rowId && cellAnchor.columnId === address.columnId;
     event.preventDefault();
     cell.setPointerCapture(event.pointerId);
-    cellDrag = { pointer: event.pointerId, end: cell, editOnRelease: isAnchor && !activeCell?.end };
+    cellDrag = { pointer: event.pointerId, end: cell, editOnRelease: isAnchor && !cellAnchor?.end };
     if (!cellDrag.editOnRelease && (isAnchor || document.activeElement === cell)) selectCell(address);
     cell.focus({ preventScroll: true });
   }
@@ -398,14 +405,19 @@
     cellDrag = undefined;
   }
 
+  function clearSelectionWithKey(event: KeyboardEvent) {
+    if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey
+      || (event.key !== 'Delete' && event.key !== 'Backspace')) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.repeat) clearSelectedCells();
+    return true;
+  }
+
   function selectionKeyboard(event: KeyboardEvent & { currentTarget: HTMLTableCellElement }, row: number, column: number) {
-    if (event.target !== event.currentTarget || event.isComposing) return;
+    if (event.target !== event.currentTarget || event.isComposing || clearSelectionWithKey(event)) return;
     const plain = !event.altKey && !event.ctrlKey && !event.metaKey;
-    if (plain && !event.shiftKey && (event.key === 'Delete' || event.key === 'Backspace')) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (!event.repeat) clearSelectedCells();
-    } else if (plain && (event.key === 'Enter' || event.key === 'F2' || event.key.length === 1)) {
+    if (plain && (event.key === 'Enter' || event.key === 'F2' || event.key.length === 1)) {
       const input = event.currentTarget.querySelector('textarea');
       if (!input) return;
       event.preventDefault();
@@ -420,8 +432,47 @@
     }
   }
 
-  function updateColumn(index: number, patch: { name?: string; type?: ColumnType }) {
-    change({ columns: block.columns.map((column, i) => i === index ? { ...column, ...patch } : column) });
+  function headerSelectionKeyboard(event: KeyboardEvent & { currentTarget: HTMLButtonElement }) {
+    if (event.currentTarget.ariaPressed === 'true') clearSelectionWithKey(event);
+  }
+
+  function selectHeader(button: HTMLButtonElement, selection: CellSelection) {
+    button.focus({ preventScroll: true });
+    selectCell(selection);
+  }
+
+  function columnHeaderKeyboard(event: KeyboardEvent & { currentTarget: HTMLButtonElement }, column: Column) {
+    if (event.key !== 'F2' || event.isComposing) {
+      headerSelectionKeyboard(event);
+      return;
+    }
+    event.preventDefault();
+    if (event.repeat) return;
+    selectCell({ axis: 'column', columnId: column.id });
+    openColumnSettings(column, event.currentTarget);
+  }
+
+  function openColumnSettings(column: Column, trigger: HTMLButtonElement) {
+    columnSettingsTrigger = trigger;
+    columnSettings = { ...column };
+  }
+
+  async function closeColumnSettings() {
+    const trigger = columnSettingsTrigger;
+    columnSettingsTrigger = undefined;
+    columnSettings = undefined;
+    await tick();
+    trigger?.focus({ preventScroll: true });
+  }
+
+  function saveColumnSettings(event: SubmitEvent) {
+    event.preventDefault();
+    const draft = columnSettings;
+    const current = block.columns[settingsColumnIndex];
+    if (draft && current && (current.name !== draft.name || current.type !== draft.type)) {
+      change({ columns: block.columns.map((column) => column.id === draft.id ? { ...column, name: draft.name, type: draft.type } : column) });
+    }
+    void closeColumnSettings();
   }
 
   function deleteColumn(index: number) {
@@ -506,16 +557,20 @@
     </colgroup>
     <thead><tr><th scope="col" class="row-index">#</th>
       {#each block.columns as column, index (column.id)}
+        {@const letter = columnLetter(index)}
         <th scope="col" class:title-column={index < titleColumns}>
-          <div class="column-heading">
-            <span title="Column letter">{columnLetter(index)}</span>
-            <input value={column.name} onchange={(event) => updateColumn(index, { name: event.currentTarget.value })} aria-label={'Column ' + (index + 1) + ' name'} />
-            <button class="icon-button small" disabled={block.columns.length === 1} aria-label={'Delete column ' + column.name}
-              title={'Delete column ' + column.name} onclick={() => deleteColumn(index)}><Trash2 size={12} /></button>
-          </div>
-          <select value={column.type} onchange={(event) => updateColumn(index, { type: event.currentTarget.value as ColumnType })} aria-label={column.name + ' type'}>
-            {#each types as [value, name]}<option {value}>{name}</option>{/each}
-          </select>
+          <button type="button" class="table-header-select column-select nokey" data-table-selection=""
+            aria-label={'Select column ' + column.name} aria-pressed={activeCell?.axis === 'column' && activeCell.columnId === column.id}
+            title={'Double-click or press F2 to edit column ' + column.name}
+            onclick={(event) => selectHeader(event.currentTarget, { axis: 'column', columnId: column.id })}
+            ondblclick={(event) => openColumnSettings(column, event.currentTarget)}
+            onkeydown={(event) => columnHeaderKeyboard(event, column)} oncopy={copyCells}>
+            <span class="column-heading">
+              {#if letter !== column.name}<span class="column-letter">{letter}</span>{/if}
+              <span class="column-name">{column.name || letter}</span>
+            </span>
+            <span class="column-type">{types.find(([type]) => type === column.type)?.[1]}</span>
+          </button>
           {@render resizeHandle(column.id, 'Resize column ' + column.name, () => fitColumn(column.id, index), true)}
         </th>
       {/each}
@@ -524,7 +579,13 @@
     <tbody>{#each block.rows.slice(0, limit) as row, rowIndex (row.id)}
       {@const height = rowHeight(row.id)}
       <tr class:footer-row={rowIndex >= dataRows} style:height={height === undefined ? undefined : height + 'px'}>
-        <th scope="row" class="row-index">{rowNumber(block, rowIndex)}
+        <th scope="row" class="row-index">
+          <button type="button" class="table-header-select row-select nokey" data-table-selection=""
+            aria-label={'Select row ' + rowNumber(block, rowIndex)} aria-pressed={activeCell?.axis === 'row' && activeCell.rowId === row.id}
+            onclick={(event) => selectHeader(event.currentTarget, { axis: 'row', rowId: row.id })}
+            onkeydown={headerSelectionKeyboard} oncopy={copyCells}>
+            {rowNumber(block, rowIndex)}
+          </button>
           {@render resizeHandle(row.id, 'Resize row ' + rowNumber(block, rowIndex), () => fitRow(row.id))}
         </th>
         {#each block.columns as column, columnIndex (column.id)}
@@ -535,7 +596,7 @@
           {@const value = editing?.id === id ? cellDraft : data.display(rowIndex, columnIndex)}
           {@const inRange = range && rowIndex >= range.top && rowIndex <= range.bottom && columnIndex >= range.left && columnIndex <= range.right}
           {@const address = { rowId: row.id, columnId: column.id }}
-          {@const active = activeCell?.rowId === row.id && activeCell.columnId === column.id}
+          {@const active = cellAnchor?.rowId === row.id && cellAnchor.columnId === column.id}
           <!-- svelte-ignore a11y_no_noninteractive_tabindex (Cells can be selected with the keyboard before entering edit mode.) -->
           <td data-table-cell="" class="nokey" tabindex="0" class:invalid-cell={Boolean(issue)} class:title-column={columnIndex < titleColumns}
             class:formula-cell={isFormula} class:range-cell={inRange} class:selected-cell={active}
@@ -569,7 +630,7 @@
                 event.currentTarget.value = cellDraft;
                 event.currentTarget.select();
               }
-              if (!active || activeCell?.end) selectCell(address);
+              if (!active || cellAnchor?.end) selectCell(address);
             }}
             onblur={() => { if (editing?.id === id) editing = undefined; }}
             oninput={(event) => {
@@ -595,6 +656,31 @@
 </div>
 {#if editing && suggestions.length}
   <FormulaSuggestions anchor={editing.input} id={suggestionsId} choices={suggestions} active={suggestions[activeSuggestion]} pick={completeFormula} />
+{/if}
+{#if columnSettings && settingsColumnIndex >= 0}
+  {@const draft = columnSettings}
+  {#snippet settingsFields()}
+    <form id={settingsFormId} onsubmit={saveColumnSettings}>
+      <label class="field">Name
+        <!-- svelte-ignore a11y_autofocus (The user explicitly opens column settings to edit them.) -->
+        <input bind:value={draft.name} autofocus />
+      </label>
+      <label class="field">Data type
+        <select bind:value={draft.type}>
+          {#each types as [value, name]}<option {value}>{name}</option>{/each}
+        </select>
+      </label>
+    </form>
+  {/snippet}
+  {#snippet settingsFooter()}
+    <button type="button" class="button ghost column-delete" disabled={block.columns.length === 1}
+      aria-label={'Delete column ' + block.columns[settingsColumnIndex].name}
+      onclick={() => { deleteColumn(settingsColumnIndex); void closeColumnSettings(); }}><Trash2 size={15} /> Delete column</button>
+    <button type="button" class="button secondary" onclick={closeColumnSettings}>Cancel</button>
+    <button type="submit" class="button primary" form={settingsFormId}>Save</button>
+  {/snippet}
+  <Modal className="column-settings-dialog" title="Column settings" subtitle={'Column ' + columnLetter(settingsColumnIndex)}
+    close={closeColumnSettings} children={settingsFields} footer={settingsFooter} />
 {/if}
 {#if inline}{@render tools()}{/if}
 <div class="table-count"><span>{countLabel(block.rows.length, 'row')} · {countLabel(block.columns.length, 'column')}</span>

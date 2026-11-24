@@ -24,7 +24,7 @@
   import { importGrid, parseDelimited } from './lib/clipboard';
   import { bindTableFormulas, bindWorkspaceFormulas, cellFormulaText, isFormulaEntry } from './lib/formulas';
   import { cellSelectionBounds, updateCellStyles } from './lib/cell-style';
-  import type { CellAddress, CellSelection, CellStyle } from './lib/cell-style';
+  import type { CellSelection, CellStyle } from './lib/cell-style';
   import { describeCellIssue, invalidTableCells, tableData } from './lib/table-data';
   import { chartSeries, countLabel, tableResult } from './lib/format';
   import { loadLibrary, loadWorkspaceFiles, saveLibrary } from './lib/storage';
@@ -79,7 +79,9 @@
     const text = cellFormulaText(selected.rows[row], selected.columns, column, tableInputs(workspace, selected.id));
     const start = columnLetter(left) + rowNumber(selected, top);
     return {
-      address: top === bottom && left === right ? start : start + ':' + columnLetter(right) + rowNumber(selected, bottom),
+      address: activeCell?.axis === 'row' ? 'Row ' + rowNumber(selected, row)
+        : activeCell?.axis === 'column' ? 'Column ' + letter
+        : top === bottom && left === right ? start : start + ':' + columnLetter(right) + rowNumber(selected, bottom),
       column: name === letter ? undefined : name,
       formula: isFormulaEntry(text) ? text : '',
       format: selected.cellStyles?.[selected.rows[row].id]?.[selected.columns[column].id] ?? {},
@@ -646,7 +648,7 @@
             error: message,
             paste: () => { select(block.id); openPaste(block.id); },
             activeCell: activeCell?.tableId === block.id ? activeCell : undefined,
-            selectCell: (cell: CellAddress, extend?: boolean) => select(block.id, cell, extend),
+            selectCell: (cell: CellSelection, extend?: boolean) => select(block.id, cell, extend),
           } : undefined,
         },
       };
@@ -664,13 +666,13 @@
     activeTab = tab;
   }
 
-  function select(id: string, cell?: CellAddress, extend = false) {
+  function select(id: string, cell?: CellSelection, extend = false) {
     if (flowEdges.some((edge) => edge.selected)) {
       flowEdges = flowEdges.map((edge) => edge.selected ? { ...edge, selected: false } : edge);
     }
     if (id !== selectedId) showQueryTab('sql');
     selectedId = id;
-    if (cell && extend && activeCell?.tableId === id) {
+    if (cell && !cell.axis && extend && activeCell?.tableId === id && !activeCell.axis) {
       const end = activeCell.rowId === cell.rowId && activeCell.columnId === cell.columnId ? undefined : cell;
       activeCell = { ...activeCell, end };
     } else {
@@ -1049,7 +1051,9 @@
     if (!shortcut) return;
     const { hotkeys } = preferences;
     const target = event.target instanceof HTMLElement ? event.target : undefined;
+    if (target?.closest('.column-settings-dialog')) return;
     const cell = target?.closest<HTMLElement>('td[data-table-cell]');
+    const tableSelection = cell ?? target?.closest('[data-table-selection]');
     const editingText = target?.closest('input, textarea, select, [contenteditable]');
     const undo = shortcut === hotkeys.undo;
     const redo = shortcut === hotkeys.redo
@@ -1081,7 +1085,7 @@
       void runSQL(selected);
       return;
     }
-    if (editingText || cell) return;
+    if (editingText || tableSelection) return;
     if (shortcut === hotkeys.deleteBlock && !event.repeat) {
       const edge = flowEdges.find((edge) => edge.selected);
       if (edge) {
@@ -1264,7 +1268,7 @@
             isValidConnection={({ source, target, sourceHandle }) =>
               (sourceHandle !== 'quick-create' || blocksById.get(target)?.kind === 'table') && canConnect(workspace, source, target)}
             onnodeclick={({ node, event }) => {
-              if (!(event.target instanceof Element && event.target.closest('[data-table-cell]'))) select(node.id);
+              if (!(event.target instanceof Element && event.target.closest('[data-table-cell], [data-table-selection], .column-settings-dialog'))) select(node.id);
             }}
             onpaneclick={() => activeCell = undefined}
             onselectionchange={({ edges }) => { if (edges.length) { selectedId = ''; activeCell = undefined; } }}
