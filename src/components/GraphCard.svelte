@@ -35,6 +35,7 @@
   import { Braces, ChartColumnIncreasing, CircleAlert, Folder, Lock, LockOpen, Maximize2, Minimize2, Plus, Table2 } from 'lucide-svelte';
   import { countLabel, chartSeries, tablePreview } from '../lib/format';
   import { canConnect } from '../lib/workspace';
+  import { tableCardContentSize } from '../lib/table-layout';
   import MiniChart from './MiniChart.svelte';
   import BlockName from './BlockName.svelte';
   import ResultGrid from './ResultGrid.svelte';
@@ -52,7 +53,34 @@
   let Icon = $derived(icons[block.kind]);
   let series = $derived(block.kind === 'chart' ? chartSeries(block, data.result) : undefined);
   let codeLines = $derived(block.kind === 'sql' ? block.sql.trim().split('\n').slice(0, 6) : []);
+  let card = $state<HTMLDivElement>();
+  let movedResize = false;
   const sqlKeyword = /^(?:SELECT|FROM|WHERE|JOIN|AS|GROUP|BY|ORDER|LIMIT|SUM|WITH|AND|DESC|ASC|VALUES)$/i;
+
+  $effect(() => {
+    if (block.kind !== 'table' || !expanded || !card) return;
+    const element = card;
+    const node = element.parentElement;
+    function fitEdge(event: MouseEvent) {
+      const handle = event.target instanceof Element && event.target.closest('.block-resize-edge, .block-resize-corner');
+      if (!handle || handle.parentElement !== node) return;
+      const size = tableCardContentSize(element);
+      if (!size) return;
+      const left = handle.classList.contains('left');
+      const top = handle.classList.contains('top');
+      const width = left || handle.classList.contains('right') ? size.width : element.offsetWidth;
+      const height = top || handle.classList.contains('bottom') ? size.height : element.offsetHeight;
+      if (width === element.offsetWidth && height === element.offsetHeight) return;
+      event.stopPropagation();
+      data.resize?.({
+        width, height,
+        x: block.position.x + (left ? element.offsetWidth - width : 0),
+        y: block.position.y + (top ? element.offsetHeight - height : 0),
+      });
+    }
+    node?.addEventListener('dblclick', fitEdge);
+    return () => node?.removeEventListener('dblclick', fitEdge);
+  });
 </script>
 
 {#snippet expansionButton()}
@@ -68,7 +96,8 @@
   <NodeResizer minWidth={260} minHeight={block.kind === 'chart' ? 228 : block.kind === 'group' ? 120 : 170}
     lineClass="block-resize-edge" handleClass="block-resize-corner"
     shouldResize={(_event, bounds) => data.canResize?.(bounds) ?? true}
-    onResizeEnd={(_event, bounds) => data.resize?.(bounds)} />
+    onResizeStart={() => movedResize = false} onResize={() => movedResize = true}
+    onResizeEnd={(_event, bounds) => { if (movedResize) data.resize?.(bounds); }} />
 {/if}
 
 {#if block.kind === 'group'}
@@ -84,7 +113,7 @@
     </header>
   </div>
 {:else}
-  <div class="graph-card {block.kind}" class:expanded class:selected class:related={Boolean(data.focusSide)} class:accepts-connection={Boolean(acceptsConnection)}>
+  <div bind:this={card} class="graph-card {block.kind}" class:expanded class:selected class:related={Boolean(data.focusSide)} class:accepts-connection={Boolean(acceptsConnection)}>
     {#if block.kind === 'table' || block.kind === 'sql' || block.kind === 'chart'}
       <Handle type="target" position={Position.Left} isConnectable={true} aria-label="Input port" />
     {/if}

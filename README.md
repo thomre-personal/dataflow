@@ -35,9 +35,9 @@ Use **Undo** and **Redo** in the top bar to step through workspace changes durin
 
 Open **Settings** from the gear in the top right to choose Light, Dark, or Auto, change keyboard shortcuts, and choose whether a shortcut asks before deleting a block.
 
-Press **Shift+Enter** while editing a cell to insert a line break. Press **Enter** to confirm the cell.
+Click a cell once to select it. Click it again or press **Enter** to edit. Press **Shift+Enter** while editing to insert a line break and **Enter** to confirm. Long text wraps within the width of the cell. This visual wrapping leaves the stored text as entered.
 
-Drag the divider at the right edge of a column header or the bottom edge of a row number to resize it. Other columns and rows keep their sizes. Double-click a divider to fit its contents.
+Drag the divider at the right edge of a column header or the bottom edge of a row number to resize it. Double-click a divider to fit its contents. The canvas card grows if the resized grid needs more room. Double-click an outer card edge to fit the table along that edge.
 
 In the table editor, select a cell and press **Option+↑** or **Option+↓** to insert a row above or below. Press **Option+←** or **Option+→** to insert a column to the left or right. Use **Alt** on a non-Mac keyboard.
 
@@ -51,7 +51,9 @@ Type `=` to see formula suggestions. Use the arrow keys and **Return** to choose
 
 Select a cell to see its formula and the functions it uses in **Cell options**. Expand a function for its syntax and an example. **Search functions** filters the full catalog below the functions used in the cell. Cell options are also available in the table dialog.
 
-Use **Formatting** in **Cell options** to set the font, size, text styles, font color, and background color. Shift-click a second cell to select the rectangle between the two cells. Formatting applies to every selected cell.
+Use **Formatting** in **Cell options** to set the font, size, text styles, alignment, font color, and background color. Choose a color from the palette or the custom picker, then choose **Apply**. Shift-click a second cell to select the rectangle between the two cells. Formatting applies to every selected cell.
+
+With a selection, use **Cmd+C** and **Cmd+V** to copy and paste complete cells within DataFlow. Use **Ctrl+C** and **Ctrl+V** on other platforms. While editing, those shortcuts act on the text in the editor.
 
 On a Mac, press **Option+Cmd+C** to copy a cell's style, then select a cell or range and press **Option+Cmd+V** to paste it. Use **Ctrl+Alt+C** and **Ctrl+Alt+V** on other platforms. You can also use the copy and paste buttons in the inspector. Style paste keeps the target cells' values and formulas.
 

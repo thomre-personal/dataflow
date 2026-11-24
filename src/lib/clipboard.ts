@@ -1,9 +1,37 @@
 import type { Column, NumberFormat, Row, ValueType } from './workspace.ts';
 import { columnLetter, newId } from './workspace.ts';
 import { isFormulaEntry } from './formulas.ts';
+import { isCellStyle } from './cell-style.ts';
+import type { CellStyle } from './cell-style.ts';
 
 export const MAX_ROWS = 10_000;
 export const MAX_COLUMNS = 80;
+
+export const cellClipboardType = 'application/x-dataflow-cells';
+export type CopiedCell = { text: string; style?: CellStyle };
+
+export function copyGrid(clipboard: DataTransfer, cells: CopiedCell[][]) {
+  clipboard.setData(cellClipboardType, JSON.stringify(cells));
+  const quote = (text: string) => /[\t\r\n,;"]/.test(text) ? '"' + text.replaceAll('"', '""') + '"' : text;
+  const text = cells.length === 1 && cells[0].length === 1
+    ? cells[0][0].text : cells.map((row) => row.map(({ text }) => quote(text)).join('\t')).join('\n');
+  clipboard.setData('text/plain', text);
+}
+
+export function readCopiedGrid(clipboard: DataTransfer) {
+  const text = clipboard.getData(cellClipboardType);
+  if (!text) return;
+  try {
+    const cells: unknown = JSON.parse(text);
+    if (!Array.isArray(cells) || !cells.length || cells.length > MAX_ROWS || !Array.isArray(cells[0])) return;
+    const width = cells[0].length;
+    if (!width || width > MAX_COLUMNS || !cells.every((row) => Array.isArray(row) && row.length === width
+      && row.every((cell) => cell && typeof cell.text === 'string' && (cell.style === undefined || isCellStyle(cell.style))))) return;
+    return cells as CopiedCell[][];
+  } catch {
+    return;
+  }
+}
 
 function delimiterFor(text: string): string {
   let quoted = false;

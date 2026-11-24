@@ -84,6 +84,7 @@
       formula: isFormulaEntry(text) ? text : '',
       format: selected.cellStyles?.[selected.rows[row].id]?.[selected.columns[column].id] ?? {},
       defaultBold: column < (selected.titleColumns ?? 0) || row >= dataRowCount(selected),
+      selectionKey: JSON.stringify([workspace.id, activeCell]),
     };
   });
   $effect(() => {
@@ -1047,10 +1048,22 @@
     const shortcut = eventHotkey(event);
     if (!shortcut) return;
     const { hotkeys } = preferences;
+    const target = event.target instanceof HTMLElement ? event.target : undefined;
+    const cell = target?.closest<HTMLElement>('td[data-table-cell]');
+    const editingText = target?.closest('input, textarea, select, [contenteditable]');
+    const undo = shortcut === hotkeys.undo;
+    const redo = shortcut === hotkeys.redo
+      || (shortcut === 'Mod+Y' && !isMac() && hotkeys.redo === defaultHotkeys.redo && !Object.values(hotkeys).includes(shortcut));
+    if ((undo || redo) && (!modal || modal === 'table') && (cell || !editingText)
+      && !target?.closest('.cell-color-dialog')) {
+      event.preventDefault();
+      if (target?.matches('textarea[data-table-cell]')) cell?.focus({ preventScroll: true });
+      stepHistory(undo ? 'undo' : 'redo');
+      return;
+    }
     if ((shortcut === hotkeys.copyCellStyle || shortcut === hotkeys.pasteCellStyle) && selectedTableCell
       && (modal === 'table' || (!modal && selected?.kind === 'table' && selected.expanded !== false && !selected.inlineLocked))) {
-      if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]')
-        && !event.target.closest('[data-table-cell], .cell-format-controls')) return;
+      if (editingText && !cell && !target?.closest('.cell-format-controls')) return;
       event.preventDefault();
       if (event.repeat) return;
       if (shortcut === hotkeys.copyCellStyle) copyCellStyle();
@@ -1068,12 +1081,7 @@
       void runSQL(selected);
       return;
     }
-    if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]')) return;
-    if (shortcut === hotkeys.undo || shortcut === hotkeys.redo
-      || (shortcut === 'Mod+Y' && !isMac() && hotkeys.redo === defaultHotkeys.redo && !Object.values(hotkeys).includes(shortcut))) {
-      event.preventDefault();
-      stepHistory(shortcut === hotkeys.undo ? 'undo' : 'redo');
-    }
+    if (editingText || cell) return;
     if (shortcut === hotkeys.deleteBlock && !event.repeat) {
       const edge = flowEdges.find((edge) => edge.selected);
       if (edge) {
@@ -1256,7 +1264,7 @@
             isValidConnection={({ source, target, sourceHandle }) =>
               (sourceHandle !== 'quick-create' || blocksById.get(target)?.kind === 'table') && canConnect(workspace, source, target)}
             onnodeclick={({ node, event }) => {
-              if (!(event.target instanceof Element && event.target.matches('[data-table-cell]'))) select(node.id);
+              if (!(event.target instanceof Element && event.target.closest('[data-table-cell]'))) select(node.id);
             }}
             onpaneclick={() => activeCell = undefined}
             onselectionchange={({ edges }) => { if (edges.length) { selectedId = ''; activeCell = undefined; } }}

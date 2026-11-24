@@ -192,7 +192,6 @@ test('resizes columns and rows independently and fits their contents on double-c
   const columns = () => grid.locator('thead th').evaluateAll((headers) => headers.map((cell) => (cell as HTMLElement).offsetWidth));
   const rows = (table: Locator) => table.locator('tbody tr').evaluateAll((rows) => rows.map((row) => (row as HTMLElement).offsetHeight));
   const initialColumns = await columns();
-  const initialRows = await rows(grid);
   const column = dialog.getByRole('button', { name: 'Resize column B', exact: true });
   await dragResize(page, column, 70, 0);
   const enlargedColumns = await columns();
@@ -203,6 +202,7 @@ test('resizes columns and rows independently and fits their contents on double-c
   expect(fittedColumns[2]).toBeGreaterThan(enlargedColumns[2]);
   expect(fittedColumns.filter((_, index) => index !== 2)).toEqual(initialColumns.filter((_, index) => index !== 2));
 
+  const initialRows = await rows(grid);
   const row = dialog.getByRole('button', { name: 'Resize row 2', exact: true });
   await dragResize(page, row, 0, 64);
   const enlargedRows = await rows(grid);
@@ -772,8 +772,14 @@ test('formats cells and pastes a copied style into a range without changing its 
   const size = format.getByRole('spinbutton', { name: 'Font size' });
   await size.fill('25');
   await size.press('Tab');
-  await format.getByLabel('Font color', { exact: true }).fill('#142850');
-  await format.getByLabel('Background color', { exact: true }).fill('#f0d895');
+  await format.getByRole('button', { name: 'Align center', exact: true }).click();
+  await format.getByRole('button', { name: 'Align bottom', exact: true }).click();
+  for (const [label, color] of [['Font color', '#142850'], ['Background color', '#f0d895']]) {
+    await format.getByRole('button', { name: label, exact: true }).click();
+    const picker = page.getByRole('dialog', { name: label, exact: true });
+    await picker.getByLabel('Custom color').fill(color);
+    await picker.getByRole('button', { name: 'Apply', exact: true }).click();
+  }
   const expectStyle = async (cell: Locator) => {
     await expect(cell).toHaveCSS('color', 'rgb(20, 40, 80)');
     await expect(cell).toHaveCSS('font-size', '25px');
@@ -781,7 +787,9 @@ test('formats cells and pastes a copied style into a range without changing its 
     await expect(cell).toHaveCSS('font-style', 'italic');
     await expect(cell).toHaveCSS('font-weight', '700');
     await expect(cell).toHaveCSS('text-decoration-line', 'underline line-through');
-    await expect(cell.locator('..')).toHaveCSS('background-color', 'rgb(240, 216, 149)');
+    await expect(cell).toHaveCSS('text-align', 'center');
+    await expect(cell.locator('xpath=ancestor::td')).toHaveCSS('background-color', 'rgb(240, 216, 149)');
+    await expect(cell.locator('xpath=ancestor::td')).toHaveCSS('vertical-align', 'bottom');
   };
   await expectStyle(source);
   await source.press('Alt+Meta+c');
@@ -820,6 +828,114 @@ test('formats cells and pastes a copied style into a range without changing its 
   const styled = locked.getByRole('cell', { name: 'One', exact: true });
   await expect(styled).toHaveCSS('background-color', 'rgb(240, 216, 149)');
   await expect(styled).toHaveCSS('font-size', '25px');
+});
+
+test('selects complete cells before editing and keeps a confirmed color on its original cell', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New workspace', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Workspace name' }).fill('Selection mode');
+  await page.getByRole('button', { name: 'Create workspace' }).click();
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Untitled table' });
+  const source = dialog.getByRole('textbox', { name: 'A row 1', exact: true });
+  const destination = dialog.getByRole('textbox', { name: 'B row 1', exact: true });
+  const sourceCell = source.locator('xpath=ancestor::td');
+  const destinationCell = destination.locator('xpath=ancestor::td');
+  await source.click();
+  await expect(sourceCell).toBeFocused();
+  await expect(source).not.toBeFocused();
+  await source.click();
+  await expect(source).toBeFocused();
+  const value = '=CONCAT("One", " cell")';
+  await source.fill(value);
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(sourceCell).toBeFocused();
+  await expect(source).toHaveValue('');
+  await page.keyboard.press('ControlOrMeta+Shift+z');
+  await expect(source).toHaveValue('One cell');
+
+  await dialog.getByRole('button', { name: 'Background color', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: 'Background color', exact: true });
+  await expect(picker.getByRole('group', { name: 'Color palette' }).getByRole('button')).toHaveCount(40);
+  await picker.getByRole('button', { name: 'Blue 3', exact: true }).click();
+  await expect(sourceCell).not.toHaveCSS('background-color', 'rgb(59, 130, 246)');
+  await picker.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(sourceCell).not.toHaveCSS('background-color', 'rgb(59, 130, 246)');
+  await dialog.getByRole('button', { name: 'Background color', exact: true }).click();
+  await picker.getByRole('button', { name: 'Blue 3', exact: true }).click();
+  await picker.getByRole('button', { name: 'Apply', exact: true }).click();
+  await destination.click();
+  await expect(destinationCell).toBeFocused();
+  await expect(sourceCell).toHaveCSS('background-color', 'rgb(59, 130, 246)');
+  await expect(destinationCell).not.toHaveCSS('background-color', 'rgb(59, 130, 246)');
+
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await source.click();
+  await page.keyboard.press('ControlOrMeta+c');
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(value);
+  await destination.click();
+  await page.keyboard.press('ControlOrMeta+v');
+  await expect(destination).toHaveValue('One cell');
+  await expect(destinationCell).toHaveCSS('background-color', 'rgb(59, 130, 246)');
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(destination).toHaveValue('');
+  await expect(destinationCell).not.toHaveCSS('background-color', 'rgb(59, 130, 246)');
+});
+
+test('wraps unbroken text and grows or fits the canvas table at its edges', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New workspace', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Workspace name' }).fill('Table fit');
+  await page.getByRole('button', { name: 'Create workspace' }).click();
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  const table = canvasBlock(page, 'Untitled table');
+  const editor = table.getByRole('textbox', { name: 'A row 1', exact: true });
+  const naturalHeight = await editor.evaluate((element: HTMLElement) => element.offsetHeight);
+  const text = 'DataFlow'.repeat(8);
+  await editor.fill(text);
+  await editor.press('Enter');
+  await expect(editor).toHaveValue(text);
+  await expect(editor).toHaveCSS('overflow', 'hidden');
+  await expect.poll(() => editor.evaluate((element: HTMLElement) => element.clientHeight)).toBeGreaterThan(naturalHeight);
+  await expect.poll(() => editor.evaluate((element: HTMLElement) => element.scrollHeight - element.clientHeight)).toBeLessThanOrEqual(1);
+
+  const initial = await cardSize(table);
+  const column = table.getByRole('button', { name: 'Resize column A', exact: true });
+  await column.hover();
+  await dragResize(page, column, 95, 0);
+  await expect.poll(async () => (await cardSize(table)).width).toBeGreaterThan(initial.width);
+  const grid = table.locator('.editor-grid');
+  await expect.poll(() => grid.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  const width = (await cardSize(table)).width;
+  const right = table.locator('.block-resize-edge.right');
+  await page.getByRole('button', { name: 'Fit canvas', exact: true }).click();
+  await page.locator('.svelte-flow__viewport').evaluate((viewport) => new Promise<void>((resolve) => {
+    let previous = '';
+    let stableFrames = 0;
+    function frame() {
+      const transform = getComputedStyle(viewport).transform;
+      stableFrames = previous === transform ? stableFrames + 1 : 0;
+      previous = transform;
+      if (stableFrames >= 4) resolve();
+      else requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }));
+  await right.hover({ position: { x: 4, y: 35 } });
+  await dragResize(page, right, 90, 0, .12);
+  await expect.poll(async () => (await cardSize(table)).width).toBeGreaterThan(width);
+  const edge = (await right.boundingBox())!;
+  await page.mouse.dblclick(edge.x + edge.width / 2, edge.y + edge.height * .12);
+  await expect.poll(async () => (await cardSize(table)).width).toBeLessThan(width + 10);
+
+  const row = table.getByRole('button', { name: 'Resize row 1', exact: true });
+  await expect(row).toHaveCSS('height', '13px');
+  const height = (await cardSize(table)).height;
+  await row.hover();
+  await dragResize(page, row, 0, 150);
+  await expect.poll(async () => (await cardSize(table)).height).toBeGreaterThan(height);
+  await expect.poll(() => table.locator('.node-inline').evaluate((element) => element.scrollHeight - element.clientHeight)).toBeLessThanOrEqual(1);
 });
 
 test('pastes a range over a blank two-by-two table and infers the pasted column types', async ({ page }) => {

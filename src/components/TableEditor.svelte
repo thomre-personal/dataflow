@@ -3,13 +3,14 @@
   import { tick } from 'svelte';
   import { columnLetter, dataRowCount, defaultTableColumnWidth, newId, rowNumber, tableInputs } from '../lib/workspace';
   import { countLabel } from '../lib/format';
-  import { MAX_COLUMNS, MAX_ROWS, parseDelimited } from '../lib/clipboard';
+  import { copyGrid, MAX_COLUMNS, MAX_ROWS, parseDelimited, readCopiedGrid } from '../lib/clipboard';
   import { bindCellFormula, cellFormulaText, isFormulaEntry, suggestFunctions } from '../lib/formulas';
   import { cellSelectionBounds, cellStyleCss } from '../lib/cell-style';
   import type { CellAddress, CellSelection } from '../lib/cell-style';
   import { describeCellIssue, invalidTableCells, tableData } from '../lib/table-data';
   import { eventHotkey, hotkeyLabel } from '../lib/preferences';
   import type { Hotkeys } from '../lib/preferences';
+  import { tableCardContentSize } from '../lib/table-layout';
   import type { ColumnType, Formula, TableBlock, TableStyle, Workspace } from '../lib/workspace';
   import FormulaSuggestions from './FormulaSuggestions.svelte';
 
@@ -41,7 +42,8 @@
   let issues = $derived([...invalidTableCells(block, data)].filter((issue) =>
     issue.row !== editing?.row || issue.column !== editing.column || !isFormulaEntry(cellDraft)));
   let issueByCell = $derived(new Map(issues.map((issue) => [issue.row + ':' + issue.column, issue.message])));
-  let range = $derived(activeCell?.end ? cellSelectionBounds(block, activeCell) : undefined);
+  let bounds = $derived(cellSelectionBounds(block, activeCell));
+  let range = $derived(activeCell?.end ? bounds : undefined);
   const rowIndexWidth = 35;
   const rowActionsWidth = 30;
   let table = $state<HTMLTableElement>();
@@ -105,8 +107,29 @@
     const { id, initial, size, widths } = resizing;
     resizing = undefined;
     if (!save || size === initial) return;
-    if (widths) change({ columnWidths: { ...widths, [id]: size } });
-    else change({ rowHeights: { ...block.rowHeights, [id]: size } });
+    if (widths) resizeColumns({ ...widths, [id]: size });
+    else {
+      const row = (event.currentTarget as HTMLElement).closest('tr');
+      resizeGrid({ rowHeights: { ...block.rowHeights, [id]: size } }, undefined, size - (row?.offsetHeight ?? initial));
+    }
+  }
+
+  function resizeColumns(widths: Record<string, number>) {
+    const width = rowIndexWidth + rowActionsWidth + block.columns.reduce((sum, { id }) => sum + (widths[id] ?? defaultTableColumnWidth), 0);
+    resizeGrid({ columnWidths: widths }, width);
+  }
+
+  function resizeGrid(patch: Partial<TableBlock>, width?: number, rowDelta = 0) {
+    const card = inline ? table?.closest<HTMLElement>('.graph-card.table') : undefined;
+    const needed = card && tableCardContentSize(card, width, rowDelta);
+    if (card && needed) {
+      const next = {
+        width: width === undefined ? card.offsetWidth : Math.max(card.offsetWidth, needed.width),
+        height: width === undefined ? Math.max(card.offsetHeight, needed.height) : card.offsetHeight,
+      };
+      if (next.width !== card.offsetWidth || next.height !== card.offsetHeight) patch.expandedSize = next;
+    }
+    change(patch);
   }
 
   function withoutEntry<T>(entries: Record<string, T> | undefined, id: string) {
@@ -146,7 +169,7 @@
     const widths = renderedColumnWidths();
     const size = Math.ceil(width);
     if (size !== block.columnWidths?.[id] && Math.abs(size - widths[id]) >= 1) {
-      change({ columnWidths: { ...widths, [id]: size } });
+      resizeColumns({ ...widths, [id]: size });
     }
   }
 
@@ -170,12 +193,28 @@
     change({ rows });
   }
 
-  function pasteCells(event: ClipboardEvent, firstRow: number, firstColumn: number) {
-    const text = event.clipboardData?.getData('text/plain') ?? '';
-    if (!/[\t\r\n]/.test(text)) return;
+  function copyCells(event: ClipboardEvent) {
+    const selection = bounds;
+    if (event.target !== event.currentTarget || !selection || !event.clipboardData) return;
+    const rows = block.rows.slice(selection.top, selection.bottom + 1);
+    const columns = block.columns.slice(selection.left, selection.right + 1);
+    copyGrid(event.clipboardData, rows.map((row) => columns.map((column, index) => ({
+      text: cellFormulaText(row, block.columns, selection.left + index, inputs),
+      style: block.cellStyles?.[row.id]?.[column.id],
+    }))));
+    event.preventDefault();
+  }
+
+  function pasteCells(event: ClipboardEvent, firstRow: number, firstColumn: number, wholeCell = false) {
+    const clipboard = event.clipboardData;
+    if (!clipboard || (wholeCell && event.target !== event.currentTarget)) return;
+    const text = clipboard.getData('text/plain');
+    const copied = wholeCell ? readCopiedGrid(clipboard) : undefined;
+    const delimited = /[\t\r\n]/.test(text);
+    if (!copied && !delimited && (!wholeCell || !clipboard.types.includes('text/plain'))) return;
     event.preventDefault();
     try {
-      const grid = parseDelimited(text);
+      const grid = copied ? copied.map((row) => row.map((cell) => cell.text)) : delimited ? parseDelimited(text) : [[text]];
       const width = Math.max(block.columns.length, firstColumn + (grid[0]?.length ?? 0));
       const intoFooter = footerRows > 0 && firstRow >= dataRows;
       const boundary = intoFooter ? block.rows.length : dataRows;
@@ -184,6 +223,7 @@
       if (width > MAX_COLUMNS || height > MAX_ROWS) throw new Error('The pasted range would exceed the table size limit.');
       const columns = Array.from({ length: width }, (_, i) => block.columns[i]
         ?? { id: newId(), name: columnLetter(i), type: 'auto' as const });
+      const cellStyles = copied ? { ...block.cellStyles } : block.cellStyles;
       const rows = Array.from({ length: height }, (_, rowIndex) => {
         const existing = rowIndex < boundary ? block.rows[rowIndex] :
           rowIndex >= boundary + addedRows ? block.rows[rowIndex - addedRows] : undefined;
@@ -193,12 +233,21 @@
           if (pasted !== undefined) bindCellFormula(formulas, columns, columnIndex, pasted, inputs);
           return pasted ?? existing?.cells[columnIndex] ?? '';
         });
-        return {
-          id: existing?.id ?? newId(),
-          cells, formulas,
-        };
+        const id = existing?.id ?? newId();
+        const pasted = copied?.[rowIndex - firstRow];
+        if (pasted && cellStyles) {
+          const styles = { ...cellStyles[id] };
+          for (const [index, cell] of pasted.entries()) {
+            const columnId = columns[firstColumn + index].id;
+            if (cell.style) styles[columnId] = cell.style;
+            else delete styles[columnId];
+          }
+          if (Object.keys(styles).length) cellStyles[id] = styles;
+          else delete cellStyles[id];
+        }
+        return { id, cells, formulas };
       });
-      change({ columns, rows, footerRows: intoFooter ? footerRows + addedRows : block.footerRows });
+      change({ columns, rows, cellStyles, footerRows: intoFooter ? footerRows + addedRows : block.footerRows });
       if (editing) cellDraft = cellFormulaText(rows[firstRow], columns, firstColumn, inputs);
     } catch (problem) {
       error(problem instanceof Error ? problem.message : String(problem));
@@ -273,7 +322,43 @@
     } else if (plain && event.key === 'Enter') {
       event.preventDefault();
       event.stopPropagation();
-      event.currentTarget.blur();
+      event.currentTarget.closest('td')?.focus({ preventScroll: true });
+    } else {
+      insertWithShortcut(event, row, column);
+    }
+  }
+
+  function cellPointer(event: PointerEvent & { currentTarget: HTMLTableCellElement }, address: CellAddress) {
+    if (event.button !== 0) return;
+    const cell = event.currentTarget;
+    if (event.shiftKey && activeCell) {
+      event.preventDefault();
+      document.getElementById(cellId(activeCell.rowId, activeCell.columnId))?.closest('td')?.focus({ preventScroll: true });
+      selectCell(address, true);
+      return;
+    }
+    if (activeCell?.rowId !== address.rowId || activeCell.columnId !== address.columnId || activeCell.end) {
+      event.preventDefault();
+      if (document.activeElement === cell) selectCell(address);
+      else cell.focus({ preventScroll: true });
+    } else if (!(event.target instanceof HTMLTextAreaElement)) {
+      cell.querySelector('textarea')?.focus({ preventScroll: true });
+    }
+  }
+
+  function selectionKeyboard(event: KeyboardEvent & { currentTarget: HTMLTableCellElement }, row: number, column: number) {
+    if (event.target !== event.currentTarget || event.isComposing) return;
+    const plain = !event.altKey && !event.ctrlKey && !event.metaKey;
+    if (plain && (event.key === 'Enter' || event.key === 'F2' || event.key.length === 1)) {
+      const input = event.currentTarget.querySelector('textarea');
+      if (!input) return;
+      event.preventDefault();
+      event.stopPropagation();
+      input.focus({ preventScroll: true });
+      if (event.key.length === 1) {
+        input.value = cellDraft = event.key;
+        updateCell(row, column, cellDraft);
+      }
     } else {
       insertWithShortcut(event, row, column);
     }
@@ -343,6 +428,7 @@
   </label>
 </div>
 {/snippet}
+<div class="table-editor-content">
 {#if !inline}{@render tools()}{/if}
 {#if issues.length}
   {@const first = issues[0]}
@@ -391,11 +477,21 @@
           {@const showMenu = editing?.id === id && suggestions.length > 0}
           {@const value = editing?.id === id ? cellDraft : data.display(rowIndex, columnIndex)}
           {@const inRange = range && rowIndex >= range.top && rowIndex <= range.bottom && columnIndex >= range.left && columnIndex <= range.right}
-          <td class:invalid-cell={Boolean(issue)} class:title-column={columnIndex < titleColumns} class:formula-cell={isFormula} class:range-cell={inRange}
-            style={cellStyleCss(block.cellStyles?.[row.id]?.[column.id])}><textarea
+          {@const address = { rowId: row.id, columnId: column.id }}
+          {@const active = activeCell?.rowId === row.id && activeCell.columnId === column.id}
+          <!-- svelte-ignore a11y_no_noninteractive_tabindex (Cells can be selected with the keyboard before entering edit mode.) -->
+          <td data-table-cell="" class="nokey" tabindex="0" class:invalid-cell={Boolean(issue)} class:title-column={columnIndex < titleColumns}
+            class:formula-cell={isFormula} class:range-cell={inRange} class:selected-cell={active}
+            onfocus={() => { if (!active) selectCell(address); }}
+            onpointerdown={(event) => cellPointer(event, address)}
+            onkeydown={(event) => selectionKeyboard(event, rowIndex, columnIndex)}
+            oncopy={copyCells} onpaste={(event) => pasteCells(event, rowIndex, columnIndex, true)}
+            style={cellStyleCss(block.cellStyles?.[row.id]?.[column.id])}>
+            <div class="cell-editor" data-value={value + '\u200b'}><textarea
             {id}
             data-table-cell=""
-            class:active-cell={activeCell?.rowId === row.id && activeCell.columnId === column.id}
+            tabindex="-1"
+            class:editing-cell={editing?.id === id}
             class:numeric={data.columns[columnIndex].type === 'decimal'}
             {value}
             rows={value.split(/\r\n?|\n/).length}
@@ -416,10 +512,8 @@
                 event.currentTarget.value = cellDraft;
                 event.currentTarget.select();
               }
-              selectCell({ rowId: row.id, columnId: column.id });
+              if (!active || activeCell?.end) selectCell(address);
             }}
-            onpointerdown={(event) => { if (event.button === 0 && event.shiftKey && activeCell) event.preventDefault(); }}
-            onclick={(event) => { if (event.shiftKey || activeCell?.end) selectCell({ rowId: row.id, columnId: column.id }, event.shiftKey); }}
             onblur={() => { if (editing?.id === id) editing = undefined; }}
             oninput={(event) => {
               cellDraft = event.currentTarget.value;
@@ -429,7 +523,7 @@
             }}
             onkeydown={(event) => cellKeyboard(event, rowIndex, columnIndex)}
             onpaste={(event) => pasteCells(event, rowIndex, columnIndex)}
-          ></textarea>{#if issue}<span id={id + '-error'} class="cell-validation-message">{issue}</span>{/if}</td>
+            ></textarea></div>{#if issue}<span id={id + '-error'} class="cell-validation-message">{issue}</span>{/if}</td>
         {/each}
         <td class="row-actions"><button class="icon-button small" aria-label={'Delete row ' + rowNumber(block, rowIndex)} onclick={() => change({
           rows: block.rows.filter((candidate) => candidate.id !== row.id),
@@ -448,4 +542,5 @@
 {#if inline}{@render tools()}{/if}
 <div class="table-count"><span>{countLabel(block.rows.length, 'row')} · {countLabel(block.columns.length, 'column')}</span>
   {#if block.rows.length > limit}<button class="text-button" onclick={() => limit += 100}>Show more</button>{/if}
+</div>
 </div>

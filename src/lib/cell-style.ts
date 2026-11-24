@@ -15,6 +15,8 @@ export type CellStyle = {
   italic?: boolean;
   underline?: boolean;
   strikethrough?: boolean;
+  align?: 'left' | 'center' | 'right';
+  verticalAlign?: 'top' | 'middle' | 'bottom';
 };
 export type CellStyles = Record<string, Record<string, CellStyle>>;
 export type CellAddress = { rowId: string; columnId: string };
@@ -67,6 +69,21 @@ export function updateCellStyles(
 
 export const cellFontLineHeight = (size: number) => Math.ceil(size * 1.4);
 
+export function isCellStyle(value: unknown): value is CellStyle {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  return Object.entries(value).every(([key, field]) => {
+    switch (key) {
+      case 'color': case 'background': return typeof field === 'string' && /^#[0-9a-f]{6}$/i.test(field);
+      case 'fontFamily': return cellFonts.some(({ value }) => value === field);
+      case 'fontSize': return typeof field === 'number' && Number.isFinite(field) && field >= cellFontSize.min && field <= cellFontSize.max;
+      case 'bold': case 'italic': case 'underline': case 'strikethrough': return typeof field === 'boolean';
+      case 'align': return field === 'left' || field === 'center' || field === 'right';
+      case 'verticalAlign': return field === 'top' || field === 'middle' || field === 'bottom';
+      default: return false;
+    }
+  });
+}
+
 export function cellStyleCss(style: CellStyle | undefined) {
   if (!style) return;
   const rules: string[] = [];
@@ -76,6 +93,8 @@ export function cellStyleCss(style: CellStyle | undefined) {
   if (style.fontSize) rules.push('font-size:' + style.fontSize + 'px', '--cell-line-height:' + cellFontLineHeight(style.fontSize) + 'px');
   if (style.bold !== undefined) rules.push('font-weight:' + (style.bold ? '700' : '400'));
   if (style.italic) rules.push('font-style:italic');
+  if (style.align) rules.push('--cell-align:' + style.align, 'text-align:var(--cell-align)');
+  if (style.verticalAlign) rules.push('vertical-align:' + style.verticalAlign);
   const decoration = [style.underline && 'underline', style.strikethrough && 'line-through'].filter(Boolean).join(' ');
   if (decoration) rules.push('--cell-decoration:' + decoration);
   return rules.join(';');

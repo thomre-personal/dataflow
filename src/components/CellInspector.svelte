@@ -1,18 +1,23 @@
 <script lang="ts">
-  import { Bold, ChevronRight, ClipboardPaste, Copy, Italic, RotateCcw, Search, Strikethrough, Underline, X } from 'lucide-svelte';
+  import {
+    AlignCenter, AlignEndHorizontal, AlignLeft, AlignRight, AlignStartHorizontal, AlignCenterHorizontal,
+    Bold, ChevronRight, ClipboardPaste, Copy, Italic, RotateCcw, Search, Strikethrough, Underline, X,
+  } from 'lucide-svelte';
   import { cellFonts, cellFontSize } from '../lib/cell-style';
   import type { CellStyle } from '../lib/cell-style';
   import { formulaCatalog, formulaFunctions, usedFormulaFunctions } from '../lib/formulas';
   import type { FormulaFunction } from '../lib/formulas';
   import { hotkeyLabel } from '../lib/preferences';
   import type { Hotkeys } from '../lib/preferences';
+  import Modal from './Modal.svelte';
 
-  let { address, column, formula, format, defaultBold, hotkeys, canPaste, clear, changeStyle, copyStyle, pasteStyle, resetStyle }: {
+  let { address, column, formula, format, defaultBold, selectionKey, hotkeys, canPaste, clear, changeStyle, copyStyle, pasteStyle, resetStyle }: {
     address: string;
     column?: string;
     formula: string;
     format: CellStyle;
     defaultBold: boolean;
+    selectionKey: string;
     hotkeys: Hotkeys;
     canPaste: boolean;
     clear: () => void;
@@ -32,6 +37,30 @@
     { key: 'color', label: 'Font color', initial: '#000000', theme: 'var(--text)' },
     { key: 'background', label: 'Background color', initial: '#ffffff', theme: 'var(--surface)' },
   ] as const;
+  const horizontal = [
+    { value: 'left', label: 'Align left', icon: AlignLeft },
+    { value: 'center', label: 'Align center', icon: AlignCenter },
+    { value: 'right', label: 'Align right', icon: AlignRight },
+  ] as const;
+  const vertical = [
+    { value: 'top', label: 'Align top', icon: AlignStartHorizontal },
+    { value: 'middle', label: 'Align middle', icon: AlignCenterHorizontal },
+    { value: 'bottom', label: 'Align bottom', icon: AlignEndHorizontal },
+  ] as const;
+  const families = ['Gray', 'Red', 'Orange', 'Yellow', 'Green', 'Teal', 'Blue', 'Purple'];
+  const palette = [
+    ['#ffffff', '#fee2e2', '#ffedd5', '#fef9c3', '#dcfce7', '#ccfbf1', '#dbeafe', '#f3e8ff'],
+    ['#e2e8f0', '#fca5a5', '#fdba74', '#fde047', '#86efac', '#5eead4', '#93c5fd', '#d8b4fe'],
+    ['#94a3b8', '#f87171', '#fb923c', '#eab308', '#22c55e', '#14b8a6', '#3b82f6', '#a855f7'],
+    ['#475569', '#dc2626', '#ea580c', '#a16207', '#15803d', '#0f766e', '#1d4ed8', '#7e22ce'],
+    ['#0f172a', '#7f1d1d', '#7c2d12', '#713f12', '#14532d', '#134e4a', '#1e3a8a', '#581c87'],
+  ];
+  let picker = $state<{ key: 'color' | 'background'; label: string; value: string; selection: string; changed: boolean }>();
+
+  function applyColor() {
+    if (picker?.changed && picker.selection === selectionKey) changeStyle({ [picker.key]: picker.value });
+    picker = undefined;
+  }
 
   const id = $props.id();
   let search = $state('');
@@ -84,6 +113,20 @@
           onclick={resetStyle}><RotateCcw size={14} /></button>
       </div>
     </div>
+    <div class="cell-format-row cell-alignment">
+      <div class="cell-format-buttons" role="group" aria-label="Horizontal alignment">
+        {#each horizontal as { value, label, icon: Icon } (value)}
+          <button type="button" class="icon-button small" aria-label={label} title={label} aria-pressed={format.align === value}
+            onclick={() => changeStyle({ align: format.align === value ? undefined : value })}><Icon size={15} /></button>
+        {/each}
+      </div>
+      <div class="cell-format-buttons" role="group" aria-label="Vertical alignment">
+        {#each vertical as { value, label, icon: Icon } (value)}
+          <button type="button" class="icon-button small" aria-label={label} title={label} aria-pressed={format.verticalAlign === value}
+            onclick={() => changeStyle({ verticalAlign: format.verticalAlign === value ? undefined : value })}><Icon size={15} /></button>
+        {/each}
+      </div>
+    </div>
     <div class="cell-format-fields">
       <label class="field">Font
         <select value={format.fontFamily ?? ''} onchange={(event) => changeStyle({
@@ -106,8 +149,11 @@
     <div class="cell-format-colors">
       {#each colors as { key, label, initial, theme } (key)}
         <div class="cell-format-color">
-          <label>{label}<input type="color" value={format[key] ?? initial} class:default-color={!format[key]} style:--default-color={theme}
-            onchange={(event) => changeStyle({ [key]: event.currentTarget.value })} /></label>
+          <div>
+            <span>{label}</span>
+            <button type="button" class="cell-color-swatch" aria-label={label} title={label} style:background={format[key] ?? theme}
+              onclick={() => picker = { key, label, value: format[key] ?? initial, selection: selectionKey, changed: false }}></button>
+          </div>
           <button type="button" class="icon-button small" aria-label={'Reset ' + label.toLowerCase()} title={'Reset ' + label.toLowerCase()}
             disabled={!format[key]} onclick={() => changeStyle({ [key]: undefined })}><X size={12} /></button>
         </div>
@@ -134,3 +180,28 @@
     {/each}
   </section>
 </section>
+
+{#if picker}
+  {@const current = picker}
+  {#snippet pickerContent()}
+    <div class="cell-color-palette" role="group" aria-label="Color palette">
+      {#each palette as shades, row}
+        {#each shades as swatch, column (swatch)}
+          <button type="button" style:background={swatch} title={families[column] + ' ' + (row + 1)}
+            aria-label={families[column] + ' ' + (row + 1)} aria-pressed={current.value === swatch}
+            onclick={() => { current.value = swatch; current.changed = true; }}></button>
+        {/each}
+      {/each}
+    </div>
+    <label class="cell-custom-color">Custom color
+      <input type="color" value={current.value}
+        oninput={(event) => { current.value = event.currentTarget.value; current.changed = true; }}
+        onchange={(event) => { current.value = event.currentTarget.value; current.changed = true; }} />
+    </label>
+  {/snippet}
+  {#snippet pickerFooter()}
+    <button type="button" class="button secondary" onclick={() => picker = undefined}>Cancel</button>
+    <button type="button" class="button primary" disabled={!current.changed} onclick={applyColor}>Apply</button>
+  {/snippet}
+  <Modal className="cell-color-dialog" title={current.label} close={() => picker = undefined} children={pickerContent} footer={pickerFooter} />
+{/if}
