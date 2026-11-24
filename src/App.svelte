@@ -53,6 +53,7 @@
   let filter = $state('');
   let focused = $state('');
   const groupDrop = $state({ target: '' });
+  let connectionDrag: { port?: Connection } | undefined;
   let workspaceMenu = $state(false);
   let activeTab = $state<'sql' | 'data'>('sql');
   let modal = $state<'paste' | 'table' | 'sql' | 'chart' | 'workspace' | 'settings' | 'quick-create' | 'configure' | null>(null);
@@ -561,14 +562,31 @@
     connect(connection.source, connection.target);
   }
 
-  const quickDrop: OnConnectEnd = async (event, connection) => {
-    if (connection.fromHandle?.id !== 'quick-create' || connection.toHandle || !connection.fromNode || !connection.to) return;
+  function beforeConnect(connection: Connection) {
+    if (!connectionDrag) return connection;
+    // Finish the drag at the card under the pointer before using a nearby port.
+    connectionDrag.port = connection;
+    return false as const;
+  }
+
+  const finishConnection: OnConnectEnd = async (event, connection) => {
+    const port = connectionDrag?.port;
+    connectionDrag = undefined;
     const pointer = event instanceof MouseEvent ? event : event.changedTouches[0];
-    if (!pointer) return;
-    const hit = document.elementFromPoint(pointer.clientX, pointer.clientY);
-    if (!hit?.closest('.svelte-flow__pane')) return;
+    const hit = pointer ? document.elementFromPoint(pointer.clientX, pointer.clientY) : null;
+    const source = connection.fromHandle?.type === 'source' ? connection.fromNode?.id : undefined;
+    const table = hit?.closest('.graph-card.table')?.closest('.svelte-flow__node')?.getAttribute('data-id');
+    if (source && table) {
+      connect(source, table);
+      return;
+    }
+    if (port) {
+      onConnect(port);
+      return;
+    }
+    if (!source || !pointer || !connection.to || connection.fromHandle?.id !== 'quick-create' || connection.toHandle || !hit?.closest('.svelte-flow__pane')) return;
     if (hit.closest('.svelte-flow__node') && !hit.matches('.group-card:not(.collapsed)')) return;
-    quickSource = connection.fromNode.id;
+    quickSource = source;
     quickPosition = { ...connection.to };
     quickPointer = { x: Math.max(8, Math.min(pointer.clientX, innerWidth - 256)), y: Math.max(8, Math.min(pointer.clientY, innerHeight - 140)) };
     modal = 'quick-create';
@@ -868,9 +886,12 @@
             nodesConnectable
             nodesDraggable={!focused}
             deleteKey={null}
+            onconnectstart={() => connectionDrag = {}}
+            onbeforeconnect={beforeConnect}
             onconnect={onConnect}
-            onconnectend={quickDrop}
-            isValidConnection={({ source, target, sourceHandle }) => sourceHandle !== 'quick-create' && canConnect(workspace, source, target)}
+            onconnectend={finishConnection}
+            isValidConnection={({ source, target, sourceHandle }) =>
+              (sourceHandle !== 'quick-create' || blocksById.get(target)?.kind === 'table') && canConnect(workspace, source, target)}
             onnodeclick={({ node }) => select(node.id)}
             onnodedrag={({ targetNode, event }) => { groupDrop.target = targetNode ? groupForDrag(targetNode, event)?.id ?? '' : ''; }}
             onnodedragstop={({ targetNode, event }) => { if (targetNode) moveDraggedBlock(targetNode, event); }}

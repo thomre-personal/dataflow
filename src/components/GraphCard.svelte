@@ -27,20 +27,25 @@
 </script>
 
 <script lang="ts">
-  import { Handle, NodeResizer, Position } from '@xyflow/svelte';
+  import { Handle, NodeResizer, Position, useConnection } from '@xyflow/svelte';
   import type { Node, NodeProps } from '@xyflow/svelte';
   import { Braces, ChartColumnIncreasing, CircleAlert, Folder, Lock, LockOpen, Maximize2, Minimize2, Plus, Table2 } from 'lucide-svelte';
   import { countLabel, chartSeries, tablePreview } from '../lib/format';
+  import { canConnect } from '../lib/workspace';
   import MiniChart from './MiniChart.svelte';
   import BlockName from './BlockName.svelte';
   import ResultGrid from './ResultGrid.svelte';
   import TableEditor from './TableEditor.svelte';
 
   let { data, selected }: NodeProps<Node<CardData>> = $props();
+  const connection = useConnection();
   const icons = { table: Table2, sql: Braces, chart: ChartColumnIncreasing, group: Folder };
   const labels = { table: 'Table', sql: 'SQL query', chart: 'Chart', group: 'Group' };
   let block = $derived(data.block);
   let expanded = $derived(block.kind !== 'sql' && block.expanded !== false);
+  let connectionSource = $derived(connection.current.fromHandle?.type === 'source' ? connection.current.fromNode?.id : undefined);
+  let acceptsConnection = $derived(block.kind === 'table' && data.edit && connectionSource
+    && canConnect(data.edit.workspace, connectionSource, block.id));
   let Icon = $derived(icons[block.kind]);
   let series = $derived(block.kind === 'chart' ? chartSeries(block, data.result) : undefined);
   let codeLines = $derived(block.kind === 'sql' ? block.sql.trim().split('\n').slice(0, 6) : []);
@@ -76,14 +81,14 @@
     </header>
   </div>
 {:else}
-  <div class="graph-card {block.kind}" class:expanded class:selected class:related={Boolean(data.focusSide)}>
+  <div class="graph-card {block.kind}" class:expanded class:selected class:related={Boolean(data.focusSide)} class:accepts-connection={Boolean(acceptsConnection)}>
     {#if block.kind === 'table' || block.kind === 'sql' || block.kind === 'chart'}
       <Handle type="target" position={Position.Left} isConnectable={true} aria-label="Input port" />
     {/if}
     {#if block.kind === 'table' || block.kind === 'sql'}
       <Handle type="source" position={Position.Right} isConnectable={true} aria-label="Output port" />
       <Handle id="quick-create" class="quick-exit" type="source" position={Position.Right} isConnectable={true}
-        isConnectableEnd={false} aria-label={'Drag to add a block from ' + block.title} title="Drag onto the canvas to add a connected block">
+        isConnectableEnd={false} aria-label={'Connect or add a block from ' + block.title} title="Drag onto a table to connect, or onto the canvas to add a block">
         <Plus size={15} />
       </Handle>
     {/if}

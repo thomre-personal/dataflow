@@ -568,3 +568,41 @@ test('requires an input for a cross-table formula and recalculates it for downst
   await query.getByRole('button', { name: 'Save and run' }).click();
   await expect(inspector.getByRole('cell', { name: '84.975', exact: true })).toBeVisible();
 });
+
+test('connects both output handles when dropped onto the body of an existing table', async ({ page }) => {
+  await page.goto('/');
+  const source = canvasBlock(page, 'Transactions');
+  await source.getByRole('button', { name: 'Open table', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Untitled table' }).getByRole('button', { name: 'Done' }).click();
+
+  const target = canvasBlock(page, 'Untitled table');
+  const card = target.locator('.graph-card');
+  const cell = target.getByRole('textbox', { name: 'B row 1', exact: true });
+  await cell.hover({ trial: true });
+  const inspector = page.getByRole('complementary', { name: 'Block inspector' });
+  const input = inspector.getByRole('button', { name: 'Disconnect Transactions', exact: true });
+
+  async function dropOnCell(handle: Locator) {
+    await handle.hover();
+    const bounds = (await cell.boundingBox())!;
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2, { steps: 14 });
+    await expect(card).toHaveCSS('outline-width', '2px');
+    await page.mouse.up();
+    await expect(input).toHaveCount(1);
+    await expect(card).not.toHaveClass(/accepts-connection/);
+    await expect(page.getByRole('group', { name: 'Add connected block' })).toHaveCount(0);
+  }
+
+  await source.hover();
+  await dropOnCell(source.getByRole('button', { name: 'Connect or add a block from Transactions', exact: true }));
+  await input.click();
+  await expect(input).toHaveCount(0);
+  await dropOnCell(source.getByRole('button', { name: 'Output port', exact: true }));
+
+  await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
+  await page.reload();
+  await page.getByRole('complementary', { name: 'Workspace blocks' }).getByRole('button', { name: 'Untitled table', exact: true }).click();
+  await expect(input).toHaveCount(1);
+});

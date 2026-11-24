@@ -196,6 +196,7 @@ code { font-family: var(--mono); }
 .svelte-flow .block-resize-edge:is(.top, .bottom) { height: 9px; }
 .svelte-flow .block-resize-corner { z-index: 3; width: 9px; height: 9px; border: 1px solid var(--surface); border-radius: 3px; background: var(--accent-line); touch-action: none; }
 .graph-card.related:not(.selected) { border-color: color-mix(in srgb, var(--accent), var(--border) 48%); }
+.graph-card.accepts-connection:hover { border-color: var(--accent-line); outline: 2px solid var(--accent-line); outline-offset: 1px; }
 .node-heading { cursor: grab; padding: 8px 11px; display: flex; align-items: center; gap: 9px; min-width: 0; border-bottom: 1px solid var(--divider); border-radius: 10px 10px 0 0; }
 .node-heading:active { cursor: grabbing; }
 .node-heading > div { flex: 1; min-width: 0; }
