@@ -114,7 +114,10 @@ async function dragOutput(page: Page, name: string, y: number) {
   await expect(exit).toHaveCSS('opacity', '1');
   const handle = (await exit.boundingBox())!;
   const canvas = (await page.locator('.canvas-stage').boundingBox())!;
-  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+  const center = { x: handle.x + handle.width / 2, y: handle.y + handle.height / 2 };
+  await page.mouse.move(center.x - 30, center.y);
+  await page.mouse.move(center.x, center.y, { steps: 30 });
+  await expect(exit).toHaveCSS('opacity', '1');
   await page.mouse.down();
   await page.mouse.move(canvas.x + canvas.width * .55, canvas.y + canvas.height * y, { steps: 12 });
   await page.mouse.up();
