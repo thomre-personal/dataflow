@@ -600,6 +600,8 @@
           <!-- svelte-ignore a11y_no_noninteractive_tabindex (Cells can be selected with the keyboard before entering edit mode.) -->
           <td data-table-cell="" class="nokey" tabindex="0" class:invalid-cell={Boolean(issue)} class:title-column={columnIndex < titleColumns}
             class:formula-cell={isFormula} class:range-cell={inRange} class:selected-cell={active}
+            class:range-top={inRange && rowIndex === range?.top} class:range-bottom={inRange && rowIndex === range?.bottom}
+            class:range-left={inRange && columnIndex === range?.left} class:range-right={inRange && columnIndex === range?.right}
             onfocus={() => { if (!active) selectCell(address); }}
             onpointerdown={(event) => cellPointer(event, address)}
             onkeydown={(event) => selectionKeyboard(event, rowIndex, columnIndex)}

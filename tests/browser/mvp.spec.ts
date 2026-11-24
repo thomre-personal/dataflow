@@ -878,6 +878,8 @@ test('selects all cells in a row or column from its header and opens settings on
   await firstRow.click();
   await expect(firstRow).toHaveAttribute('aria-pressed', 'true');
   await expect(selectedCells).toHaveCount(2);
+  expect(await selectedCells.evaluateAll((cells) => cells.map((cell) => getComputedStyle(cell, '::after').borderWidth)))
+    .toEqual(['1px 0px 1px 1px', '1px 1px 1px 0px']);
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.keyboard.press('ControlOrMeta+c');
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(rows[0]);
@@ -947,7 +949,10 @@ test('drags, copies and clears rectangular cell ranges in both table editors', a
   await page.mouse.up();
   await expect(dialog.getByText('B2:C3', { exact: true })).toBeVisible();
   await expect(dialog.locator('td.range-cell')).toHaveCount(4);
+  expect(await dialog.locator('td.range-cell').evaluateAll((cells) => cells.map((cell) => getComputedStyle(cell, '::after').borderWidth)))
+    .toEqual(['1px 0px 0px 1px', '1px 1px 0px 0px', '0px 0px 1px 1px', '0px 1px 1px 0px']);
   await expect(anchor.locator('xpath=ancestor::td')).toBeFocused();
+  await expect(anchor.locator('xpath=ancestor::td')).toHaveCSS('box-shadow', 'none');
   await page.keyboard.press('ControlOrMeta+c');
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('One\t"=CONCAT(""T"", ""wo"")"\nThree\tFour');
   await page.keyboard.press('Delete');
