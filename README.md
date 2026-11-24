@@ -62,7 +62,17 @@ To aggregate a column in another table, connect that table to the one containing
 
 Date, number, and Boolean columns validate their data rows as you edit or paste. Empty cells are allowed. DataFlow shows invalid values so you can correct them before running a query or plotting the table.
 
-The app saves drafts and canvas positions in IndexedDB. DuckDB runs in a local browser worker. A separate browser profile or address has separate storage. Clearing that storage deletes its local workspaces.
+## Save a workspace as a file
+
+DataFlow saves workspaces and their canvas positions in the browser by default. A different browser profile or address has its own storage. Clearing the site's data removes those browser copies. DuckDB runs in a local browser worker.
+
+1. In Chrome or Edge on desktop, open **Workspaces** and choose **Save as file…**. Pick a folder in your Git working tree, in iCloud Drive, or on your computer. DataFlow names the new `.dataflow.json` file after the workspace and adds a number if the name is already taken.
+2. DataFlow saves edits to that file automatically and keeps a recovery draft in the browser. **Open file…** links an existing document. Use **Enable file autosave** if the browser needs permission to write.
+3. DataFlow checks for external changes before saving, when you return to the tab, and when you choose **Check file**. If it reports **File changed**, choose **Open file version** to load the file and keep any unsaved edits as a separate browser workspace. Choose **Save as new file…** to keep editing your draft in a different file.
+
+**Import a copy…** and **Export a copy** work without direct file access. You can use them in browsers such as Safari and Firefox. Imported copies save in the browser. The file contains the canvas, tables, formulas, SQL, charts, and links in readable JSON. Git can track it with your usual workflow.
+
+iCloud Drive handles file transfers between devices. Use one editor at a time and let the file sync before switching devices. The future DataFlow cloud is intended for simultaneous editing, with a workspace file available as the starting point for a future import.
 
 The first build accepts up to 10,000 rows and 80 columns per pasted range. Query results can contain up to 10,000 rows. A chart displays up to 100 result rows.
 

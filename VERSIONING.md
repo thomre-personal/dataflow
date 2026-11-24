@@ -28,7 +28,7 @@ Show who is in the workspace and where they are working. On the canvas, show eac
 
 Presence indicators are temporary and stay outside the version history. Clear them when someone leaves the workspace or loses their connection. Verify with two user accounts that each person can see the other's current focus and that markers disappear after departure.
 
-## Proposed design for the personal MVP
+## Proposed design for shared workspaces
 
 Use PostgreSQL for the current drafts and saved versions. Keep a stable ID for each block, connection, row, and column. Store edits as small, identifiable changes, with a pasted range or other single user action grouped together. Use those changes for undo and redo. Save versions as immutable workspace snapshots that reference the input data versions needed to reproduce the analysis. A merge version records both versions it combined.
 
@@ -46,6 +46,8 @@ Keep dated snapshots and release tags in the same history. For a reusable compon
 2. **Live editing.** Start with the server applying and broadcasting edits to users in the same workspace. Reuse the comparison and conflict tools from variants when edits conflict.
 3. **Offline editing.** If extended offline editing becomes a priority, test a synchronization library such as Automerge on a real DataFlow workspace. Its sync model and Swift bindings are relevant to a future Apple client. DataFlow still defines how to handle conflicting financial values, invalid graph connections, and SQL that combines poorly. [Automerge concepts](https://automerge.org/docs/reference/concepts/) and [Swift bindings](https://github.com/automerge/automerge-swift)
 
-## Git integration
+## Local files and Git
 
-Use a stable, readable export for SQL, canvas definitions, and small tables. This supports external Git review. A two-way Git connection remains an open decision.
+Local workspaces can use a versioned, readable `.dataflow.json` file. It keeps stable IDs for blocks, connections, rows, and columns. Save it in a Git working tree for manual diffs and commits, or in iCloud Drive for device handoff. DataFlow pauses file autosave when it detects a change on disk and retains the browser draft.
+
+Use a single editor for a file, then give the file provider time to finish syncing before opening it on a second device. For future simultaneous editing, users can move a workspace into the DataFlow cloud through a document import. Direct Git integration remains an open decision.

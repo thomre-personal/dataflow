@@ -1,6 +1,6 @@
 import type { Library } from './workspace';
-import { tableInputs } from './workspace';
-import { bindTableFormulas } from './formulas';
+import { bindWorkspaceFormulas } from './formulas';
+import type { WorkspaceFileBinding } from './workspace-document';
 
 const storeName = 'workspaces';
 let opening: Promise<IDBDatabase> | undefined;
@@ -25,20 +25,35 @@ export async function loadLibrary(): Promise<Library | undefined> {
   if (!library) return;
   return {
     ...library,
-    workspaces: library.workspaces.map((workspace) => ({
-      ...workspace,
-      blocks: workspace.blocks.map((block) => block.kind === 'table' ? bindTableFormulas(block, tableInputs(workspace, block.id)) : block),
-    })),
+    workspaces: library.workspaces.map(bindWorkspaceFormulas),
   };
 }
 
-export async function saveLibrary(library: Library): Promise<void> {
+export async function loadWorkspaceFiles(ids: string[]): Promise<Record<string, WorkspaceFileBinding>> {
+  const db = await database();
+  const store = db.transaction(storeName).objectStore(storeName);
+  const entries = await Promise.all(ids.map((id) => new Promise<[string, WorkspaceFileBinding | undefined]>((resolve, reject) => {
+    const request = store.get('file:' + id);
+    request.onsuccess = () => resolve([id, request.result]);
+    request.onerror = () => reject(request.error);
+  })));
+  return Object.fromEntries(entries.filter((entry): entry is [string, WorkspaceFileBinding] => entry[1] !== undefined));
+}
+
+export async function saveLibrary(library: Library, file?: { id: string; binding: WorkspaceFileBinding }): Promise<void> {
   const db = await database();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(storeName, 'readwrite');
-    transaction.objectStore(storeName).put(library, 'library');
+    const store = transaction.objectStore(storeName);
     transaction.oncomplete = () => resolve();
     transaction.onabort = () => reject(transaction.error);
     transaction.onerror = () => reject(transaction.error);
+    try {
+      store.put(library, 'library');
+      if (file) store.put(file.binding, 'file:' + file.id);
+    } catch (error) {
+      transaction.abort();
+      reject(error);
+    }
   });
 }

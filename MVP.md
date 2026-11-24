@@ -24,6 +24,7 @@ Use a small anonymized copy of a real Numbers table to check the workflow. Inclu
 - **History.** Autosave edits, support undo and redo during a session, and list automatic snapshots by date and time. Add comments and SemVer tags, compare and restore versions, and merge simple variants with a way to resolve conflicts. See [version history and collaboration](VERSIONING.md).
 - **AI-assisted SQL.** Offer a draft from a plain-language request. Show the SQL diff and a data preview before the user accepts the change. Manual SQL follows the same version and preview workflow.
 - **Appearance.** Use the slate themes and table presets in [the design notes](DESIGN.md).
+- **Workspace files.** Open and autosave a local workspace document, or use import and export. Store it in a Git working tree or in iCloud Drive. Keep a browser draft when file access or autosave is paused.
 
 The first workflow is complete when the user can paste, edit, query, and chart their own data, reopen the workspace, and restore a prior calculation with its saved inputs. A query should be reusable when the source table changes.
 
@@ -32,7 +33,7 @@ Verify the paste workflow with ranges copied from both Numbers and Excel. Use th
 ## Open decisions
 
 - Pick the first real Numbers workbook to use for testing.
-- Confirm whether the first version needs a Git repository connection or whether built-in history and a Git-friendly export are enough.
+- Decide whether a later release needs a direct Git integration. Local workspace files already support an external Git workflow.
 - Choose how the first AI provider is configured. Writing and running SQL remains available independently of the AI provider.
 - Decide when to introduce [simultaneous editing of the same workspace](VERSIONING.md#edit-the-same-workspace-together). The first validation workflow is personal, and simultaneous editing is a product requirement.
 

@@ -1,5 +1,5 @@
-import { columnLetter } from './workspace.ts';
-import type { Column, Formula, FormulaColumn, Row, TableInput } from './workspace.ts';
+import { columnLetter, tableInputs } from './workspace.ts';
+import type { Column, Formula, FormulaColumn, Row, TableInput, Workspace } from './workspace.ts';
 
 export type FormulaFunction = Formula['name'] | 'DISTINCT';
 
@@ -226,6 +226,14 @@ export function bindTableFormulas<T extends { columns: Column[]; rows: Row[] }>(
     return { ...row, formulas };
   });
   return changed ? { ...data, rows } : data;
+}
+
+export function bindWorkspaceFormulas(workspace: Workspace): Workspace {
+  return {
+    ...workspace,
+    blocks: workspace.blocks.map((block) => block.kind === 'table'
+      ? bindTableFormulas(block, tableInputs(workspace, block.id)) : block),
+  };
 }
 
 export function readFormula(row: Row, columnId: string): Formula | undefined {

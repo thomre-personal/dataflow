@@ -3,7 +3,7 @@
   import type { Connection, Edge, Node, OnConnectEnd, ResizeParams } from '@xyflow/svelte';
   import {
     ArrowDownLeft, ArrowUpRight, Braces, ChartColumnIncreasing, Check,
-    ChevronDown, CircleAlert, ClipboardPlus, CloudOff, Focus, Folder, Layers3, Link2, Maximize,
+    ChevronDown, CircleAlert, ClipboardPlus, CloudOff, Download, FileText, Focus, Folder, FolderOpen, Layers3, Link2, Maximize,
     PanelRightClose, PanelRightOpen, Pencil, Play, Plus, Redo2, Search, Settings as SettingsIcon, Table2, Trash2, Undo2, Unplug,
     Workflow, X,
   } from 'lucide-svelte';
@@ -20,13 +20,19 @@
   import ResultGrid from './components/ResultGrid.svelte';
   import MiniChart from './components/MiniChart.svelte';
   import Settings from './components/Settings.svelte';
-  import { absolutePosition, addLink, canConnect, canGroup, columnLetter, createBlock, createWorkspace, kinds, related, rowNumber, sqlAlias, starterWorkspace, tableInputs } from './lib/workspace';
+  import { absolutePosition, addLink, canConnect, canGroup, columnLetter, createBlock, createWorkspace, kinds, newId, related, rowNumber, sqlAlias, starterWorkspace, tableInputs } from './lib/workspace';
   import type { Block, BlockKind, ChartBlock, GroupBlock, Library, Link, NumberFormat, Position, Result, SqlBlock, Workspace } from './lib/workspace';
   import { importGrid, parseDelimited } from './lib/clipboard';
-  import { bindTableFormulas, cellFormulaText, isFormulaEntry } from './lib/formulas';
+  import { bindTableFormulas, bindWorkspaceFormulas, cellFormulaText, isFormulaEntry } from './lib/formulas';
   import { describeCellIssue, invalidTableCells, tableData } from './lib/table-data';
   import { chartSeries, countLabel, tablePreview, tableResult } from './lib/format';
-  import { loadLibrary, saveLibrary } from './lib/storage';
+  import { loadLibrary, loadWorkspaceFiles, saveLibrary } from './lib/storage';
+  import {
+    createWorkspaceFile, documentHash, downloadWorkspaceDocument, parseWorkspaceDocument, pickWorkspaceFile,
+    pickWorkspaceFolder, readWorkspaceFile, serializeWorkspaceDocument, supportsWorkspaceFiles,
+    WorkspaceFileChanged, writeWorkspaceFile,
+  } from './lib/workspace-document';
+  import type { WorkspaceFileBinding, WorkspaceFileHandle } from './lib/workspace-document';
   import { defaultHotkeys, defaultPreferences, eventHotkey, hotkeyLabel, isMac, loadPreferences } from './lib/preferences';
   import type { Preferences } from './lib/preferences';
 
@@ -88,7 +94,7 @@
   let connectionDrag: { port?: Connection } | undefined;
   let workspaceMenu = $state(false);
   let activeTab = $state<'sql' | 'data'>('sql');
-  let modal = $state<'paste' | 'table' | 'sql' | 'chart' | 'workspace' | 'settings' | 'quick-create' | 'configure' | null>(null);
+  let modal = $state<'paste' | 'table' | 'sql' | 'chart' | 'workspace' | 'workspace-file' | 'settings' | 'quick-create' | 'configure' | null>(null);
   let quickSource = $state('');
   let quickPosition = $state<Position>({ x: 0, y: 0 });
   let quickPointer = $state<Position>({ x: 0, y: 0 });
@@ -107,14 +113,26 @@
   let blockSearch = $state<BlockSearch>();
   let queryViewRevision = 0;
   let saveState = $state<'saving' | 'saved' | 'error'>('saved');
+  type FileState = { kind: 'saving' | 'saved' | 'permission' | 'conflict' | 'error'; message?: string };
+  let workspaceFiles = $state.raw<Record<string, WorkspaceFileBinding>>({});
+  let fileStates = $state<Record<string, FileState>>({});
+  let workspaceFile = $derived(workspaceFiles[workspace.id]);
+  let fileState = $derived(fileStates[workspace.id]);
+  let fileAction = $state(false);
+  let fileInput: HTMLInputElement;
+  const fileTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  let fileWork = Promise.resolve();
   let notice = $state('');
   let preferences = $state<Preferences>(defaultPreferences);
   let systemDark = $state(false);
   let dark = $derived(preferences.theme === 'dark' || (preferences.theme === 'auto' && systemDark));
   let flowNodes = $state.raw<Node<CardData>[]>([]);
   let flowEdges = $state.raw<Edge[]>([]);
-  let runtime = $state<Record<string, { state: 'ready' | 'stale' | 'running' | 'error'; result?: Result; error?: string }>>({});
+  type QueryState = { state: 'ready' | 'stale' | 'running' | 'error'; result?: Result; error?: string };
+  let workspaceQueries = $state<Record<string, Record<string, QueryState>>>({});
+  let runtime = $derived(workspaceQueries[workspace.id] ?? {});
   const stamps = new Map<string, number>();
+  const queryKey = (workspaceId: string, blockId: string) => workspaceId + ':' + blockId;
   let saveWork = Promise.resolve();
   let saveSequence = 0;
   let noticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -125,22 +143,205 @@
     noticeTimer = setTimeout(() => { notice = ''; }, 4200);
   }
 
-  function persist() {
+  function persist(file?: { id: string; binding: WorkspaceFileBinding }) {
     if (!ready) return;
     const snapshot = $state.snapshot(library) as Library;
     const sequence = ++saveSequence;
     saveState = 'saving';
-    saveWork = saveWork.catch(() => {}).then(() => saveLibrary(snapshot));
+    saveWork = saveWork.catch(() => {}).then(() => saveLibrary(snapshot, file));
     void saveWork.then(() => {
       if (sequence === saveSequence) saveState = 'saved';
     }, () => {
       if (sequence === saveSequence) saveState = 'error';
     });
+    return saveWork;
   }
 
   function saveWorkspace(next: Workspace) {
     library = { ...library, workspaces: library.workspaces.map((item) => item.id === next.id ? next : item) };
     persist();
+    scheduleFileSave(next.id);
+  }
+
+  function queueFileWork<T>(action: () => Promise<T>) {
+    const pending = fileWork.then(action);
+    fileWork = pending.then(() => {}, () => {});
+    return pending;
+  }
+
+  function rememberFile(id: string, binding: WorkspaceFileBinding) {
+    workspaceFiles = { ...workspaceFiles, [id]: binding };
+    return persist({ id, binding });
+  }
+
+  function scheduleFileSave(id: string) {
+    const status = fileStates[id]?.kind;
+    if (!workspaceFiles[id] || status === 'conflict' || status === 'permission' || status === 'error') return;
+    fileStates[id] = { kind: 'saving' };
+    clearTimeout(fileTimers.get(id));
+    fileTimers.set(id, setTimeout(() => void checkFile(id), 350));
+  }
+
+  function checkFile(id: string) {
+    clearTimeout(fileTimers.get(id));
+    fileTimers.delete(id);
+    return queueFileWork(async () => {
+      const binding = workspaceFiles[id];
+      const current = library.workspaces.find((item) => item.id === id);
+      if (!binding || !current) return;
+      try {
+        await saveWork.catch(() => {});
+        const { handle } = binding;
+        if (await handle.queryPermission({ mode: 'read' }) !== 'granted') {
+          fileStates[id] = { kind: 'permission' };
+          return;
+        }
+        const text = serializeWorkspaceDocument(current);
+        const savedHash = await documentHash(text);
+        const disk = await readWorkspaceFile(handle);
+        if (disk.hash !== binding.fileHash && disk.hash !== savedHash) throw new WorkspaceFileChanged();
+        if (await handle.queryPermission({ mode: 'readwrite' }) !== 'granted') {
+          fileStates[id] = { kind: 'permission' };
+          return;
+        }
+        if (disk.hash !== savedHash && savedHash !== binding.savedHash) {
+          fileStates[id] = { kind: 'saving' };
+          await writeWorkspaceFile(handle, text, disk.hash);
+          await rememberFile(id, { handle, fileHash: savedHash, savedHash });
+        } else if (disk.hash === savedHash && (binding.fileHash !== disk.hash || binding.savedHash !== savedHash)) {
+          await rememberFile(id, { handle, fileHash: disk.hash, savedHash });
+        }
+        fileStates[id] = { kind: 'saved' };
+        if (library.workspaces.find((item) => item.id === id) !== current && !fileTimers.has(id)) scheduleFileSave(id);
+      } catch (error) {
+        if (error instanceof WorkspaceFileChanged) {
+          fileStates[id] = { kind: 'conflict' };
+        } else if (error instanceof DOMException && error.name === 'NotAllowedError') {
+          fileStates[id] = { kind: 'permission' };
+        } else {
+          fileStates[id] = { kind: 'error', message: error instanceof Error ? error.message : String(error) };
+        }
+      }
+    });
+  }
+
+  async function runFileAction(action: () => Promise<void>) {
+    if (fileAction || !ready) return;
+    fileAction = true;
+    try {
+      await action();
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        message(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      fileAction = false;
+    }
+  }
+
+  async function linkedWorkspace(handle: WorkspaceFileHandle) {
+    for (const [id, binding] of Object.entries(workspaceFiles)) {
+      if (await handle.isSameEntry(binding.handle)) return id;
+    }
+  }
+
+  function openFile() {
+    workspaceMenu = false;
+    void runFileAction(async () => {
+      const handle = await pickWorkspaceFile();
+      if (!handle) return;
+      const existing = await linkedWorkspace(handle);
+      if (existing) {
+        await switchWorkspace(existing);
+        return;
+      }
+      const disk = await readWorkspaceFile(handle);
+      const current = bindWorkspaceFormulas(parseWorkspaceDocument(disk.text));
+      const savedHash = await documentHash(serializeWorkspaceDocument(current));
+      library = { ...library, workspaces: [...library.workspaces, current] };
+      await switchWorkspace(current.id, { handle, fileHash: disk.hash, savedHash });
+    });
+  }
+
+  function importFile(event: Event & { currentTarget: HTMLInputElement }) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file) return;
+    void runFileAction(async () => {
+      const current = bindWorkspaceFormulas(parseWorkspaceDocument(await file.text()));
+      library = { ...library, workspaces: [...library.workspaces, current] };
+      await switchWorkspace(current.id);
+      message('Opened a browser copy');
+    });
+  }
+
+  function saveAsFile() {
+    workspaceMenu = false;
+    const id = workspace.id;
+    void runFileAction(async () => {
+      const folder = await pickWorkspaceFolder();
+      if (!folder) return;
+      await queueFileWork(async () => {
+        const current = library.workspaces.find((item) => item.id === id);
+        if (!current) return;
+        const text = serializeWorkspaceDocument(current);
+        const savedHash = await documentHash(text);
+        const handle = await createWorkspaceFile(folder, current.title, text);
+        await rememberFile(id, { handle, fileHash: savedHash, savedHash });
+        fileStates[id] = { kind: 'saved' };
+        if (workspace.id === id && modal === 'workspace-file') closeModal();
+        if (library.workspaces.find((item) => item.id === id) !== current) scheduleFileSave(id);
+      });
+    });
+  }
+
+  function enableFileAutosave() {
+    const id = workspace.id;
+    const binding = workspaceFile;
+    if (!binding) return;
+    void runFileAction(async () => {
+      if (await binding.handle.requestPermission({ mode: 'readwrite' }) !== 'granted') return;
+      await checkFile(id);
+      if (fileStates[id]?.kind === 'saved' && modal === 'workspace-file') closeModal();
+    });
+  }
+
+  async function checkCurrentFile() {
+    const id = workspace.id;
+    workspaceMenu = false;
+    if (saveState === 'error') persist();
+    await checkFile(id);
+    if (workspace.id !== id) return;
+    if (fileStates[id]?.kind === 'saved' && saveState !== 'error') {
+      if (modal === 'workspace-file') closeModal();
+    } else if (!modal) {
+      modal = 'workspace-file';
+    }
+  }
+
+  function openDiskVersion() {
+    const id = workspace.id;
+    void runFileAction(async () => {
+      await queueFileWork(async () => {
+        const binding = workspaceFiles[id];
+        if (!binding || workspace.id !== id) return;
+        const disk = await readWorkspaceFile(binding.handle);
+        const current = bindWorkspaceFormulas(parseWorkspaceDocument(disk.text, id));
+        const savedHash = await documentHash(serializeWorkspaceDocument(current));
+        const draft = workspace;
+        const keepDraft = await documentHash(serializeWorkspaceDocument(draft)) !== binding.savedHash;
+        if (workspace !== draft) throw new Error('The workspace changed while the file was opening. Try again.');
+        const workspaces = library.workspaces.map((item) => item.id === id ? current : item);
+        if (keepDraft) workspaces.push({ ...draft, id: newId(), title: draft.title + ' (local draft)', sample: undefined });
+        invalidate(draft.blocks.map((block) => block.id));
+        delete workspaceQueries[id];
+        delete histories[id];
+        library = { ...library, workspaces };
+        closeModal();
+        await switchWorkspace(id, { ...binding, fileHash: disk.hash, savedHash });
+        if (keepDraft) message('Your edits were kept as a separate browser workspace');
+      });
+    });
   }
 
   function replaceWorkspace(next: Workspace) {
@@ -190,7 +391,8 @@
 
   function invalidate(ids: Iterable<string>) {
     for (const id of ids) {
-      stamps.set(id, (stamps.get(id) ?? 0) + 1);
+      const key = queryKey(workspace.id, id);
+      stamps.set(key, (stamps.get(key) ?? 0) + 1);
       if (runtime[id]) runtime[id] = { ...runtime[id], state: 'stale', error: undefined };
     }
   }
@@ -210,21 +412,24 @@
   }
 
   async function runSQL(block: SqlBlock, showResult = true) {
-    if (runtime[block.id]?.state === 'running') return;
-    const stamp = (stamps.get(block.id) ?? 0) + 1;
-    stamps.set(block.id, stamp);
     const source = $state.snapshot(workspace) as Workspace;
+    const key = queryKey(source.id, block.id);
+    workspaceQueries[source.id] ??= {};
+    const queries = workspaceQueries[source.id];
+    if (queries[block.id]?.state === 'running') return;
+    const stamp = (stamps.get(key) ?? 0) + 1;
+    stamps.set(key, stamp);
     const viewRevision = queryViewRevision;
-    runtime[block.id] = { state: 'running', result: runtime[block.id]?.result };
+    queries[block.id] = { state: 'running', result: queries[block.id]?.result };
     try {
       const { runQuery } = await import('./lib/sql');
       const result = await runQuery(source, block.id);
-      if (stamps.get(block.id) !== stamp) return;
-      runtime[block.id] = { state: 'ready', result };
+      if (stamps.get(key) !== stamp) return;
+      queries[block.id] = { state: 'ready', result };
       if (showResult && viewRevision === queryViewRevision && selectedId === block.id && library.activeId === source.id) activeTab = 'data';
     } catch (error) {
-      if (stamps.get(block.id) !== stamp) return;
-      runtime[block.id] = { state: 'error', result: runtime[block.id]?.result, error: error instanceof Error ? error.message : String(error) };
+      if (stamps.get(key) !== stamp) return;
+      queries[block.id] = { state: 'error', result: queries[block.id]?.result, error: error instanceof Error ? error.message : String(error) };
     }
   }
 
@@ -246,6 +451,7 @@
         if (restored?.workspaces.length) {
           library = restored;
           selectedId = workspace.blocks.find((block) => block.kind === 'sql')?.id ?? workspace.blocks[0]?.id ?? '';
+          workspaceFiles = await loadWorkspaceFiles(restored.workspaces.map((item) => item.id));
         }
         ready = true;
         if (!restored) persist();
@@ -254,10 +460,12 @@
         saveState = 'error';
       }
       initializeQueries(workspace);
+      if (workspaceFile) void checkFile(workspace.id);
     })();
     return () => {
       preference.removeEventListener('change', changed);
       clearTimeout(noticeTimer);
+      for (const timer of fileTimers.values()) clearTimeout(timer);
     };
   });
 
@@ -709,7 +917,7 @@
     modal = null;
   }
 
-  function switchWorkspace(id: string) {
+  function switchWorkspace(id: string, binding?: WorkspaceFileBinding) {
     library = { ...library, activeId: id };
     workspaceMenu = false;
     focused = '';
@@ -717,9 +925,14 @@
     activeCell = undefined;
     selectedId = workspace.blocks[0]?.id ?? '';
     showQueryTab('sql');
-    persist();
+    const saved = binding ? rememberFile(id, binding) : persist();
     initializeQueries(workspace);
     void fitCanvas();
+    if (workspaceFiles[id]) {
+      fileStates[id] = { kind: 'saving' };
+      void checkFile(id);
+    }
+    return saved;
   }
 
   function workspaceDialog(rename = false) {
@@ -847,7 +1060,9 @@
     canConnect(sqlEditorWorkspace, block.id, selectedId)) : []);
 </script>
 
-<svelte:window onkeydown={keyboard} onkeydowncapture={queryShortcut} />
+<svelte:window onkeydown={keyboard} onkeydowncapture={queryShortcut}
+  onfocus={() => { if (ready && workspaceFile && !fileAction) void checkFile(workspace.id); }} />
+<input type="file" hidden accept=".json,application/json" aria-label="Import workspace file" bind:this={fileInput} onchange={importFile} />
 
 {#snippet sqlCode(value: string, change: (text: string) => void, autofocus = false)}
   {#await import('./components/SqlEditor.svelte')}
@@ -877,10 +1092,24 @@
           <div class="workspace-menu">
             <p>WORKSPACES</p>
             {#each library.workspaces as item (item.id)}
-              <button class:current={library.activeId === item.id} onclick={() => switchWorkspace(item.id)}><Layers3 size={15} /><span>{item.title}</span>{#if library.activeId === item.id}<Check size={14} />{/if}</button>
+              <button class:current={library.activeId === item.id} onclick={() => switchWorkspace(item.id)}>
+                {#if workspaceFiles[item.id]}<FileText size={15} />{:else}<Layers3 size={15} />{/if}
+                <span>{item.title}</span>{#if library.activeId === item.id}<Check size={14} />{/if}
+              </button>
             {/each}
             <button onclick={() => workspaceDialog(true)}><Layers3 size={15} /> Rename workspace</button>
             <button class="new-workspace" onclick={() => workspaceDialog()}><Plus size={15} /> New workspace</button>
+            <div class="workspace-file-actions">
+              {#if supportsWorkspaceFiles()}
+                <button disabled={!ready || fileAction} onclick={openFile}><FolderOpen size={15} /> Open file…</button>
+                <button disabled={!ready || fileAction} onclick={saveAsFile}><FileText size={15} /> {workspaceFile ? 'Save as new file…' : 'Save as file…'}</button>
+              {/if}
+              <button disabled={!ready || fileAction} onclick={() => { workspaceMenu = false; fileInput.click(); }}><FolderOpen size={15} /> Import a copy…</button>
+              <button disabled={!ready} onclick={() => { workspaceMenu = false; downloadWorkspaceDocument(workspace); }}><Download size={15} /> Export a copy</button>
+              {#if workspaceFile}
+                <button disabled={fileAction} onclick={() => void checkCurrentFile()}><FileText size={15} /> Check file</button>
+              {/if}
+            </div>
           </div>
         {/if}
       </div>
@@ -889,7 +1118,23 @@
       <BlockSearch bind:this={blockSearch} blocks={workspace.blocks} {icons} shortcut={hotkeyLabel(preferences.hotkeys.search)} onPick={focusBlock} />
     {/key}
     <div class="header-right">
-      <span class="save-state" title="Stored in this browser">{#if saveState === 'error'}<CircleAlert size={15} /> Could not save{:else if saveState === 'saving'}<span class="save-dot"></span> Saving…{:else}<CloudOff size={15} /> Saved locally{/if}</span>
+      {#if workspaceFile}
+        <div class="file-save-state" title={workspaceFile.handle.name}>
+          {#if fileState?.kind === 'conflict'}
+            <button class="save-state file-state-action" onclick={() => modal = 'workspace-file'}><CircleAlert size={15} /> File changed</button>
+          {:else if fileState?.kind === 'permission'}
+            <button class="save-state file-state-action" onclick={() => modal = 'workspace-file'}><CircleAlert size={15} /> Enable file autosave</button>
+          {:else if fileState?.kind === 'error' || saveState === 'error'}
+            <button class="save-state file-state-action" onclick={() => modal = 'workspace-file'}><CircleAlert size={15} /> Check file saving</button>
+          {:else if fileState?.kind === 'saved'}
+            <span class="save-state"><FileText size={15} /> Saved to file</span>
+          {:else}
+            <span class="save-state"><span class="save-dot"></span> Checking file…</span>
+          {/if}
+        </div>
+      {:else}
+        <span class="save-state" title="Stored in this browser">{#if saveState === 'error'}<CircleAlert size={15} /> Could not save{:else if saveState === 'saving'}<span class="save-dot"></span> Saving…{:else}<CloudOff size={15} /> Saved locally{/if}</span>
+      {/if}
       <button class="icon-button settings-trigger" aria-label="Settings" title="Settings" onclick={() => modal = 'settings'}><SettingsIcon size={18} /></button>
     </div>
   </header>
@@ -1117,6 +1362,30 @@
   <Modal title="Edit SQL" subtitle={selected.title} wide close={closeModal} children={content} {footer} />
 {:else if modal === 'settings'}
   <Settings {preferences} change={(next) => preferences = next} close={closeModal} />
+{:else if modal === 'workspace-file' && workspaceFile}
+  {#snippet content()}
+    {#if fileState?.kind === 'conflict'}
+      <p>The file changed outside DataFlow. Autosave is paused. Open the file version to keep any unsaved edits as a separate browser workspace, or save your current work to a different file.</p>
+    {:else if fileState?.kind === 'permission'}
+      <p>Allow DataFlow to write to this file to resume autosave. Your edits are saved in this browser while access is paused.</p>
+    {:else}
+      <p>{fileState?.message ?? 'Check whether the file and the browser copy can be saved.'}</p>
+    {/if}
+    {#if saveState === 'error'}<p class="inline-error">The browser could not save your draft. Export a copy to keep your edits.</p>{/if}
+  {/snippet}
+  {#snippet footer()}
+    <button class="button secondary" onclick={closeModal}>Close</button>
+    {#if fileState?.kind === 'conflict'}
+      <button class="button secondary" disabled={fileAction} onclick={saveAsFile}>Save as new file…</button>
+      <button class="button primary" disabled={fileAction} onclick={openDiskVersion}>Open file version</button>
+    {:else if fileState?.kind === 'permission'}
+      <button class="button primary" disabled={fileAction} onclick={enableFileAutosave}>Allow file access</button>
+    {:else}
+      <button class="button secondary" onclick={() => downloadWorkspaceDocument(workspace)}>Export a copy</button>
+      <button class="button primary" disabled={fileAction} onclick={() => void checkCurrentFile()}>Check again</button>
+    {/if}
+  {/snippet}
+  <Modal title={fileState?.kind === 'conflict' ? 'File changed on disk' : 'Workspace file'} subtitle={workspaceFile.handle.name} close={closeModal} children={content} {footer} />
 {:else if modal === 'workspace'}
   {#snippet content()}
     <label class="field">Workspace name<input maxlength="100" bind:value={workspaceTitle} placeholder="e.g. Home budget" onkeydown={(event) => { if (event.key === 'Enter') saveWorkspaceName(); }} /></label>

@@ -89,16 +89,20 @@ code { font-family: var(--mono); }
 .workspace-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-trigger svg { color: var(--subtle); flex-shrink: 0; }
 .workspace-trigger:hover { background: var(--raised); }
-.workspace-menu { z-index: 12; position: absolute; top: 43px; left: 0; width: 245px; padding: 7px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
+.workspace-menu { z-index: 12; position: absolute; top: 43px; left: 0; width: 245px; max-height: calc(100dvh - 125px); overflow: auto; padding: 7px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
 .workspace-menu p { color: var(--subtle); padding: 7px 8px; font-size: 10px; font-weight: 750; letter-spacing: .08em; }
 .workspace-menu button { display: flex; align-items: center; gap: 8px; text-align: left; width: 100%; padding: 8px; border-radius: 6px; }
 .workspace-menu button span { flex: 1; }
 .workspace-menu button:hover, .workspace-menu button.current { background: var(--accent-soft); color: var(--accent); }
 .workspace-menu .new-workspace { margin-top: 4px; border-top: 1px solid var(--divider); }
+.workspace-file-actions { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--divider); }
 .header-right { display: flex; align-items: center; justify-content: flex-end; gap: 13px; }
 .history-actions { display: flex; align-items: center; flex-shrink: 0; gap: 2px; }
 .save-state { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; color: var(--muted); font-size: 11px; }
 .save-state svg { color: var(--subtle); }
+.file-state-action { padding: 5px 6px; border-radius: 6px; background: var(--raised); color: var(--warning); }
+.file-state-action svg { color: inherit; }
+.file-state-action:hover { background: var(--accent-soft); }
 .save-dot { display: inline-block; height: 7px; width: 7px; flex: 0 0 7px; border-radius: 50%; background: #26a390; }
 .block-search { min-width: 0; position: relative; }
 .block-search-field { height: 39px; border: 1px solid var(--border); border-radius: 8px; padding: 0 9px 0 11px; display: flex; align-items: center; gap: 9px; color: var(--muted); background: var(--raised); }
@@ -465,6 +469,7 @@ dialog::backdrop { background: #151f386d; backdrop-filter: blur(2px); }
   .header-right { gap: 6px; }
   .workspace-trigger { font-size: 11px; }
   .save-state { display: none; }
+  .file-state-action { display: inline-flex; }
   .block-search-field kbd { display: none; }
   .workspace-layout, .workspace-layout.panel-open { grid-template-columns: minmax(0, 1fr); position: relative; }
   .sidebar { display: none; }
