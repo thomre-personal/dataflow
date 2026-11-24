@@ -51,6 +51,10 @@ Type `=` to see formula suggestions. Use the arrow keys and **Return** to choose
 
 Select a cell to see its formula and the functions it uses in **Cell options**. Expand a function for its syntax and an example. **Search functions** filters the full catalog below the functions used in the cell. Cell options are also available in the table dialog.
 
+Use **Formatting** in **Cell options** to set the font, size, text styles, font color, and background color. Shift-click a second cell to select the rectangle between the two cells. Formatting applies to every selected cell.
+
+On a Mac, press **Option+Cmd+C** to copy a cell's style, then select a cell or range and press **Option+Cmd+V** to paste it. Use **Ctrl+Alt+C** and **Ctrl+Alt+V** on other platforms. You can also use the copy and paste buttons in the inspector. Style paste keeps the target cells' values and formulas.
+
 | Formula | Example |
 | --- | --- |
 | `AVERAGE` or `AVG` | `=AVG(Amount)` averages the numbers in a column. |

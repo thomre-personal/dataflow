@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { cellStyleCss } from '../lib/cell-style';
   import { defaultPreviewRowHeight as rowHeight } from '../lib/workspace';
   import type { Result } from '../lib/workspace';
   let { result, limit = 8, compact = false, full = false }: { result: Result; limit?: number; compact?: boolean; full?: boolean } = $props();
@@ -58,8 +59,9 @@
         <tr class:grid-even={(first + offset) % 2 === 1} class:footer-row={first + offset >= result.rows.length - (result.footerRows ?? 0)}
           style:height={heights ? heights[first + offset] + 'px' : undefined} aria-rowindex={full ? first + offset + 2 : undefined}>
           {#each row as cell, index}
-            {#if index < (result.titleColumns ?? 0)}<th scope="row" class="title-column" class:numeric={result.columns[index]?.type === 'decimal'}>{cell || '—'}</th>
-            {:else}<td class:numeric={result.columns[index]?.type === 'decimal'}>{cell || '—'}</td>{/if}
+            {@const style = cellStyleCss(result.cellStyles?.[first + offset]?.[index])}
+            {#if index < (result.titleColumns ?? 0)}<th scope="row" class="title-column" class:numeric={result.columns[index]?.type === 'decimal'} {style}>{cell || '—'}</th>
+            {:else}<td class:numeric={result.columns[index]?.type === 'decimal'} {style}>{cell || '—'}</td>{/if}
           {/each}
         </tr>
       {/each}

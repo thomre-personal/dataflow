@@ -15,15 +15,16 @@
   import type { CanvasPosition, FitCanvas } from './components/CanvasControls.svelte';
   import Modal from './components/Modal.svelte';
   import TableEditor from './components/TableEditor.svelte';
-  import type { CellAddress } from './components/TableEditor.svelte';
   import CellInspector from './components/CellInspector.svelte';
   import ResultGrid from './components/ResultGrid.svelte';
   import MiniChart from './components/MiniChart.svelte';
   import Settings from './components/Settings.svelte';
-  import { absolutePosition, addLink, canConnect, canGroup, columnLetter, createBlock, createWorkspace, kinds, newId, related, rowNumber, sqlAlias, starterWorkspace, tableInputs } from './lib/workspace';
+  import { absolutePosition, addLink, canConnect, canGroup, columnLetter, createBlock, createWorkspace, dataRowCount, kinds, newId, related, rowNumber, sqlAlias, starterWorkspace, tableInputs } from './lib/workspace';
   import type { Block, BlockKind, ChartBlock, GroupBlock, Library, Link, NumberFormat, Position, Result, SqlBlock, Workspace } from './lib/workspace';
   import { importGrid, parseDelimited } from './lib/clipboard';
   import { bindTableFormulas, bindWorkspaceFormulas, cellFormulaText, isFormulaEntry } from './lib/formulas';
+  import { cellSelectionBounds, updateCellStyles } from './lib/cell-style';
+  import type { CellAddress, CellSelection, CellStyle } from './lib/cell-style';
   import { describeCellIssue, invalidTableCells, tableData } from './lib/table-data';
   import { chartSeries, countLabel, tableResult } from './lib/format';
   import { loadLibrary, loadWorkspaceFiles, saveLibrary } from './lib/storage';
@@ -65,21 +66,24 @@
   let ready = $state(false);
   let selectedId = $state('monthly-totals');
   let selected = $derived(workspace.blocks.find((block) => block.id === selectedId));
-  let activeCell = $state<(CellAddress & { tableId: string })>();
+  let activeCell = $state<(CellSelection & { tableId: string })>();
   let inspectorScroll = $state<HTMLDivElement>();
+  let copiedCellStyle = $state<CellStyle | null>(null);
+  let selectedCellBounds = $derived(selected?.kind === 'table' && activeCell?.tableId === selected.id
+    ? cellSelectionBounds(selected, activeCell) : undefined);
   let selectedTableCell = $derived.by(() => {
-    if (selected?.kind !== 'table' || activeCell?.tableId !== selected.id) return;
-    const { rowId, columnId } = activeCell;
-    const row = selected.rows.findIndex(({ id }) => id === rowId);
-    const column = selected.columns.findIndex(({ id }) => id === columnId);
-    if (row < 0 || column < 0) return;
+    if (selected?.kind !== 'table' || !selectedCellBounds) return;
+    const { row, column, top, bottom, left, right } = selectedCellBounds;
     const letter = columnLetter(column);
     const name = selected.columns[column].name;
     const text = cellFormulaText(selected.rows[row], selected.columns, column, tableInputs(workspace, selected.id));
+    const start = columnLetter(left) + rowNumber(selected, top);
     return {
-      address: letter + rowNumber(selected, row),
+      address: top === bottom && left === right ? start : start + ':' + columnLetter(right) + rowNumber(selected, bottom),
       column: name === letter ? undefined : name,
       formula: isFormulaEntry(text) ? text : '',
+      format: selected.cellStyles?.[selected.rows[row].id]?.[selected.columns[column].id] ?? {},
+      defaultBold: column < (selected.titleColumns ?? 0) || row >= dataRowCount(selected),
     };
   });
   $effect(() => {
@@ -641,7 +645,7 @@
             error: message,
             paste: () => { select(block.id); openPaste(block.id); },
             activeCell: activeCell?.tableId === block.id ? activeCell : undefined,
-            selectCell: (cell: CellAddress) => select(block.id, cell),
+            selectCell: (cell: CellAddress, extend?: boolean) => select(block.id, cell, extend),
           } : undefined,
         },
       };
@@ -659,14 +663,36 @@
     activeTab = tab;
   }
 
-  function select(id: string, cell?: CellAddress) {
+  function select(id: string, cell?: CellAddress, extend = false) {
     if (flowEdges.some((edge) => edge.selected)) {
       flowEdges = flowEdges.map((edge) => edge.selected ? { ...edge, selected: false } : edge);
     }
     if (id !== selectedId) showQueryTab('sql');
     selectedId = id;
-    activeCell = cell ? { tableId: id, ...cell } : undefined;
+    if (cell && extend && activeCell?.tableId === id) {
+      const end = activeCell.rowId === cell.rowId && activeCell.columnId === cell.columnId ? undefined : cell;
+      activeCell = { ...activeCell, end };
+    } else {
+      activeCell = cell ? { tableId: id, ...cell } : undefined;
+    }
     panel = true;
+  }
+
+  function formatSelectedCells(update: (style: CellStyle) => CellStyle) {
+    if (selected?.kind !== 'table' || !selectedCellBounds) return;
+    const cellStyles = updateCellStyles(selected, selectedCellBounds, update);
+    if (cellStyles !== selected.cellStyles) patchBlock(selected.id, { cellStyles });
+  }
+
+  function copyCellStyle() {
+    if (!selectedTableCell) return;
+    copiedCellStyle = { ...selectedTableCell.format };
+    message('Cell style copied');
+  }
+
+  function pasteCellStyle() {
+    const style = copiedCellStyle;
+    if (style !== null) formatSelectedCells(() => style);
   }
 
   function openBlock(id: string) {
@@ -987,6 +1013,7 @@
             return width === undefined ? [] : [[id, width]];
           })),
           rowHeights: undefined,
+          cellStyles: undefined,
         });
         modal = pasteFromTableDialog ? 'table' : null;
       } else {
@@ -1016,10 +1043,21 @@
   }
   function keyboard(event: KeyboardEvent) {
     if (event.key === 'Escape' && modal === 'quick-create') closeModal();
-    if (event.defaultPrevented || event.isComposing || modal) return;
+    if (event.defaultPrevented || event.isComposing) return;
     const shortcut = eventHotkey(event);
     if (!shortcut) return;
     const { hotkeys } = preferences;
+    if ((shortcut === hotkeys.copyCellStyle || shortcut === hotkeys.pasteCellStyle) && selectedTableCell
+      && (modal === 'table' || (!modal && selected?.kind === 'table' && selected.expanded !== false && !selected.inlineLocked))) {
+      if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]')
+        && !event.target.closest('[data-table-cell], .cell-format-controls')) return;
+      event.preventDefault();
+      if (event.repeat) return;
+      if (shortcut === hotkeys.copyCellStyle) copyCellStyle();
+      else pasteCellStyle();
+      return;
+    }
+    if (modal) return;
     if (shortcut === hotkeys.search) {
       event.preventDefault();
       blockSearch?.focus();
@@ -1078,6 +1116,15 @@
     <textarea class="query-editor-fallback" aria-label="SQL code" spellcheck="false" {value}
       oninput={(event) => change(event.currentTarget.value)}></textarea>
   {/await}
+{/snippet}
+
+{#snippet inspectCell()}
+  {#if selectedTableCell}
+    <CellInspector {...selectedTableCell} hotkeys={preferences.hotkeys} canPaste={copiedCellStyle !== null}
+      clear={() => activeCell = undefined} copyStyle={copyCellStyle} pasteStyle={pasteCellStyle}
+      changeStyle={(patch) => formatSelectedCells((style) => ({ ...style, ...patch }))}
+      resetStyle={() => formatSelectedCells(() => ({}))} />
+  {/if}
 {/snippet}
 
 <div class="app-shell">
@@ -1259,7 +1306,7 @@
           {:else if block.kind === 'table'}
             {@const issue = tableProblem(block)}
             {#if selectedTableCell && block.expanded !== false && !block.inlineLocked}
-              <CellInspector {...selectedTableCell} clear={() => activeCell = undefined} />
+              {@render inspectCell()}
             {/if}
             <div class="inspector-body">
               <div class="result-summary"><span>{countLabel(block.rows.length, 'row')} <span class="separator">·</span> {countLabel(block.columns.length, 'column')}</span></div>
@@ -1412,13 +1459,13 @@
     <div class="table-dialog-layout">
       <div class="table-dialog-editor">
         <TableEditor block={table} {workspace} hotkeys={preferences.hotkeys} change={(patch) => patchBlock(table.id, patch)}
-          paste={() => openPaste(table.id)} error={message} activeCell={activeCell} selectCell={(cell) => select(table.id, cell)} />
+          paste={() => openPaste(table.id)} error={message} activeCell={activeCell} selectCell={(cell, extend) => select(table.id, cell, extend)} />
       </div>
       <aside class="table-dialog-inspector" aria-label="Cell inspector">
         {#if selectedTableCell}
-          <CellInspector {...selectedTableCell} clear={() => activeCell = undefined} />
+          {@render inspectCell()}
         {:else}
-          <p class="helper-text">Select a cell to see its functions.</p>
+          <p class="helper-text">Select a cell to format it or inspect its formula.</p>
         {/if}
       </aside>
     </div>

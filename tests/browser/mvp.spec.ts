@@ -745,6 +745,83 @@ test('shows nested functions and searchable documentation for the active cell', 
   await expect(used.locator('summary')).toHaveText(['AND', 'NOT']);
 });
 
+test('formats cells and pastes a copied style into a range without changing its contents', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'platform', { get: () => 'MacIntel' }));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New workspace', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Workspace name' }).fill('Cell formatting');
+  await page.getByRole('button', { name: 'Create workspace' }).click();
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Untitled table' });
+  const cell = (section: Locator, address: string) => section.getByRole('textbox', { name: address, exact: true });
+  await cell(dialog, 'A row 2').fill('One');
+  await cell(dialog, 'B row 2').fill('Two');
+  const formula = cell(dialog, 'B row 1');
+  await formula.fill('=CONCAT("Keep", " me")');
+  await formula.press('Enter');
+  const source = cell(dialog, 'A row 1');
+  await source.fill('Source');
+
+  const format = dialog.getByRole('region', { name: 'Cell formatting' });
+  for (const name of ['Bold', 'Italic', 'Underline', 'Strikethrough']) {
+    const button = format.getByRole('button', { name, exact: true });
+    await button.click();
+    await expect(button).toHaveAttribute('aria-pressed', 'true');
+  }
+  await format.getByRole('combobox', { name: 'Font', exact: true }).selectOption('serif');
+  const size = format.getByRole('spinbutton', { name: 'Font size' });
+  await size.fill('25');
+  await size.press('Tab');
+  await format.getByLabel('Font color', { exact: true }).fill('#142850');
+  await format.getByLabel('Background color', { exact: true }).fill('#f0d895');
+  const expectStyle = async (cell: Locator) => {
+    await expect(cell).toHaveCSS('color', 'rgb(20, 40, 80)');
+    await expect(cell).toHaveCSS('font-size', '25px');
+    await expect(cell).toHaveCSS('font-family', 'serif');
+    await expect(cell).toHaveCSS('font-style', 'italic');
+    await expect(cell).toHaveCSS('font-weight', '700');
+    await expect(cell).toHaveCSS('text-decoration-line', 'underline line-through');
+    await expect(cell.locator('..')).toHaveCSS('background-color', 'rgb(240, 216, 149)');
+  };
+  await expectStyle(source);
+  await source.press('Alt+Meta+c');
+  await expect(format.getByRole('button', { name: 'Paste cell style', exact: true })).toBeEnabled();
+  await formula.press('Alt+Meta+v');
+  await formula.press('Enter');
+  await expect(formula).toHaveValue('Keep me');
+  await expectStyle(formula);
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+
+  const card = canvasBlock(page, 'Untitled table');
+  const first = cell(card, 'A row 2');
+  const second = cell(card, 'B row 2');
+  await first.click();
+  await second.click({ modifiers: ['Shift'] });
+  const inspector = page.getByRole('complementary', { name: 'Block inspector' });
+  await expect(inspector.getByText('A2:B2', { exact: true })).toBeVisible();
+  await expect(card.locator('td.range-cell')).toHaveCount(2);
+  await page.keyboard.press('Alt+Meta+v');
+  await expectStyle(first);
+  await expectStyle(second);
+  await expect(first).toHaveValue('One');
+  await expect(second).toHaveValue('Two');
+
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(first).not.toHaveCSS('font-size', '25px');
+  await expect(second).not.toHaveCSS('font-size', '25px');
+  await expectStyle(cell(card, 'B row 1'));
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
+  await page.reload();
+  await expectStyle(first);
+  await expectStyle(second);
+  await card.getByRole('button', { name: 'Lock inline editing', exact: true }).click();
+  const locked = card.getByRole('region', { name: 'Full table data' });
+  const styled = locked.getByRole('cell', { name: 'One', exact: true });
+  await expect(styled).toHaveCSS('background-color', 'rgb(240, 216, 149)');
+  await expect(styled).toHaveCSS('font-size', '25px');
+});
+
 test('pastes a range over a blank two-by-two table and infers the pasted column types', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Add table', exact: true }).click();

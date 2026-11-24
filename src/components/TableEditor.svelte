@@ -1,7 +1,3 @@
-<script module lang="ts">
-  export type CellAddress = { rowId: string; columnId: string };
-</script>
-
 <script lang="ts">
   import { CircleAlert, ClipboardPlus, Plus, Trash2 } from 'lucide-svelte';
   import { tick } from 'svelte';
@@ -9,6 +5,8 @@
   import { countLabel } from '../lib/format';
   import { MAX_COLUMNS, MAX_ROWS, parseDelimited } from '../lib/clipboard';
   import { bindCellFormula, cellFormulaText, isFormulaEntry, suggestFunctions } from '../lib/formulas';
+  import { cellSelectionBounds, cellStyleCss } from '../lib/cell-style';
+  import type { CellAddress, CellSelection } from '../lib/cell-style';
   import { describeCellIssue, invalidTableCells, tableData } from '../lib/table-data';
   import { eventHotkey, hotkeyLabel } from '../lib/preferences';
   import type { Hotkeys } from '../lib/preferences';
@@ -22,8 +20,8 @@
     change: (patch: Partial<TableBlock>) => void;
     paste: () => void;
     error: (message: string) => void;
-    activeCell?: CellAddress;
-    selectCell: (cell: CellAddress) => void;
+    activeCell?: CellSelection;
+    selectCell: (cell: CellAddress, extend?: boolean) => void;
     inline?: boolean;
   } = $props();
 
@@ -43,6 +41,7 @@
   let issues = $derived([...invalidTableCells(block, data)].filter((issue) =>
     issue.row !== editing?.row || issue.column !== editing.column || !isFormulaEntry(cellDraft)));
   let issueByCell = $derived(new Map(issues.map((issue) => [issue.row + ':' + issue.column, issue.message])));
+  let range = $derived(activeCell?.end ? cellSelectionBounds(block, activeCell) : undefined);
   const rowIndexWidth = 35;
   const rowActionsWidth = 30;
   let table = $state<HTMLTableElement>();
@@ -110,9 +109,9 @@
     else change({ rowHeights: { ...block.rowHeights, [id]: size } });
   }
 
-  function withoutSize(sizes: Record<string, number> | undefined, id: string) {
-    if (!sizes || !Object.hasOwn(sizes, id)) return sizes;
-    const next = { ...sizes };
+  function withoutEntry<T>(entries: Record<string, T> | undefined, id: string) {
+    if (!entries || !Object.hasOwn(entries, id)) return entries;
+    const next = { ...entries };
     delete next[id];
     return Object.keys(next).length ? next : undefined;
   }
@@ -129,13 +128,16 @@
     let width = Math.max(defaultTableColumnWidth, context.measureText(name.value).width
       + padding(heading) + header.offsetWidth - name.offsetWidth);
     const sample = table?.tBodies[0]?.rows[0]?.cells[index + 1]?.querySelector('textarea');
-    if (sample) {
+    if (sample && table) {
       const style = getComputedStyle(sample);
       const space = padding(style) + 2;
-      const normalWeight = table ? getComputedStyle(table).fontWeight : '400';
+      const defaults = getComputedStyle(table);
       for (let row = 0; row < block.rows.length; row++) {
-        const weight = index < titleColumns || row >= dataRows ? '650' : normalWeight;
-        context.font = `${style.fontStyle} ${weight} ${style.fontSize} ${style.fontFamily}`;
+        const format = block.cellStyles?.[block.rows[row].id]?.[id];
+        const weight = format?.bold === undefined ? index < titleColumns || row >= dataRows ? '650' : defaults.fontWeight
+          : format.bold ? '700' : '400';
+        const size = format?.fontSize ? format.fontSize + 'px' : defaults.fontSize;
+        context.font = `${format?.italic ? 'italic' : 'normal'} ${weight} ${size} ${format?.fontFamily ?? defaults.fontFamily}`;
         for (const line of data.display(row, index).split(/\r\n?|\n/)) {
           width = Math.max(width, context.measureText(line).width + space);
         }
@@ -149,7 +151,7 @@
   }
 
   function fitRow(id: string) {
-    if (block.rowHeights?.[id] !== undefined) change({ rowHeights: withoutSize(block.rowHeights, id) });
+    if (block.rowHeights?.[id] !== undefined) change({ rowHeights: withoutEntry(block.rowHeights, id) });
   }
 
   async function focusCell(rowIndex: number, rowId: string, columnId: string) {
@@ -284,9 +286,14 @@
   function deleteColumn(index: number) {
     if (block.columns.length <= 1) return;
     const columnId = block.columns[index].id;
+    const cellStyles = block.cellStyles && Object.fromEntries(Object.entries(block.cellStyles).flatMap(([id, styles]) => {
+      const remaining = withoutEntry(styles, columnId);
+      return remaining ? [[id, remaining]] : [];
+    }));
     change({
       columns: block.columns.filter((column) => column.id !== columnId),
-      columnWidths: withoutSize(block.columnWidths, columnId),
+      columnWidths: withoutEntry(block.columnWidths, columnId),
+      cellStyles: cellStyles && Object.keys(cellStyles).length ? cellStyles : undefined,
       rows: block.rows.map((row) => {
         const formulas = { ...row.formulas };
         delete formulas[columnId];
@@ -383,7 +390,9 @@
           {@const isFormula = Boolean(row.formulas?.[column.id]) || isFormulaEntry(row.cells[columnIndex] ?? '')}
           {@const showMenu = editing?.id === id && suggestions.length > 0}
           {@const value = editing?.id === id ? cellDraft : data.display(rowIndex, columnIndex)}
-          <td class:invalid-cell={Boolean(issue)} class:title-column={columnIndex < titleColumns} class:formula-cell={isFormula}><textarea
+          {@const inRange = range && rowIndex >= range.top && rowIndex <= range.bottom && columnIndex >= range.left && columnIndex <= range.right}
+          <td class:invalid-cell={Boolean(issue)} class:title-column={columnIndex < titleColumns} class:formula-cell={isFormula} class:range-cell={inRange}
+            style={cellStyleCss(block.cellStyles?.[row.id]?.[column.id])}><textarea
             {id}
             data-table-cell=""
             class:active-cell={activeCell?.rowId === row.id && activeCell.columnId === column.id}
@@ -409,6 +418,8 @@
               }
               selectCell({ rowId: row.id, columnId: column.id });
             }}
+            onpointerdown={(event) => { if (event.button === 0 && event.shiftKey && activeCell) event.preventDefault(); }}
+            onclick={(event) => { if (event.shiftKey || activeCell?.end) selectCell({ rowId: row.id, columnId: column.id }, event.shiftKey); }}
             onblur={() => { if (editing?.id === id) editing = undefined; }}
             oninput={(event) => {
               cellDraft = event.currentTarget.value;
@@ -422,7 +433,8 @@
         {/each}
         <td class="row-actions"><button class="icon-button small" aria-label={'Delete row ' + rowNumber(block, rowIndex)} onclick={() => change({
           rows: block.rows.filter((candidate) => candidate.id !== row.id),
-          rowHeights: withoutSize(block.rowHeights, row.id),
+          rowHeights: withoutEntry(block.rowHeights, row.id),
+          cellStyles: withoutEntry(block.cellStyles, row.id),
           footerRows: rowIndex >= dataRows ? footerRows - 1 : block.footerRows,
         })}><Trash2 size={13} /></button></td>
       </tr>

@@ -288,6 +288,18 @@ code { font-family: var(--mono); }
 .cell-formula { max-height: 120px; overflow: auto; margin: 7px 0 0; padding: 6px 8px; border: 1px solid var(--divider); border-radius: 6px; background: var(--raised); color: var(--code); font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .cell-functions { margin-top: 10px; }
 .cell-functions h4 { margin: 0 0 4px; color: var(--muted); font-size: 11px; font-weight: 680; }
+.cell-format-controls { padding-bottom: 9px; border-bottom: 1px solid var(--divider); }
+.cell-format-row, .cell-format-buttons { display: flex; align-items: center; gap: 2px; }
+.cell-format-row { justify-content: space-between; flex-wrap: wrap; gap: 4px; }
+.cell-format-buttons .icon-button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.cell-format-fields, .cell-format-colors { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; margin-top: 7px; }
+.cell-format-fields .field + .field { margin-top: 0; }
+.cell-format-color { display: flex; gap: 4px; align-items: flex-end; }
+.cell-format-color label { flex: 1; min-width: 0; color: var(--muted); font-size: 11px; font-weight: 650; }
+.cell-format-color input { display: block; width: 100%; height: 24px; padding: 3px; margin-top: 4px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); cursor: pointer; }
+.cell-format-color input.default-color { background: var(--default-color); }
+.cell-format-color input.default-color::-webkit-color-swatch { opacity: 0; }
+.cell-format-color input.default-color::-moz-color-swatch { opacity: 0; }
 .function-search { display: flex; align-items: center; gap: 6px; min-height: 32px; margin-bottom: 5px; padding: 0 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--raised); color: var(--muted); }
 .function-search svg, .function-reference summary svg { flex-shrink: 0; }
 .function-search input { width: 100%; min-width: 0; padding: 5px 0; color: var(--text); }
@@ -335,6 +347,7 @@ code { font-family: var(--mono); }
 .result-grid.compact th, .result-grid.compact td { padding: 4px 6px; max-width: 105px; font-size: 10px; }
 .result-grid th { background: var(--raised); color: var(--muted); font-weight: 670; }
 .result-grid td { font-variant-numeric: tabular-nums; }
+.result-grid :is(td, th) { text-decoration: var(--cell-decoration, none); }
 .result-grid tr:last-child td { border-bottom: 0; }
 .result-grid:where([data-table-style="banded"]) tr.grid-even td { background: color-mix(in srgb, var(--raised), var(--surface) 40%); }
 :is(.result-grid, .editor-grid)[data-table-style="emphasis"] thead th { background: var(--accent-soft); }
@@ -345,7 +358,7 @@ code { font-family: var(--mono); }
 .full-grid table { min-width: 100%; }
 .full-grid table.sized-preview { min-width: 0; table-layout: fixed; }
 .full-grid thead { position: sticky; top: 0; z-index: 1; }
-.full-grid td, .full-grid th { height: 28px; padding: 0 8px; line-height: 27px; max-width: none; min-width: 82px; }
+.full-grid td, .full-grid th { height: 28px; padding: 0 8px; line-height: max(27px, var(--cell-line-height, 0px)); max-width: none; min-width: 82px; }
 .full-grid .grid-spacer td { padding: 0; border: 0; }
 .result-grid .title-column, .editor-grid .title-column { background: var(--accent-soft); color: var(--text); font-weight: 650; }
 .result-grid .footer-row > *, .editor-grid .footer-row > * { background: var(--raised); color: var(--text); font-weight: 650; border-top: 1px solid var(--border); }
@@ -414,17 +427,18 @@ dialog::backdrop { background: #151f386d; backdrop-filter: blur(2px); }
 .column-heading > span { color: var(--subtle); font: 10px var(--mono); }
 .editor-grid .column-heading input { min-height: 25px; padding: 3px; }
 .editor-grid .column-heading button { flex-shrink: 0; width: 18px; height: 22px; }
-.editor-grid .formula-cell textarea { color: var(--accent); }
+.editor-grid .formula-cell textarea { color: var(--cell-color, var(--accent)); }
 .formula-suggestions { position: fixed; inset: auto; margin: 0; padding: 4px; max-height: min(260px, 42dvh); overflow: auto;
   color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); }
 .formula-suggestions button { display: block; width: 100%; padding: 6px 8px; border-radius: 5px; text-align: left; font-size: 11px; }
 .formula-suggestions button:hover, .formula-suggestions button[aria-selected="true"] { color: var(--accent); background: var(--accent-soft); }
 .editor-grid th select { color: var(--muted); font-size: 10px; padding-bottom: 6px; }
 .editor-grid .row-index { min-width: 35px; width: 35px; text-align: center; padding: 0 4px; color: var(--subtle); font-size: 11px; }
-.editor-grid td textarea { display: block; width: 100%; padding: 6px 8px; border: 0; background: transparent; color: var(--text); resize: none; white-space: pre; }
+.editor-grid td textarea { display: block; width: 100%; padding: 6px 8px; border: 0; background: transparent; color: var(--cell-color, var(--text)); text-decoration: var(--cell-decoration, none); resize: none; white-space: pre; }
 .editor-grid td textarea:focus { outline-offset: -2px; }
-.editor-grid td textarea:focus, .editor-grid th input:focus { background: var(--accent-soft); }
+.editor-grid td textarea:focus, .editor-grid th input:focus { background: var(--cell-fill, var(--accent-soft)); }
 .editor-grid td textarea.active-cell:not(:focus) { box-shadow: inset 0 0 0 1px var(--accent-line); }
+.editor-grid td.range-cell textarea { box-shadow: inset 0 0 0 1px var(--accent); }
 .table-resize-handle { position: absolute; z-index: 1; touch-action: none; }
 .table-resize-handle.column-resize { inset: 0 0 0 auto; width: 7px; cursor: col-resize; }
 .table-resize-handle.row-resize { inset: auto 0 0; height: 7px; cursor: row-resize; }

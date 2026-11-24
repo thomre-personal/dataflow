@@ -11,6 +11,7 @@
   const shortcuts: Record<HotkeyAction, string> = {
     search: 'Find a block', runQuery: 'Run SQL query', undo: 'Undo', redo: 'Redo', deleteBlock: 'Delete selection',
     rowAbove: 'Insert row above', rowBelow: 'Insert row below', columnLeft: 'Insert column left', columnRight: 'Insert column right',
+    copyCellStyle: 'Copy cell style', pasteCellStyle: 'Paste cell style',
   };
   let recording = $state<HotkeyAction>();
   let error = $state('');

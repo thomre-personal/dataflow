@@ -13,6 +13,7 @@ test('workspace files round-trip canvas state and preserve stable formula refere
   table.footerRows = 1;
   table.columnWidths = { category: 240 };
   table.rowHeights = { 'txn-1': 64 };
+  table.cellStyles = { 'txn-1': { category: { color: '#123456', background: '#abcdef', fontSize: 22, italic: true } } };
   source.blocks.unshift({ id: 'group-1', kind: 'group', title: 'Summary', position: { x: 20, y: 30 }, expanded: false });
   table.parentId = 'group-1';
 
@@ -28,6 +29,7 @@ test('workspace files round-trip canvas state and preserve stable formula refere
   assert.equal(reopenedTable.footerRows, 1);
   assert.deepEqual(reopenedTable.columnWidths, table.columnWidths);
   assert.deepEqual(reopenedTable.rowHeights, table.rowHeights);
+  assert.deepEqual(reopenedTable.cellStyles, table.cellStyles);
   assert.deepEqual(reopenedTable.rows[0].formulas?.category, {
     name: 'AND', args: [{ boolean: true }, { expression: { name: 'NOT', args: [{ boolean: false }] } }],
   });
@@ -51,5 +53,13 @@ test('workspace import rejects malformed versions and cyclic or duplicate graph 
   assert.throws(() => parseWorkspaceDocument(serializeWorkspaceDocument(workspace)), /connections or groups/);
   workspace.links.pop();
   workspace.blocks.push(sql);
+  assert.throws(() => parseWorkspaceDocument(serializeWorkspaceDocument(workspace)), /invalid workspace data/);
+});
+
+test('workspace import rejects invalid cell formatting', () => {
+  const workspace = starterWorkspace();
+  const table = workspace.blocks[0];
+  if (table.kind !== 'table') throw new Error('Expected the sample table first.');
+  table.cellStyles = { 'txn-1': { category: { color: 'red;display:none' } } };
   assert.throws(() => parseWorkspaceDocument(serializeWorkspaceDocument(workspace)), /invalid workspace data/);
 });

@@ -1,5 +1,6 @@
 import { canConnect, canGroup, isBooleanFunction, newId } from './workspace.ts';
 import type { Block, Column, Link, Row, Workspace } from './workspace.ts';
+import { cellFonts, cellFontSize } from './cell-style.ts';
 
 const format = 'dataflow-workspace';
 const version = 1;
@@ -24,6 +25,24 @@ function optionalCount(value: unknown, max: number) {
 function optionalDimensions(value: unknown) {
   return value === undefined || (record(value)
     && Object.entries(value).every(([key, size]) => id(key) && finiteNumber(size) && size > 0));
+}
+
+function cellStyle(value: unknown) {
+  if (!record(value)) return false;
+  return Object.entries(value).every(([key, field]) => {
+    switch (key) {
+      case 'color': case 'background': return typeof field === 'string' && /^#[0-9a-f]{6}$/i.test(field);
+      case 'fontFamily': return cellFonts.some(({ value }) => value === field);
+      case 'fontSize': return finiteNumber(field) && field >= cellFontSize.min && field <= cellFontSize.max;
+      case 'bold': case 'italic': case 'underline': case 'strikethrough': return typeof field === 'boolean';
+      default: return false;
+    }
+  });
+}
+
+function optionalCellStyles(value: unknown) {
+  return value === undefined || (record(value) && Object.entries(value).every(([rowId, styles]) =>
+    id(rowId) && record(styles) && Object.entries(styles).every(([columnId, style]) => id(columnId) && cellStyle(style))));
 }
 
 function objectsWithIds<T extends { id: string }>(values: unknown, valid: (value: unknown) => value is T): values is T[] {
@@ -94,7 +113,7 @@ function block(value: unknown): value is Block {
         && (value.rowIndexBase === undefined || value.rowIndexBase === 0 || value.rowIndexBase === 1)
         && (value.inlineLocked === undefined || typeof value.inlineLocked === 'boolean')
         && optionalCount(value.titleColumns, columns.length) && optionalCount(value.footerRows, rows.length)
-        && optionalDimensions(value.columnWidths) && optionalDimensions(value.rowHeights);
+        && optionalDimensions(value.columnWidths) && optionalDimensions(value.rowHeights) && optionalCellStyles(value.cellStyles);
     }
     default: return false;
   }

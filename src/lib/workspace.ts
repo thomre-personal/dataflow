@@ -1,3 +1,5 @@
+import type { CellStyle, CellStyles } from './cell-style.ts';
+
 export type BlockKind = 'table' | 'sql' | 'chart' | 'group';
 export type ValueType = 'text' | 'decimal' | 'date' | 'boolean';
 export type ColumnType = ValueType | 'auto';
@@ -43,6 +45,7 @@ export type TableBlock = BlockBase & ExpandableBlock & {
   rowIndexBase?: 0 | 1;
   columnWidths?: Record<string, number>;
   rowHeights?: Record<string, number>;
+  cellStyles?: CellStyles;
 };
 export type SqlBlock = BlockBase & { kind: 'sql'; sql: string };
 export type ChartBlock = BlockBase & ExpandableBlock & { kind: 'chart'; chart: 'bar' | 'line'; x: string; y: string };
@@ -66,6 +69,7 @@ export type Result = {
   tableStyle?: TableStyle;
   columnWidths?: number[];
   rowHeights?: number[];
+  cellStyles?: Record<number, Record<number, CellStyle>>;
 };
 
 export const defaultTableColumnWidth = 118;
