@@ -1,11 +1,13 @@
 export type BlockKind = 'table' | 'sql' | 'chart' | 'group';
-export type ColumnType = 'text' | 'decimal' | 'date' | 'boolean';
+export type ValueType = 'text' | 'decimal' | 'date' | 'boolean';
+export type ColumnType = ValueType | 'auto';
 export type NumberFormat = 'auto' | 'decimal-comma' | 'decimal-point';
 export type TableStyle = 'plain' | 'banded' | 'emphasis' | 'grid';
 export type Position = { x: number; y: number };
 
 export type Column = { id: string; name: string; type: ColumnType };
-export type Row = { id: string; cells: string[] };
+export type SumFormula = { columnId: string; reference: 'implicit' | 'name' | 'letter' };
+export type Row = { id: string; cells: string[]; formulas?: Record<string, SumFormula> };
 type BlockBase = { id: string; title: string; position: Position; parentId?: string };
 type ExpandableBlock = { expanded?: boolean; expandedSize?: { width: number; height: number } };
 
@@ -15,12 +17,14 @@ export type TableBlock = BlockBase & ExpandableBlock & {
   rows: Row[];
   numberFormat: NumberFormat;
   style: TableStyle;
+  inlineLocked?: boolean;
   titleColumns?: number;
   footerRows?: number;
+  rowIndexBase?: 0 | 1;
 };
 export type SqlBlock = BlockBase & { kind: 'sql'; sql: string };
 export type ChartBlock = BlockBase & ExpandableBlock & { kind: 'chart'; chart: 'bar' | 'line'; x: string; y: string };
-export type GroupBlock = BlockBase & { kind: 'group' };
+export type GroupBlock = BlockBase & ExpandableBlock & { kind: 'group' };
 export type Block = TableBlock | SqlBlock | ChartBlock | GroupBlock;
 export type Link = { id: string; source: string; target: string; alias: string };
 export type Workspace = {
@@ -32,7 +36,7 @@ export type Workspace = {
 };
 export type Library = { activeId: string; workspaces: Workspace[] };
 export type Result = {
-  columns: { name: string; type: ColumnType }[];
+  columns: { name: string; type: ValueType }[];
   rows: (string | null)[][];
   titleColumns?: number;
   footerRows?: number;
@@ -40,6 +44,18 @@ export type Result = {
 
 export function dataRowCount(table: TableBlock) {
   return Math.max(0, table.rows.length - (table.footerRows ?? 0));
+}
+
+export function columnLetter(index: number): string {
+  let label = '';
+  for (let position = index + 1; position > 0; position = Math.floor((position - 1) / 26)) {
+    label = String.fromCharCode(65 + (position - 1) % 26) + label;
+  }
+  return label;
+}
+
+export function rowNumber(table: TableBlock, index: number) {
+  return index + (table.rowIndexBase ?? 1);
 }
 
 export const kinds = {
@@ -59,7 +75,7 @@ export function createBlock(kind: BlockKind, position: Position): Block {
   const base = { id: newId(), position, title: 'Untitled ' + (kind === 'sql' ? 'SQL query' : kinds[kind].label.toLowerCase()) };
   switch (kind) {
     case 'table':
-      return { ...base, kind, columns: [{ id: newId(), name: 'Column 1', type: 'text' }], rows: [{ id: newId(), cells: [''] }], numberFormat: 'auto', style: 'banded' };
+      return { ...base, kind, columns: [{ id: newId(), name: 'A', type: 'auto' }], rows: [{ id: newId(), cells: [''] }], numberFormat: 'auto', style: 'banded' };
     case 'sql':
       return { ...base, kind, sql: 'SELECT 42 AS value;' };
     case 'chart':

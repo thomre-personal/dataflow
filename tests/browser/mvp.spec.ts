@@ -24,21 +24,25 @@ test('pastes a Numbers-style range, queries exact values, links a chart and rest
   await expect(cellRange).toHaveValue(/1\.234,50/);
   await page.getByRole('combobox', { name: 'Number format' }).selectOption('decimal-comma');
   await page.getByRole('button', { name: 'Create table' }).click();
-  await expect(page.getByRole('textbox', { name: 'Note row 1' })).toHaveValue('');
-  await expect(page.getByRole('textbox', { name: 'Amount row 1' })).toHaveValue('1.234,50');
-  await page.getByRole('textbox', { name: 'Amount row 2' }).fill('12,95');
-  await page.getByRole('button', { name: 'Done' }).click();
+  const pastedTable = page.getByRole('dialog', { name: 'Pasted data' });
+  await expect(pastedTable.getByRole('textbox', { name: 'Note row 1' })).toHaveValue('');
+  await expect(pastedTable.getByRole('textbox', { name: 'Amount row 1' })).toHaveValue('1.234,50');
+  await pastedTable.getByRole('textbox', { name: 'Amount row 2' }).fill('12,95');
+  await pastedTable.getByRole('button', { name: 'Done' }).click();
 
   await page.getByRole('button', { name: 'Add SQL query', exact: true }).click();
-  await page.getByRole('combobox', { name: 'Connect input' }).selectOption({ label: 'Pasted data' });
-  await page.getByRole('textbox', { name: 'Query', exact: true }).fill(
+  const queryDialog = page.getByRole('dialog', { name: 'Edit SQL', exact: true });
+  await queryDialog.getByRole('combobox', { name: 'Connect input' }).selectOption({ label: 'Pasted data' });
+  await queryDialog.getByRole('textbox', { name: 'SQL code' }).fill(
     "SELECT strftime(date, '%Y-%m') AS month, sum(amount) AS total FROM pasted_data GROUP BY month ORDER BY month;",
   );
-  await page.getByRole('button', { name: 'Run query' }).click();
+  await queryDialog.getByRole('button', { name: 'Save and run' }).click();
   await expect(page.getByRole('cell', { name: '1247.45', exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Add chart', exact: true }).click();
-  await page.getByRole('combobox', { name: 'Connect input' }).selectOption({ label: 'Untitled SQL query' });
+  const chartDialog = page.getByRole('dialog', { name: 'Untitled chart' });
+  await chartDialog.getByRole('combobox', { name: 'Source' }).selectOption({ label: 'Untitled SQL query' });
+  await chartDialog.getByRole('button', { name: 'Done' }).click();
   await expect(page.getByRole('img', { name: 'total chart' }).first()).toBeVisible();
   const search = page.getByRole('combobox', { name: 'Find a block' });
   await page.keyboard.press('ControlOrMeta+k');
@@ -76,15 +80,15 @@ test('validates typed cells and inserts rows and columns relative to the active 
   const secondDate = editor.getByRole('textbox', { name: 'Date row 2', exact: true });
   await expect(secondDate).toBeFocused();
   await secondDate.press('Alt+ArrowLeft');
-  const left = editor.getByRole('textbox', { name: 'Column 4 row 2', exact: true });
+  const left = editor.getByRole('textbox', { name: 'A row 2', exact: true });
   await expect(left).toBeFocused();
   await left.press('Alt+ArrowRight');
-  await expect(editor.getByRole('textbox', { name: 'Column 5 row 2', exact: true })).toBeFocused();
+  await expect(editor.getByRole('textbox', { name: 'B row 2', exact: true })).toBeFocused();
   await expect(editor.getByRole('textbox', { name: 'Date row 3', exact: true })).toHaveValue('31.02.2026');
 
   await editor.getByRole('button', { name: 'Done' }).click();
   await page.getByRole('button', { name: 'Open query', exact: true }).click();
-  await page.getByRole('button', { name: 'Run query', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Edit SQL', exact: true }).getByRole('button', { name: 'Save and run' }).click();
   await expect(page.getByRole('alert')).toContainText('Transactions, row 3, Date:');
   await page.getByRole('button', { name: 'Open table', exact: true }).click();
   await editor.getByRole('button', { name: 'Go to cell', exact: true }).click();
@@ -113,6 +117,14 @@ async function dragResize(page: Page, handle: Locator, dx: number, dy: number) {
   await page.mouse.up();
 }
 
+async function dragBlock(page: Page, header: Locator, x: number, y: number) {
+  const bounds = (await header.boundingBox())!;
+  await page.mouse.move(bounds.x + 16, bounds.y + 18);
+  await page.mouse.down();
+  await page.mouse.move(x, y, { steps: 16 });
+  await page.mouse.up();
+}
+
 test('resizes an expanded table, scrolls to its last row and restores the size', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New workspace', exact: true }).click();
@@ -122,8 +134,10 @@ test('resizes an expanded table, scrolls to its last row and restores the size',
   await page.getByRole('textbox', { name: 'Cell range' }).fill('Item\tAmount\n' + Array.from({ length: 72 }, (_, index) => 'Item ' + (index + 1) + '\t' + index).join('\n'));
   await page.getByRole('button', { name: 'Create table' }).click();
   await page.getByRole('button', { name: 'Done', exact: true }).click();
-  await page.getByRole('button', { name: 'Expand table Pasted data', exact: true }).click();
   const table = canvasBlock(page, 'Pasted data');
+  await expect(table.getByRole('textbox', { name: 'Item row 1', exact: true })).toBeVisible();
+  await table.getByRole('button', { name: 'Lock inline editing', exact: true }).click();
+  await expect(table.getByRole('textbox', { name: 'Item row 1', exact: true })).toHaveCount(0);
   const initial = await cardSize(table);
   await dragResize(page, table.locator('.block-resize-edge.left'), -45, 0);
   await expect.poll(async () => (await cardSize(table)).width).toBeGreaterThan(initial.width);
@@ -142,6 +156,8 @@ test('resizes an expanded table, scrolls to its last row and restores the size',
   await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
   await page.reload();
   await expect.poll(() => cardSize(table)).toEqual(resized);
+  await table.getByRole('button', { name: 'Unlock inline editing', exact: true }).click();
+  await expect(table.getByRole('textbox', { name: 'Item row 1', exact: true })).toBeVisible();
 });
 
 async function dragOutput(page: Page, name: string, y: number) {
@@ -169,8 +185,8 @@ test('configures and connects a SQL query and chart through hovered output handl
   const config = page.getByRole('dialog', { name: 'Configure SQL query' });
   await expect(config).toContainText('Input: Transactions');
   await config.getByRole('textbox', { name: 'Name' }).fill('Total spending');
-  const sql = config.getByRole('textbox', { name: 'SQL', exact: true });
-  await expect(sql).toHaveValue(/FROM "transactions"/);
+  const sql = config.getByRole('textbox', { name: 'SQL code', exact: true });
+  await expect(sql).toContainText('FROM "transactions"');
   await sql.fill('SELECT sum(amount) AS total FROM transactions;');
   await config.getByRole('button', { name: 'Create SQL query' }).click();
   const inspector = page.getByRole('complementary', { name: 'Block inspector' });
@@ -188,21 +204,28 @@ test('configures and connects a SQL query and chart through hovered output handl
   await expect(inspector.getByRole('img', { name: 'total chart' })).toBeVisible();
 });
 
-test('opens the same query from its data tab and resizes a chart on the canvas', async ({ page }) => {
+test('opens the SQL editor from the data tab, discards a draft, and resizes a chart that starts expanded', async ({ page }) => {
   await page.goto('/');
   const inspector = page.getByRole('complementary', { name: 'Block inspector' });
   await inspector.getByRole('button', { name: 'Data', exact: true }).click();
   await expect(inspector.getByRole('table')).toBeVisible();
   await page.getByRole('button', { name: 'Open query', exact: true }).click();
-  await expect(inspector.getByRole('textbox', { name: 'Query', exact: true })).toBeFocused();
+  const dialog = page.getByRole('dialog', { name: 'Edit SQL', exact: true });
+  const code = dialog.getByRole('textbox', { name: 'SQL code', exact: true });
+  await expect(code).toBeFocused();
+  await expect(code.locator('.tok-keyword').first()).toBeVisible();
+  await expect.poll(async () => (await dialog.locator('.cm-editor').boundingBox())?.height ?? 0).toBeGreaterThan(350);
+  await code.fill('SELECT 999;');
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(inspector.getByRole('table')).toBeVisible();
   await inspector.getByRole('button', { name: 'Close inspector' }).click();
   await page.getByRole('button', { name: 'Open query', exact: true }).click();
-  await expect(inspector.getByRole('textbox', { name: 'Query', exact: true })).toBeFocused();
+  await expect(code).toContainText('FROM transactions');
+  await code.press('Escape');
+  await expect(dialog).toHaveCount(0);
 
   const chart = canvasBlock(page, 'Spending by month');
-  const compact = await cardSize(chart);
-  await chart.getByRole('button', { name: 'Expand chart Spending by month' }).click();
-  await expect.poll(async () => (await cardSize(chart)).width).toBeGreaterThan(compact.width);
+  await expect(chart.getByRole('button', { name: 'Collapse chart Spending by month' })).toBeVisible();
   const expanded = await cardSize(chart);
   const plot = chart.getByRole('img', { name: 'total chart' });
   const plotWidth = await plot.evaluate((element) => element.clientWidth);
@@ -211,7 +234,7 @@ test('opens the same query from its data tab and resizes a chart on the canvas',
   await expect.poll(() => plot.evaluate((element) => element.clientWidth)).toBeLessThan(plotWidth);
   const resized = await cardSize(chart);
   await chart.getByRole('button', { name: 'Collapse chart Spending by month' }).click();
-  await expect.poll(() => cardSize(chart)).toEqual(compact);
+  await expect.poll(async () => (await cardSize(chart)).width).toBeLessThan(resized.width);
   await chart.getByRole('button', { name: 'Expand chart Spending by month' }).click();
   await expect.poll(() => cardSize(chart)).toEqual(resized);
 });
@@ -251,7 +274,7 @@ test('renames inline, deletes from the canvas or inspector, and restores changes
   await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
 });
 
-test('places a toolbar block on the canvas and edits the table and SQL directly on their cards', async ({ page }) => {
+test('places blocks from the toolbar, edits a table inline, and edits SQL and charts in dialogs', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New workspace', exact: true }).click();
   await page.getByRole('textbox', { name: 'Workspace name' }).fill('Inline budget');
@@ -260,29 +283,29 @@ test('places a toolbar block on the canvas and edits the table and SQL directly 
   await page.getByRole('button', { name: 'Add table', exact: true }).dragTo(dropArea, { targetPosition: { x: 35, y: 60 } });
   const table = canvasBlock(page, 'Untitled table');
   const inlineTable = table.getByRole('group', { name: 'Edit Untitled table' });
-  await inlineTable.getByRole('textbox', { name: 'Column 1 row 1', exact: true }).fill('2');
-  await inlineTable.getByRole('combobox', { name: 'Column 1 type' }).selectOption('decimal');
+  await inlineTable.getByRole('textbox', { name: 'A row 1', exact: true }).fill('2');
+  await expect(inlineTable.getByRole('combobox', { name: 'A type' })).toHaveValue('auto');
   await inlineTable.getByRole('button', { name: 'Row', exact: true }).click();
-  await inlineTable.getByRole('textbox', { name: 'Column 1 row 2', exact: true }).fill('99');
+  await inlineTable.getByRole('textbox', { name: 'A row 2', exact: true }).fill('99');
   await inlineTable.getByRole('spinbutton', { name: 'Title columns' }).fill('1');
   await inlineTable.getByRole('spinbutton', { name: 'Title columns' }).press('Tab');
   await inlineTable.getByRole('spinbutton', { name: 'Footer rows' }).fill('1');
   await inlineTable.getByRole('spinbutton', { name: 'Footer rows' }).press('Tab');
-  await inlineTable.getByRole('textbox', { name: 'Column 1 row 1', exact: true }).evaluate((cell) => {
+  await inlineTable.getByRole('textbox', { name: 'A row 1', exact: true }).evaluate((cell) => {
     const clipboardData = new DataTransfer();
     clipboardData.setData('text/plain', '2\n3');
     cell.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
   });
-  await expect(inlineTable.getByRole('textbox', { name: 'Column 1 row 3', exact: true })).toHaveValue('99');
-  await table.getByRole('button', { name: 'Done', exact: true }).click();
+  await expect(inlineTable.getByRole('textbox', { name: 'A row 3', exact: true })).toHaveValue('99');
+  await table.getByRole('button', { name: 'Lock inline editing', exact: true }).click();
   await expect(table.locator('.footer-row').getByRole('rowheader', { name: '99' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Add SQL query', exact: true }).dragTo(dropArea, { targetPosition: { x: 510, y: 60 } });
-  const sql = canvasBlock(page, 'Untitled SQL query');
-  const inlineSQL = sql.getByRole('group', { name: 'Edit Untitled SQL query' });
-  await inlineSQL.getByRole('combobox', { name: 'Connect input' }).selectOption({ label: 'Untitled table' });
-  await inlineSQL.getByRole('textbox', { name: 'SQL code' }).fill('SELECT sum("Column 1") AS total FROM untitled_table;');
-  await sql.getByRole('button', { name: 'Run query' }).click();
+  const query = page.getByRole('dialog', { name: 'Edit SQL', exact: true });
+  await query.getByRole('combobox', { name: 'Connect input' }).selectOption({ label: 'Untitled table' });
+  await expect(query.getByText('untitled_table', { exact: true })).toBeVisible();
+  await query.getByRole('textbox', { name: 'SQL code' }).fill('SELECT sum("A") AS total FROM untitled_table;');
+  await query.getByRole('button', { name: 'Save and run' }).click();
   const inspector = page.getByRole('complementary', { name: 'Block inspector' });
   await inspector.getByRole('button', { name: 'Data', exact: true }).click();
   await expect(inspector.getByRole('cell', { name: '5', exact: true })).toBeVisible();
@@ -290,10 +313,140 @@ test('places a toolbar block on the canvas and edits the table and SQL directly 
 
   await page.getByRole('button', { name: 'Add chart', exact: true }).dragTo(dropArea, { targetPosition: { x: 40, y: 395 } });
   const chart = canvasBlock(page, 'Untitled chart');
-  const inlineChart = chart.getByRole('group', { name: 'Edit Untitled chart' });
-  await inlineChart.getByRole('combobox', { name: 'Connect input' }).selectOption({ label: 'Untitled table' });
-  await inlineChart.getByRole('combobox', { name: 'Chart type' }).selectOption('line');
-  await chart.getByRole('button', { name: 'Done', exact: true }).click();
-  await expect(chart.getByRole('img', { name: 'Column 1 chart' })).toBeVisible();
+  const chartDialog = page.getByRole('dialog', { name: 'Untitled chart' });
+  await chartDialog.getByRole('combobox', { name: 'Source' }).selectOption({ label: 'Untitled table' });
+  await chartDialog.getByRole('combobox', { name: 'Chart type' }).selectOption('line');
+  await chartDialog.getByRole('button', { name: 'Done', exact: true }).click();
+  await expect(chart.getByRole('img', { name: 'A chart' })).toBeVisible();
   await expect(chart.getByText('Line chart', { exact: true })).toBeVisible();
+});
+
+test('resizes and collapses groups and moves canvas blocks in and out of nested groups', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New workspace', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Workspace name' }).fill('Grouped budget');
+  await page.getByRole('button', { name: 'Create workspace' }).click();
+  const area = page.getByRole('region', { name: 'Canvas drop area' });
+  const addGroup = page.getByRole('button', { name: 'Add group', exact: true });
+  await addGroup.dragTo(area, { targetPosition: { x: 450, y: 85 } });
+  await canvasBlock(page, 'Untitled group').getByRole('button', { name: 'Rename Untitled group' }).click();
+  const name = page.getByRole('textbox', { name: 'Block name' });
+  await name.fill('Budget group');
+  await name.press('Enter');
+  const outer = canvasBlock(page, 'Budget group');
+  const outerCard = outer.locator('.group-card');
+  const outerSize = () => outerCard.evaluate((element: HTMLElement) => ({ width: element.offsetWidth, height: element.offsetHeight }));
+  const original = await outerSize();
+  await dragResize(page, outer.locator('.block-resize-corner.bottom.right'), 50, 55);
+  await expect.poll(async () => (await outerSize()).width).toBeGreaterThan(original.width);
+  await expect.poll(async () => (await outerSize()).height).toBeGreaterThan(original.height);
+  const resized = await outerSize();
+  await outer.getByRole('button', { name: 'Collapse group Budget group' }).click();
+  await expect(outer.locator('.block-resize-edge')).toHaveCount(0);
+  await outer.getByRole('button', { name: 'Expand group Budget group' }).click();
+  await expect.poll(outerSize).toEqual(resized);
+
+  const stage = (await area.boundingBox())!;
+  const groupBox = (await outer.boundingBox())!;
+  await addGroup.dragTo(area, { targetPosition: { x: groupBox.x - stage.x + 65, y: groupBox.y - stage.y + 85 } });
+  const inner = canvasBlock(page, 'Untitled group');
+  const inspector = page.getByRole('complementary', { name: 'Block inspector' });
+  const parent = inspector.getByRole('combobox', { name: 'Group', exact: true });
+  await expect(parent).toHaveValue((await outer.getAttribute('data-id'))!);
+  await page.getByRole('button', { name: 'Add table', exact: true }).dragTo(area, { targetPosition: { x: 35, y: 90 } });
+  const table = canvasBlock(page, 'Untitled table');
+  await expect(parent).toHaveValue('');
+  const innerBox = (await inner.boundingBox())!;
+  await dragBlock(page, table.locator('.node-heading'), innerBox.x + 70, innerBox.y + 78);
+  await expect(parent).toHaveValue((await inner.getAttribute('data-id'))!);
+
+  await outer.getByRole('button', { name: 'Collapse group Budget group' }).click();
+  await expect(inner).toHaveCount(0);
+  await expect(table).toHaveCount(0);
+  await outer.getByRole('button', { name: 'Expand group Budget group' }).click();
+  await expect(table).toBeVisible();
+
+  const outerBox = (await outer.boundingBox())!;
+  await dragBlock(page, table.locator('.node-heading'), outerBox.x + 28, outerBox.y + 60);
+  await expect(parent).toHaveValue((await outer.getAttribute('data-id'))!);
+  const canvasBox = (await area.boundingBox())!;
+  await dragBlock(page, table.locator('.node-heading'), canvasBox.x + 70, canvasBox.y + 100);
+  await expect(parent).toHaveValue('');
+  await outer.getByRole('button', { name: 'Collapse group Budget group' }).click();
+  await expect(inner).toHaveCount(0);
+  await expect(table).toBeVisible();
+  await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(outer.getByRole('button', { name: 'Expand group Budget group' })).toBeVisible();
+  await expect(table).toBeVisible();
+});
+
+test('saves appearance and shortcut preferences and can delete without a hotkey confirmation', async ({ page }) => {
+  await page.goto('/');
+  const settingsButton = page.getByRole('button', { name: 'Settings', exact: true });
+  await settingsButton.click();
+  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await expect(settings.getByRole('combobox', { name: 'Appearance' })).toHaveValue('auto');
+  await settings.getByRole('combobox', { name: 'Appearance' }).selectOption('dark');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await settings.getByRole('checkbox', { name: 'Confirm block deletion by shortcut' }).uncheck();
+  const shortcut = settings.getByRole('button', { name: 'Change shortcut for Delete selected block' });
+  await shortcut.click();
+  await shortcut.press('Shift+Delete');
+  await expect(shortcut).toContainText('Delete');
+  await settings.getByRole('button', { name: 'Done' }).click();
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.getByRole('complementary', { name: 'Workspace blocks' }).getByRole('button', { name: 'Spending by month' }).click();
+  const chart = canvasBlock(page, 'Spending by month');
+  await page.keyboard.press('Delete');
+  await expect(chart).toBeVisible();
+  await page.keyboard.press('Shift+Delete');
+  await expect(chart).toHaveCount(0);
+  await settingsButton.click();
+  await expect(settings.getByRole('checkbox', { name: 'Confirm block deletion by shortcut' })).not.toBeChecked();
+  await settings.getByRole('button', { name: 'Reset shortcuts' }).click();
+  await expect(shortcut).toHaveText('Delete');
+});
+
+test('calculates table sums, keeps formula references after rename, and handles deletion and zero-based rows', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New workspace', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Workspace name' }).fill('Formula budget');
+  await page.getByRole('button', { name: 'Create workspace' }).click();
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const table = page.getByRole('dialog', { name: 'Untitled table' });
+  await expect(table.getByRole('combobox', { name: 'A type' })).toHaveValue('auto');
+  await table.getByRole('combobox', { name: 'First row' }).selectOption('0');
+  const name = table.getByRole('textbox', { name: 'Column 1 name' });
+  await name.fill('Amount');
+  await name.press('Tab');
+  await table.getByRole('button', { name: 'Column', exact: true }).click();
+  await table.getByRole('button', { name: 'Row', exact: true }).click();
+  await table.getByRole('button', { name: 'Row', exact: true }).click();
+  const footerCount = table.getByRole('spinbutton', { name: 'Footer rows' });
+  await footerCount.fill('1');
+  await footerCount.press('Tab');
+  await table.getByRole('textbox', { name: 'Amount row 0', exact: true }).fill('0.1');
+  await table.getByRole('textbox', { name: 'Amount row 1', exact: true }).fill('0.2');
+  const footer = table.getByRole('textbox', { name: 'Amount row 2', exact: true });
+  await footer.fill('=SUM()');
+  const namedSum = table.getByRole('textbox', { name: 'B row 0', exact: true });
+  await namedSum.fill('=SUM(Amount)');
+  await namedSum.press('Tab');
+  await expect(namedSum).toHaveValue('0.3');
+  await expect(footer).toHaveValue('0.3');
+  await name.fill('Revenue');
+  await name.press('Tab');
+  await expect(namedSum).toHaveValue('0.3');
+  await namedSum.focus();
+  await expect(namedSum).toHaveValue('=SUM(Revenue)');
+  await table.getByRole('button', { name: 'Delete column Revenue', exact: true }).click();
+  await expect(namedSum).toHaveAttribute('aria-invalid', 'true');
+  await expect(namedSum).toHaveValue('#ERROR');
+  await expect(table.getByRole('button', { name: 'Delete column B', exact: true })).toBeDisabled();
+  await table.getByRole('button', { name: 'Done' }).click();
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  const canvasTable = canvasBlock(page, 'Untitled table');
+  await expect(canvasTable.getByRole('textbox', { name: 'B row 0', exact: true })).toHaveValue('0.3');
 });

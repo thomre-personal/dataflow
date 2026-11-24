@@ -1,15 +1,16 @@
-import { describeCellIssue, validateCell } from './clipboard';
-import { dataRowCount } from './workspace';
-import type { ChartBlock, Result, TableBlock } from './workspace';
+import { describeCellIssue, tableData } from './table-data.ts';
+import { dataRowCount } from './workspace.ts';
+import type { ChartBlock, Result, TableBlock } from './workspace.ts';
 
 export const countLabel = (value: number, singular: string, plural = singular + 's') =>
   value.toLocaleString('en') + ' ' + (value === 1 ? singular : plural);
 
 export function tableResult(table: TableBlock): Result {
+  const data = tableData(table);
   return {
-    columns: table.columns.map(({ name, type }) => ({ name, type })),
-    rows: table.rows.slice(0, dataRowCount(table)).map((row, rowIndex) => table.columns.map((column, index) => {
-      const cell = validateCell(row.cells[index] ?? '', column.type, table.numberFormat);
+    columns: data.columns.map(({ name, type }) => ({ name, type })),
+    rows: table.rows.slice(0, dataRowCount(table)).map((_, rowIndex) => data.columns.map((_, index) => {
+      const cell = data.cell(rowIndex, index);
       if (cell.message !== undefined) throw new Error(describeCellIssue(table, { row: rowIndex, column: index, message: cell.message }));
       return cell.value;
     })),
@@ -17,9 +18,10 @@ export function tableResult(table: TableBlock): Result {
 }
 
 export function tablePreview(table: TableBlock, limit: number): Result {
+  const data = tableData(table);
   return {
-    columns: table.columns,
-    rows: table.rows.slice(0, limit).map((row) => row.cells.map((cell) => cell || null)),
+    columns: data.columns,
+    rows: table.rows.slice(0, limit).map((_, row) => data.columns.map((_, column) => data.display(row, column) || null)),
     titleColumns: table.titleColumns,
     footerRows: Math.max(0, Math.min(limit, table.rows.length) - dataRowCount(table)),
   };

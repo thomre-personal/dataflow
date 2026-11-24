@@ -17,21 +17,29 @@ Open [DataFlow on your computer](http://127.0.0.1:5173/). Use that same address 
 
 1. Open a new workspace from the workspace menu.
 2. Copy cells in Numbers or Excel. Choose **Paste data** and paste the range. Select the number format if automatic detection does not match the source.
-3. Add a **SQL** block and connect the table. The inspector shows the table name to use in SQL. Run the query and inspect the result in **Data**.
-4. Add a **Chart** block and connect it to the query. Choose bar or line and set the axes as needed.
+3. Add a **SQL** block and connect the table in the SQL editor. Use the displayed input name in your query. Choose **Save and run** to see the result in **Data**.
+4. Add a **Chart** block. In the chart dialog, choose the source, the chart type, and the axes.
 5. Type in **Find a block** at the top and choose a match to see its inputs and outputs. **Cmd+K** or **Ctrl+K** focuses the search. Drag from an output port to an input port to connect blocks. Use the inspector to assign a block to a group.
 
-Use the expand button on a table or chart to show it at a larger size on the canvas. Drag any edge or corner to resize it. Tables scroll to show all rows and columns. When you hover over a table or SQL query, drag its **+** output onto an empty part of the canvas to configure a connected query or chart.
+Tables and charts start expanded on the canvas. Drag any edge or corner to resize one, or use the collapse button for a smaller preview. Edit expanded tables directly on the canvas. Choose **Lock** for a read-only view and **Unlock** to edit again. When you hover over a table or SQL query, drag its **+** output onto an empty part of the canvas to configure a connected query or chart.
 
-Click a block name to rename it directly on the canvas. Press **Enter** to save or **Esc** to cancel. **Open query** takes you to the SQL editor in the inspector. To remove a selected block, press **Delete** or choose **Delete block** at the bottom of the inspector.
+Click a block name to rename it directly on the canvas. Press **Enter** to save or **Esc** to cancel. **Open query** opens the SQL editor in a dialog. **Open chart** opens the chart preview and settings in a dialog. To remove a selected block, press **Delete** or choose **Delete block** at the bottom of the inspector.
 
-Drag a block type from the canvas toolbar to place it and start editing on the canvas. Use **Edit inline** to edit an existing table, query, or chart on its card.
+Drag a block type from the canvas toolbar to place it. A dropped table is ready to edit on the canvas. A dropped query or chart opens its dialog.
+
+Drag a block by its header into an open group. Drag it outside the group to move it out. Groups can contain other groups. Resize a group at its edges or corners, or collapse it to hide its contents while keeping connections to other blocks visible.
 
 Use **Undo** and **Redo** in the top bar to step through workspace changes during the current browser session. DataFlow saves the workspace after each step.
+
+Open **Settings** from the gear in the top right to choose Light, Dark, or Auto, change keyboard shortcuts, and choose whether a shortcut asks before deleting a block.
 
 In the table editor, select a cell and press **Option+↑** or **Option+↓** to insert a row above or below. Press **Option+←** or **Option+→** to insert a column to the left or right. Use **Alt** on a non-Mac keyboard.
 
 Set **Title columns** to highlight columns on the left. Set **Footer rows** to keep summary rows at the bottom. SQL queries and charts include title columns and skip footer rows.
+
+New columns start with letter names and the **Auto** type. Auto uses the data rows to infer a column type for SQL and charts. Use **First row** to switch between starting at 1 and starting at 0. Use the trash button in a column header to delete that column.
+
+Enter `=SUM()` in a footer cell to total its own column. Enter `=SUM(Amount)` in another column to total `Amount`. You can use a column letter such as `=SUM(A)` as well. A matching column name takes precedence over a letter. Sums include data rows and skip footer rows. Click a calculated cell to see its formula. Renaming a column updates formulas that refer to its name.
 
 Date, number, and Boolean columns validate their cells as you edit or paste. Empty cells are allowed. DataFlow shows invalid values so you can correct them before running a query or plotting the table.
 

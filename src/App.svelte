@@ -4,7 +4,7 @@
   import {
     ArrowDownLeft, ArrowUpRight, Braces, ChartColumnIncreasing, Check,
     ChevronDown, CircleAlert, ClipboardPlus, CloudOff, Focus, Folder, Layers3, Link2, Maximize,
-    Moon, PanelRightClose, PanelRightOpen, Play, Plus, Redo2, Search, Sun, Table2, Trash2, Undo2, Unplug,
+    PanelRightClose, PanelRightOpen, Pencil, Play, Plus, Redo2, Search, Settings as SettingsIcon, Table2, Trash2, Undo2, Unplug,
     Workflow, X,
   } from 'lucide-svelte';
   import { onMount, tick } from 'svelte';
@@ -17,15 +17,20 @@
   import TableEditor from './components/TableEditor.svelte';
   import ResultGrid from './components/ResultGrid.svelte';
   import MiniChart from './components/MiniChart.svelte';
+  import Settings from './components/Settings.svelte';
   import { absolutePosition, addLink, canConnect, canGroup, createBlock, createWorkspace, kinds, related, sqlAlias, starterWorkspace } from './lib/workspace';
-  import type { Block, BlockKind, ChartBlock, Library, NumberFormat, Position, Result, SqlBlock, Workspace } from './lib/workspace';
-  import { describeCellIssue, importGrid, invalidTableCells, parseDelimited } from './lib/clipboard';
+  import type { Block, BlockKind, ChartBlock, GroupBlock, Library, Link, NumberFormat, Position, Result, SqlBlock, Workspace } from './lib/workspace';
+  import { importGrid, parseDelimited } from './lib/clipboard';
+  import { bindImportedFormulas, describeCellIssue, invalidTableCells, tableData } from './lib/table-data';
   import { chartSeries, countLabel, tablePreview, tableResult } from './lib/format';
   import { loadLibrary, saveLibrary } from './lib/storage';
+  import { defaultHotkeys, defaultPreferences, eventHotkey, hotkeyLabel, isMac, loadPreferences } from './lib/preferences';
+  import type { Preferences } from './lib/preferences';
 
   const icons = { table: Table2, sql: Braces, chart: ChartColumnIncreasing, group: Folder };
   const blockKinds: BlockKind[] = ['table', 'sql', 'chart', 'group'];
   const blockDragType = 'application/x-dataflow-block';
+  const groupInset = { x: 24, y: 55 };
   const addLabel = (kind: BlockKind) => 'Add ' + (kind === 'sql' ? 'SQL query' : kinds[kind].label.toLowerCase());
   const fitOptions = { padding: '5%' as const, maxZoom: 1.12 };
   const nodeTypes = { block: GraphCard };
@@ -36,23 +41,26 @@
   let histories = $state<Record<string, { undo: HistoryEntry[]; redo: HistoryEntry[] }>>({});
   let library = $state<Library>({ activeId: sample.id, workspaces: [sample] });
   let workspace = $derived(library.workspaces.find((item) => item.id === library.activeId) ?? library.workspaces[0]);
+  let blocksById = $derived(new Map(workspace.blocks.map((block) => [block.id, block])));
   let history = $derived(histories[workspace.id]);
   let ready = $state(false);
   let selectedId = $state('monthly-totals');
-  let inlineEditor = $state('');
   let selected = $derived(workspace.blocks.find((block) => block.id === selectedId));
   let inputLinks = $derived(workspace.links.filter((link) => link.target === selectedId));
   let outputLinks = $derived(workspace.links.filter((link) => link.source === selectedId));
   let panel = $state(true);
   let filter = $state('');
   let focused = $state('');
+  const groupDrop = $state({ target: '' });
   let workspaceMenu = $state(false);
   let activeTab = $state<'sql' | 'data'>('sql');
-  let modal = $state<'paste' | 'table' | 'chart' | 'workspace' | 'quick-create' | 'configure' | null>(null);
+  let modal = $state<'paste' | 'table' | 'sql' | 'chart' | 'workspace' | 'settings' | 'quick-create' | 'configure' | null>(null);
   let quickSource = $state('');
   let quickPosition = $state<Position>({ x: 0, y: 0 });
   let quickPointer = $state<Position>({ x: 0, y: 0 });
   let draftBlock = $state<SqlBlock | ChartBlock | undefined>();
+  let sqlDraft = $state('');
+  let sqlDraftLinks = $state<Link[]>([]);
   let quickFirstButton = $state<HTMLButtonElement>();
   let workspaceTitle = $state('');
   let renamingWorkspace = $state(false);
@@ -63,13 +71,12 @@
   let pasteFromTableDialog = $state(false);
   let pasteError = $state('');
   let blockSearch = $state<BlockSearch>();
-  let queryEditor = $state<HTMLTextAreaElement>();
   let queryViewRevision = 0;
   let saveState = $state<'saving' | 'saved' | 'error'>('saved');
   let notice = $state('');
-  let theme = $state<'light' | 'dark' | 'system'>('system');
+  let preferences = $state<Preferences>(defaultPreferences);
   let systemDark = $state(false);
-  let dark = $derived(theme === 'dark' || (theme === 'system' && systemDark));
+  let dark = $derived(preferences.theme === 'dark' || (preferences.theme === 'auto' && systemDark));
   let flowNodes = $state.raw<Node<CardData>[]>([]);
   let flowEdges = $state.raw<Edge[]>([]);
   let runtime = $state<Record<string, { state: 'ready' | 'stale' | 'running' | 'error'; result?: Result; error?: string }>>({});
@@ -139,7 +146,6 @@
 
     saveWorkspace(next);
     if (!after.has(focused)) focused = '';
-    if (!after.has(inlineEditor)) inlineEditor = '';
     if (entry.selectedId !== selectedId) {
       selectedId = entry.selectedId;
       showQueryTab('sql');
@@ -198,10 +204,7 @@
     systemDark = preference.matches;
     const changed = (event: MediaQueryListEvent) => { systemDark = event.matches; };
     preference.addEventListener('change', changed);
-    try {
-      const stored = localStorage.getItem('dataflow-theme');
-      if (stored === 'light' || stored === 'dark') theme = stored;
-    } catch { /* Use the system preference when browser storage is unavailable. */ }
+    preferences = loadPreferences();
     void (async () => {
       try {
         const restored = await loadLibrary();
@@ -226,7 +229,7 @@
   $effect(() => {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
     if (ready) {
-      try { localStorage.setItem('dataflow-theme', theme); } catch { /* A theme can still be applied for this tab. */ }
+      try { localStorage.setItem('dataflow-preferences', JSON.stringify(preferences)); } catch { /* Keep this tab usable without browser storage. */ }
     }
   });
 
@@ -248,31 +251,77 @@
   }
 
   function nodeSize(block: Block): { width: number; height: number } {
-    if ((block.kind === 'table' || block.kind === 'chart') && block.expanded) {
+    if ((block.kind === 'table' || block.kind === 'chart') && block.expanded !== false) {
       if (block.expandedSize) return block.expandedSize;
       if (block.kind === 'chart') return { width: 420, height: 320 };
-      return { width: 320, height: 132 + Math.max(2, Math.min(block.rows.length, 13)) * 28 };
+      return { width: 320, height: Math.max(280, 132 + Math.min(block.rows.length, 13) * 28) };
     }
     if (block.kind !== 'group') return { width: 260, height: 228 };
+    if (block.expanded === false) return { width: 260, height: 66 };
     const children = workspace.blocks.filter((item) => item.parentId === block.id);
     return children.reduce((size, child) => {
       const bounds = nodeSize(child);
       return { width: Math.max(size.width, child.position.x + bounds.width + 24), height: Math.max(size.height, child.position.y + bounds.height + 24) };
-    }, { width: 330, height: 280 });
+    }, block.expandedSize ?? { width: 330, height: 280 });
   }
 
   function resizeBlock(id: string, { x, y, width, height }: ResizeParams) {
+    const block = blocksById.get(id);
+    if (!block) return;
     const expandedSize = { width, height };
-    patchBlock(id, focused ? { expandedSize } : { expandedSize, position: { x, y } });
-  }
-
-  function toggleInline(block: Block) {
-    if (inlineEditor === block.id) {
-      inlineEditor = '';
+    if (block.kind !== 'group' || focused) {
+      patchBlock(id, focused ? { expandedSize } : { expandedSize, position: { x, y } });
       return;
     }
-    if ((block.kind === 'table' || block.kind === 'chart') && !block.expanded) patchBlock(block.id, { expanded: true });
-    inlineEditor = block.id;
+    const dx = x - block.position.x;
+    const dy = y - block.position.y;
+    replaceWorkspace({ ...workspace, blocks: workspace.blocks.map((item) => {
+      if (item.id === id) return { ...block, expandedSize, position: { x, y } };
+      if (item.parentId !== id || (!dx && !dy)) return item;
+      return { ...item, position: { x: item.position.x - dx, y: item.position.y - dy } };
+    }) });
+  }
+
+  function groupCanResize(group: GroupBlock, { x, y, width, height }: ResizeParams) {
+    if (focused) return true;
+    return workspace.blocks.every((child) => {
+      if (child.parentId !== group.id) return true;
+      const left = child.position.x + group.position.x - x;
+      const top = child.position.y + group.position.y - y;
+      const size = nodeSize(child);
+      return left >= Math.min(groupInset.x, child.position.x) && top >= Math.min(groupInset.y, child.position.y)
+        && left + size.width + 24 <= width && top + size.height + 24 <= height;
+    });
+  }
+
+  function toggleExpanded(block: Exclude<Block, SqlBlock>) {
+    const expanded = block.expanded === false;
+    patchBlock(block.id, { expanded });
+    if (block.kind === 'group' && !expanded && visibleBlockId(selectedId) === block.id) select(block.id);
+  }
+
+  function depth(block: Block) {
+    let count = 0;
+    let parent = blocksById.get(block.parentId ?? '');
+    const visited = new Set([block.id]);
+    while (parent && !visited.has(parent.id)) {
+      visited.add(parent.id);
+      count++;
+      parent = blocksById.get(parent.parentId ?? '');
+    }
+    return count;
+  }
+
+  function visibleBlockId(id: string) {
+    let visible = id;
+    let parent = blocksById.get(blocksById.get(id)?.parentId ?? '');
+    const visited = new Set([id]);
+    while (parent && !visited.has(parent.id)) {
+      visited.add(parent.id);
+      if (parent.kind === 'group' && parent.expanded === false) visible = parent.id;
+      parent = blocksById.get(parent.parentId ?? '');
+    }
+    return visible;
   }
 
   $effect(() => {
@@ -293,21 +342,17 @@
         }
       }
     }
-    const depth = (block: Block) => {
-      let count = 0;
-      let current = block.parentId;
-      const visited = new Set([block.id]);
-      while (current && !visited.has(current)) {
-        visited.add(current);
-        count++;
-        current = workspace.blocks.find((item) => item.id === current)?.parentId;
-      }
-      return count;
-    };
-    flowNodes = workspace.blocks.filter((block) => !focused || focusPositions.has(block.id)).sort((a, b) => depth(a) - depth(b)).map((block) => {
+    const visibleLinks = workspace.links.flatMap((link) => {
+      if (focused) return focusPositions.has(link.source) && focusPositions.has(link.target) ? [link] : [];
+      const source = visibleBlockId(link.source);
+      const target = visibleBlockId(link.target);
+      return source === target ? [] : [{ ...link, source, target }];
+    });
+    flowNodes = workspace.blocks.filter((block) => focused ? focusPositions.has(block.id) : visibleBlockId(block.id) === block.id)
+      .sort((a, b) => depth(a) - depth(b)).map((block) => {
       const result = block.kind === 'chart' ? chartInput(block) : runtime[block.id] ?? {};
       const size = nodeSize(block);
-      const expandable = block.kind === 'table' || block.kind === 'chart';
+      const expandable = block.kind !== 'sql';
       return {
         id: block.id, type: 'block', position: focusPositions.get(block.id) ?? { ...block.position }, parentId: focused ? undefined : block.parentId,
         selected: block.id === selectedId,
@@ -321,23 +366,26 @@
           focusSide: inputs.has(block.id) ? 'input' : outputs.has(block.id) ? 'output' : undefined,
           open: () => openBlock(block.id),
           rename: (title: string) => renameBlock(block.id, title),
-          toggleExpanded: expandable ? () => patchBlock(block.id, { expanded: !block.expanded }) : undefined,
+          toggleExpanded: expandable ? () => toggleExpanded(block) : undefined,
           resize: expandable ? (bounds: ResizeParams) => resizeBlock(block.id, bounds) : undefined,
-          edit: block.kind === 'group' ? undefined : {
-            active: inlineEditor === block.id && (!expandable || Boolean(block.expanded)),
-            toggle: () => toggleInline(block),
+          canResize: block.kind === 'group' ? (bounds: ResizeParams) => groupCanResize(block, bounds) : undefined,
+          group: block.kind === 'group' ? {
+            drop: groupDrop,
+            count: workspace.blocks.filter((item) => item.parentId === block.id).length,
+            hasInput: visibleLinks.some((link) => link.target === block.id),
+            hasOutput: visibleLinks.some((link) => link.source === block.id),
+          } : undefined,
+          edit: block.kind === 'table' ? {
+            toggleLock: () => patchBlock(block.id, { inlineLocked: !block.inlineLocked }),
             patch: (patch: Partial<Block>) => patchBlock(block.id, patch),
+            hotkeys: preferences.hotkeys,
             error: message,
             paste: () => { select(block.id); openPaste(block.id); },
-            run: block.kind === 'sql' ? () => void runSQL(block, false) : undefined,
-            inputs: block.kind === 'table' ? [] : workspace.blocks.filter((item) => canConnect(workspace, item.id, block.id)),
-            aliases: block.kind === 'sql' ? workspace.links.filter((link) => link.target === block.id).map((link) => link.alias) : [],
-            connect: (source: string) => connect(source, block.id),
-          },
+          } : undefined,
         },
       };
     });
-    flowEdges = workspace.links.filter((link) => !focused || (focusPositions.has(link.source) && focusPositions.has(link.target))).map((link) => ({
+    flowEdges = visibleLinks.map((link) => ({
       ...link, type: 'smoothstep',
       markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: dark ? '#7185a1' : '#889cb6' },
       style: 'stroke-width: 1.8px; stroke: ' + (dark ? '#7185a1' : '#889cb6'),
@@ -355,16 +403,39 @@
     panel = true;
   }
 
-  async function openBlock(id: string) {
+  function openBlock(id: string) {
     select(id);
     const block = workspace.blocks.find((candidate) => candidate.id === id);
     if (block?.kind === 'table') modal = 'table';
     if (block?.kind === 'chart') modal = 'chart';
     if (block?.kind === 'sql') {
-      showQueryTab('sql');
-      await tick();
-      if (selectedId === id) queryEditor?.focus();
+      sqlDraft = block.sql;
+      sqlDraftLinks = workspace.links;
+      modal = 'sql';
     }
+  }
+
+  function addQueryInput(source: string) {
+    const draftWorkspace = {
+      ...sqlEditorWorkspace,
+      blocks: workspace.blocks.map((block) => block.id === selectedId ? { ...block, sql: sqlDraft } : block),
+    };
+    const next = addLink(draftWorkspace, source, selectedId);
+    sqlDraftLinks = next.links;
+    const query = next.blocks.find((block) => block.id === selectedId);
+    if (query?.kind === 'sql') sqlDraft = query.sql;
+  }
+
+  function saveQuery(run: boolean) {
+    if (selected?.kind !== 'sql' || !sqlDraft.trim()) return;
+    const query = { ...selected, sql: sqlDraft };
+    if (query.sql !== selected.sql || sqlDraftLinks.length !== workspace.links.length) {
+      invalidate([query.id, ...related(workspace, query.id, 'outputs')]);
+      replaceWorkspace({ ...workspace, blocks: workspace.blocks.map((block) => block.id === query.id ? query : block), links: sqlDraftLinks });
+    }
+    closeModal();
+    showQueryTab(run ? 'data' : 'sql');
+    if (run) void runSQL(query);
   }
 
   async function focusBlock(id: string) {
@@ -381,23 +452,53 @@
     await requestFit?.({ ...fitOptions, duration: 240 });
   }
 
+  function nextBlockPosition(block: Block): Position {
+    const roots = workspace.blocks.filter((item) => !item.parentId);
+    const x = 44 + (roots.length % 3) * 332;
+    let y = 166 + Math.floor(roots.length / 3) * 280;
+    const size = nodeSize(block);
+    for (const item of roots.sort((a, b) => a.position.y - b.position.y)) {
+      const bounds = nodeSize(item);
+      const left = item.position.x;
+      const top = item.position.y;
+      if (x < left + bounds.width + 12 && x + size.width + 12 > left && y < top + bounds.height + 24 && y + size.height + 24 > top) {
+        y = top + bounds.height + 24;
+      }
+    }
+    return { x, y };
+  }
+
+  function groupAtPoint(point: Position, moving?: Block) {
+    if (focused) return undefined;
+    let hit: GroupBlock | undefined;
+    for (const block of workspace.blocks) {
+      if (block.kind !== 'group' || block.expanded === false || visibleBlockId(block.id) !== block.id) continue;
+      if (moving && !canGroup(moving, block, workspace.blocks)) continue;
+      const position = absolutePosition(block, workspace.blocks);
+      const size = nodeSize(block);
+      if (point.x >= position.x && point.x <= position.x + size.width && point.y >= position.y && point.y <= position.y + size.height
+        && (!hit || depth(block) >= depth(hit))) hit = block;
+    }
+    return hit;
+  }
+
+  function groupPosition(point: Position, group: GroupBlock) {
+    const origin = absolutePosition(group, workspace.blocks);
+    return { x: Math.max(groupInset.x, point.x - origin.x), y: Math.max(groupInset.y, point.y - origin.y) };
+  }
+
   function add(kind: BlockKind, dropPosition?: Position) {
     if (!ready) return;
+    const group = dropPosition ? groupAtPoint(dropPosition) : undefined;
     focused = '';
-    const count = workspace.blocks.filter((block) => block.kind !== 'group').length;
-    const block = createBlock(kind, dropPosition ?? { x: 44 + (count % 3) * 332, y: Math.floor(count / 3) * 280 + 166 });
-    if (dropPosition && (block.kind === 'table' || block.kind === 'chart')) {
-      block.expanded = true;
-      if (block.kind === 'table') block.expandedSize = { width: 440, height: 300 };
-    }
+    const block = createBlock(kind, { x: 0, y: 0 });
+    block.position = dropPosition ? (group ? groupPosition(dropPosition, group) : dropPosition) : nextBlockPosition(block);
+    block.parentId = group?.id;
+    if (dropPosition && block.kind === 'table') block.expandedSize = { width: 440, height: 300 };
     replaceWorkspace({ ...workspace, blocks: [...workspace.blocks, block] });
     select(block.id);
-    if (dropPosition) {
-      inlineEditor = block.id;
-    } else {
-      if (kind === 'table') modal = 'table';
-      void fitCanvas();
-    }
+    if (kind === 'sql' || kind === 'chart' || (kind === 'table' && !dropPosition)) openBlock(block.id);
+    if (!dropPosition) void fitCanvas();
   }
 
   function startBlockDrag(event: DragEvent, kind: BlockKind) {
@@ -410,13 +511,36 @@
     if (!event.dataTransfer?.types.includes(blockDragType)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'copy';
+    const point = canvasPosition?.({ x: event.clientX, y: event.clientY });
+    groupDrop.target = point ? groupAtPoint(point)?.id ?? '' : '';
   }
 
   function dropBlock(event: DragEvent) {
+    groupDrop.target = '';
     const kind = blockKinds.find((item) => item === event.dataTransfer?.getData(blockDragType));
     if (!kind || !canvasPosition) return;
     event.preventDefault();
     add(kind, canvasPosition({ x: event.clientX, y: event.clientY }));
+  }
+
+  function groupForDrag(node: Node<CardData>, event: MouseEvent | TouchEvent) {
+    const block = blocksById.get(node.id);
+    const cursor = event instanceof MouseEvent ? event : event.changedTouches[0];
+    const point = cursor && canvasPosition?.({ x: cursor.clientX, y: cursor.clientY });
+    return block && point ? groupAtPoint(point, block) : undefined;
+  }
+
+  function moveDraggedBlock(node: Node<CardData>, event: MouseEvent | TouchEvent) {
+    groupDrop.target = '';
+    const block = blocksById.get(node.id);
+    if (!block) return;
+    const group = groupForDrag(node, event);
+    const absolute = absolutePosition({ ...block, position: node.position }, workspace.blocks);
+    const position = group ? groupPosition(absolute, group) : absolute;
+    if (group?.id !== block.parentId || position.x !== block.position.x || position.y !== block.position.y) {
+      patchBlock(block.id, { parentId: group?.id, position });
+    }
+    select(block.id);
   }
 
   function connect(source: string, target: string) {
@@ -435,7 +559,8 @@
     const pointer = event instanceof MouseEvent ? event : event.changedTouches[0];
     if (!pointer) return;
     const hit = document.elementFromPoint(pointer.clientX, pointer.clientY);
-    if (!hit?.closest('.svelte-flow__pane') || hit.closest('.svelte-flow__node')) return;
+    if (!hit?.closest('.svelte-flow__pane')) return;
+    if (hit.closest('.svelte-flow__node') && !hit.matches('.group-card:not(.collapsed)')) return;
     quickSource = connection.fromNode.id;
     quickPosition = { ...connection.to };
     quickPointer = { x: Math.max(8, Math.min(pointer.clientX, innerWidth - 256)), y: Math.max(8, Math.min(pointer.clientY, innerHeight - 140)) };
@@ -447,7 +572,9 @@
   function configureNewBlock(kind: 'sql' | 'chart') {
     const source = workspace.blocks.find((block) => block.id === quickSource);
     if (!source) return closeModal();
-    const created = createBlock(kind, quickPosition);
+    const group = groupAtPoint(quickPosition);
+    const created = createBlock(kind, group ? groupPosition(quickPosition, group) : quickPosition);
+    created.parentId = group?.id;
     if (created.kind !== 'sql' && created.kind !== 'chart') return;
     draftBlock = created.kind === 'sql'
       ? { ...created, title: source.title + ' query', sql: 'SELECT *\nFROM "' + sqlAlias(source.title) + '";' }
@@ -479,15 +606,14 @@
   function moveToGroup(block: Block, groupId: string) {
     const group = workspace.blocks.find((item) => item.id === groupId);
     if (group && !canGroup(block, group, workspace.blocks)) return;
-    const parent = group ? absolutePosition(group, workspace.blocks) : { x: 0, y: 0 };
     const siblings = workspace.blocks.filter((item) => item.parentId === groupId && item.id !== block.id);
     const absolute = absolutePosition(block, workspace.blocks);
-    const position = group ? { x: 24, y: 55 + siblings.length * 260 } : { x: absolute.x - parent.x, y: absolute.y - parent.y };
+    const position = group ? { x: groupInset.x, y: Math.max(groupInset.y, ...siblings.map((item) => item.position.y + nodeSize(item).height + 24)) } : absolute;
     patchBlock(block.id, { parentId: group?.id, position });
   }
 
-  function removeBlock(block: Block) {
-    if (!confirm('Delete “' + block.title + '” from this workspace?')) return;
+  function removeBlock(block: Block, confirmDelete = true) {
+    if (confirmDelete && !confirm('Delete “' + block.title + '” from this workspace?')) return;
     invalidate([block.id, ...related(workspace, block.id, 'outputs')]);
     replaceWorkspace({
       ...workspace,
@@ -497,7 +623,6 @@
     });
     if (selectedId === block.id) selectedId = '';
     if (focused === block.id) focused = '';
-    if (inlineEditor === block.id) inlineEditor = '';
     modal = null;
   }
 
@@ -505,7 +630,6 @@
     library = { ...library, activeId: id };
     workspaceMenu = false;
     focused = '';
-    inlineEditor = '';
     filter = '';
     selectedId = workspace.blocks[0]?.id ?? '';
     showQueryTab('sql');
@@ -549,9 +673,10 @@
     try {
       const target = workspace.blocks.find((item) => item.id === pasteTarget);
       const hasValues = target?.kind === 'table' && target.rows.some((row) => row.cells.some((cell) => cell.trim()));
-      const defaultColumn = target?.kind === 'table' && target.columns.length === 1 && target.columns[0].name === 'Column 1' && target.columns[0].type === 'text';
+      const defaultColumn = target?.kind === 'table' && target.columns.length === 1
+        && ((target.columns[0].name === 'A' && target.columns[0].type === 'auto') || (target.columns[0].name === 'Column 1' && target.columns[0].type === 'text'));
       const existing = target?.kind === 'table' && (hasValues || !defaultColumn) ? target.columns : undefined;
-      const data = importGrid(parseDelimited(pasteText), pasteHeader, pasteNumberFormat, existing);
+      const data = bindImportedFormulas(importGrid(parseDelimited(pasteText), pasteHeader, pasteNumberFormat, existing));
       if (target?.kind === 'table') {
         if (hasValues && !confirm('Replace the existing data in “' + target.title + '”?')) return;
         patchBlock(target.id, {
@@ -561,11 +686,11 @@
         });
         modal = pasteFromTableDialog ? 'table' : null;
       } else {
-        const count = workspace.blocks.filter((block) => block.kind !== 'group').length;
         const block: Block = {
-          ...createBlock('table', { x: 44 + (count % 3) * 332, y: Math.floor(count / 3) * 280 + 166 }),
+          ...createBlock('table', { x: 0, y: 0 }),
           kind: 'table', ...data, title: 'Pasted data', numberFormat: pasteNumberFormat, style: 'banded',
         };
+        block.position = nextBlockPosition(block);
         replaceWorkspace({ ...workspace, blocks: [...workspace.blocks, block] });
         select(block.id);
         modal = 'table';
@@ -578,49 +703,78 @@
   }
 
   function closeModal() {
+    if (modal === 'sql') {
+      sqlDraft = '';
+      sqlDraftLinks = [];
+    }
     modal = modal === 'paste' && pasteFromTableDialog ? 'table' : null;
     draftBlock = undefined;
   }
   function keyboard(event: KeyboardEvent) {
     if (event.key === 'Escape' && modal === 'quick-create') closeModal();
     if (event.defaultPrevented || event.isComposing || modal) return;
-    const withModifier = event.metaKey || event.ctrlKey;
-    const key = event.key.toLowerCase();
-    if (withModifier && key === 'k') {
+    const shortcut = eventHotkey(event);
+    if (!shortcut) return;
+    const { hotkeys } = preferences;
+    if (shortcut === hotkeys.search) {
       event.preventDefault();
       blockSearch?.focus();
+      return;
     }
-    if (withModifier && event.key === 'Enter' && selected?.kind === 'sql') {
+    if (shortcut === hotkeys.runQuery && selected?.kind === 'sql') {
       event.preventDefault();
       void runSQL(selected);
+      return;
     }
     if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]')) return;
-    if (withModifier && !event.altKey && (key === 'z' || (key === 'y' && event.ctrlKey))) {
+    if (shortcut === hotkeys.undo || shortcut === hotkeys.redo
+      || (shortcut === 'Mod+Y' && !isMac() && hotkeys.redo === defaultHotkeys.redo && !Object.values(hotkeys).includes(shortcut))) {
       event.preventDefault();
-      stepHistory(key === 'y' || event.shiftKey ? 'redo' : 'undo');
+      stepHistory(shortcut === hotkeys.undo ? 'undo' : 'redo');
     }
-    if (event.key === 'Delete' && !withModifier && !event.altKey && !event.repeat && selected) {
+    if (shortcut === hotkeys.deleteBlock && !event.repeat && selected) {
       event.preventDefault();
-      removeBlock(selected);
+      removeBlock(selected, preferences.confirmHotkeyDelete);
     }
+  }
+
+  function queryShortcut(event: KeyboardEvent) {
+    if (modal !== 'sql' || event.repeat || eventHotkey(event) !== preferences.hotkeys.runQuery) return;
+    event.preventDefault();
+    event.stopPropagation();
+    saveQuery(true);
   }
 
   let selectedChart = $derived(selected?.kind === 'chart' ? chartInput(selected) : {});
   let selectedSeries = $derived(selected?.kind === 'chart' ? chartSeries(selected, selectedChart.result) : undefined);
   let quickInput = $derived(workspace.blocks.find((block) => block.id === quickSource));
-  let quickColumns = $derived(quickInput?.kind === 'table' ? quickInput.columns : quickInput?.kind === 'sql' ? runtime[quickInput.id]?.result?.columns ?? [] : []);
+  let quickColumns = $derived(quickInput?.kind === 'table' ? tableData(quickInput).columns : quickInput?.kind === 'sql' ? runtime[quickInput.id]?.result?.columns ?? [] : []);
   let candidates = $derived(selected ? workspace.blocks.filter((block) => canConnect(workspace, block.id, selected!.id)) : []);
+  let sqlEditorWorkspace = $derived({ ...workspace, links: sqlDraftLinks });
+  let sqlCandidates = $derived(modal === 'sql' ? workspace.blocks.filter((block) =>
+    canConnect(sqlEditorWorkspace, block.id, selectedId)) : []);
 </script>
 
-<svelte:window onkeydown={keyboard} />
+<svelte:window onkeydown={keyboard} onkeydowncapture={queryShortcut} />
+
+{#snippet sqlCode(value: string, change: (text: string) => void, autofocus = false)}
+  {#await import('./components/SqlEditor.svelte')}
+    <p class="query-editor-loading" role="status">Loading SQL editor…</p>
+  {:then { default: Editor }}
+    <Editor {value} {change} {autofocus} />
+  {:catch}
+    <textarea class="query-editor-fallback" aria-label="SQL code" spellcheck="false" {value}
+      oninput={(event) => change(event.currentTarget.value)}></textarea>
+  {/await}
+{/snippet}
 
 <div class="app-shell">
   <header class="app-header">
     <div class="header-left">
       <div class="header-brand"><div class="brand-mark"><Workflow size={21} strokeWidth={2} /></div><span>DataFlow</span></div>
       <div class="history-actions" role="group" aria-label="Workspace history">
-        <button class="icon-button" type="button" aria-label="Undo" title="Undo (⌘ Z)" disabled={!history?.undo.length} onclick={() => stepHistory('undo')}><Undo2 size={18} /></button>
-        <button class="icon-button" type="button" aria-label="Redo" title="Redo (⌘ ⇧ Z)" disabled={!history?.redo.length} onclick={() => stepHistory('redo')}><Redo2 size={18} /></button>
+        <button class="icon-button" type="button" aria-label="Undo" title={'Undo (' + hotkeyLabel(preferences.hotkeys.undo) + ')'} disabled={!history?.undo.length} onclick={() => stepHistory('undo')}><Undo2 size={18} /></button>
+        <button class="icon-button" type="button" aria-label="Redo" title={'Redo (' + hotkeyLabel(preferences.hotkeys.redo) + ')'} disabled={!history?.redo.length} onclick={() => stepHistory('redo')}><Redo2 size={18} /></button>
       </div>
       <div class="header-divider"></div>
       <div class="workspace-switch">
@@ -640,11 +794,11 @@
       </div>
     </div>
     {#key workspace.id}
-      <BlockSearch bind:this={blockSearch} blocks={workspace.blocks} {icons} onPick={focusBlock} />
+      <BlockSearch bind:this={blockSearch} blocks={workspace.blocks} {icons} shortcut={hotkeyLabel(preferences.hotkeys.search)} onPick={focusBlock} />
     {/key}
     <div class="header-right">
       <span class="save-state" title="Stored in this browser">{#if saveState === 'error'}<CircleAlert size={15} /> Could not save{:else if saveState === 'saving'}<span class="save-dot"></span> Saving…{:else}<CloudOff size={15} /> Saved locally{/if}</span>
-      <button class="icon-button theme-toggle" aria-label={dark ? 'Use light mode' : 'Use dark mode'} title={dark ? 'Use light mode' : 'Use dark mode'} onclick={() => theme = dark ? 'light' : 'dark'}>{#if dark}<Sun size={18} />{:else}<Moon size={18} />{/if}</button>
+      <button class="icon-button settings-trigger" aria-label="Settings" title="Settings" onclick={() => modal = 'settings'}><SettingsIcon size={18} /></button>
     </div>
   </header>
 
@@ -680,6 +834,7 @@
           {#each blockKinds as kind}
             {@const Icon = icons[kind]}
             <button class="button ghost compact-button canvas-block-tool" draggable="true" ondragstart={(event) => startBlockDrag(event, kind)}
+              ondragend={() => groupDrop.target = ''}
               aria-label={addLabel(kind)} title={addLabel(kind) + ' · Click or drag onto the canvas'} onclick={() => add(kind)}><Icon size={16} /><span>{kind === 'sql' ? 'SQL' : kinds[kind].label}</span></button>
           {/each}
           <span class="action-divider"></span>
@@ -687,7 +842,10 @@
           {#if selected && !panel}<button class="icon-button" aria-label="Open inspector" onclick={() => panel = true}><PanelRightOpen size={18} /></button>{/if}
         </div>
       </div>
-      <div class="canvas-stage" role="region" aria-label="Canvas drop area" ondragover={allowBlockDrop} ondrop={dropBlock}>
+      <div class="canvas-stage" role="region" aria-label="Canvas drop area" ondragover={allowBlockDrop} ondrop={dropBlock}
+        ondragleave={(event) => {
+          if (!(event.relatedTarget instanceof Element) || !event.currentTarget.contains(event.relatedTarget)) groupDrop.target = '';
+        }}>
         {#if ready}
           <SvelteFlow
             bind:nodes={flowNodes}
@@ -705,7 +863,8 @@
             onconnectend={quickDrop}
             isValidConnection={({ source, target, sourceHandle }) => sourceHandle !== 'quick-create' && canConnect(workspace, source, target)}
             onnodeclick={({ node }) => select(node.id)}
-            onnodedragstop={({ targetNode }) => { if (targetNode) patchBlock(targetNode.id, { position: { ...targetNode.position } }); }}
+            onnodedrag={({ targetNode, event }) => { groupDrop.target = targetNode ? groupForDrag(targetNode, event)?.id ?? '' : ''; }}
+            onnodedragstop={({ targetNode, event }) => { if (targetNode) moveDraggedBlock(targetNode, event); }}
             proOptions={{ hideAttribution: true }}
           >
             <Background variant={BackgroundVariant.Dots} gap={19} size={1.1} patternColor={dark ? '#46526a' : '#c7d2e0'} />
@@ -734,8 +893,8 @@
             <div class="tabs" aria-label="Query views"><button class:active={activeTab === 'sql'} onclick={() => showQueryTab('sql')}>SQL</button><button class:active={activeTab === 'data'} onclick={() => showQueryTab('data')}>Data</button></div>
             <div class="inspector-body">
               {#if activeTab === 'sql'}
-                <label class="control-label" for="sql-editor">Query</label>
-                <textarea bind:this={queryEditor} id="sql-editor" class="sql-editor" spellcheck="false" value={block.sql} oninput={(event) => patchBlock(block.id, { sql: event.currentTarget.value })}></textarea>
+                <pre class="query-preview"><code>{block.sql || '-- Write a query'}</code></pre>
+                <button class="button secondary full-width" onclick={() => openBlock(block.id)}><Pencil size={14} /> Edit SQL</button>
               {:else if runtime[block.id]?.result}
                 {@const result = runtime[block.id].result!}
                 <div class="result-summary"><span>{countLabel(result.rows.length, 'row')}</span>{#if runtime[block.id].state !== 'ready'}<span class="inline-warning">Previous result</span>{/if}</div>
@@ -745,7 +904,7 @@
                 <p class="inspector-empty">Run the query to see its result.</p>
               {/if}
               {#if runtime[block.id]?.error}<p class="inline-error" role="alert"><CircleAlert size={15} />{runtime[block.id].error}</p>{/if}
-              <button class="button primary run-button" onclick={() => void runSQL(block)} disabled={runtime[block.id]?.state === 'running'}><Play size={14} fill="currentColor" /> {runtime[block.id]?.state === 'running' ? 'Running…' : 'Run query'}<kbd aria-hidden="true">⌘ ↵</kbd></button>
+              <button class="button primary run-button" onclick={() => void runSQL(block)} disabled={runtime[block.id]?.state === 'running'}><Play size={14} fill="currentColor" /> {runtime[block.id]?.state === 'running' ? 'Running…' : 'Run query'}<kbd aria-hidden="true">{hotkeyLabel(preferences.hotkeys.runQuery)}</kbd></button>
             </div>
           {:else if block.kind === 'table'}
             {@const issue = tableProblem(block)}
@@ -760,12 +919,7 @@
               {#if selectedChart.error}<p class="inline-error" role="alert"><CircleAlert size={15} />{selectedChart.error}</p>
               {:else if selectedChart.state && selectedChart.state !== 'ready'}<p class="inline-warning">{selectedChart.state === 'running' ? 'Refreshing data…' : 'Source result may be out of date'}</p>{/if}
               {#if selectedSeries}<div class="inspector-chart"><MiniChart series={selectedSeries} type={block.chart} {dark} compact /></div>{/if}
-              <label class="field">Chart type<select value={block.chart} onchange={(event) => patchBlock(block.id, { chart: event.currentTarget.value as ChartBlock['chart'] })}><option value="bar">Bar</option><option value="line">Line</option></select></label>
-              {#if selectedChart.result}
-                <label class="field">X axis<select value={block.x} onchange={(event) => patchBlock(block.id, { x: event.currentTarget.value })}><option value="">Automatic</option>{#each selectedChart.result.columns as column}<option value={column.name}>{column.name}</option>{/each}</select></label>
-                <label class="field">Y axis<select value={block.y} onchange={(event) => patchBlock(block.id, { y: event.currentTarget.value })}><option value="">Automatic</option>{#each selectedChart.result.columns.filter((column) => column.type === 'decimal') as column}<option value={column.name}>{column.name}</option>{/each}</select></label>
-              {/if}
-              {#if selectedSeries}<button class="button secondary full-width" onclick={() => modal = 'chart'}><Maximize size={15} /> Open chart</button>{/if}
+              <button class="button secondary full-width" onclick={() => openBlock(block.id)}><Maximize size={15} /> Open chart</button>
             </div>
           {:else}
             <div class="inspector-body"><p class="helper-text">{countLabel(workspace.blocks.filter((item) => item.parentId === block.id).length, 'block')} in this group</p></div>
@@ -822,7 +976,7 @@
   {#snippet content()}
     <label class="field">Name<input maxlength="100" bind:value={draft.title} /></label>
     {#if draft.kind === 'sql'}
-      <label class="field">SQL<textarea class="paste-editor" bind:value={draft.sql} spellcheck="false"></textarea></label>
+      {@render sqlCode(draft.sql, (text) => draft.sql = text)}
     {:else}
       <label class="field">Chart type<select bind:value={draft.chart}><option value="bar">Bar</option><option value="line">Line</option></select></label>
       {#if quickColumns.length}
@@ -835,7 +989,33 @@
     <button class="button secondary" onclick={closeModal}>Cancel</button>
     <button class="button primary" onclick={createConnectedBlock} disabled={!draft.title.trim() || (draft.kind === 'sql' && !draft.sql.trim())}>{draft.kind === 'sql' ? 'Create SQL query' : 'Create chart'}</button>
   {/snippet}
-  <Modal title={draft.kind === 'sql' ? 'Configure SQL query' : 'Configure chart'} subtitle={'Input: ' + (quickInput?.title ?? '')} close={closeModal} children={content} {footer} />
+  <Modal title={draft.kind === 'sql' ? 'Configure SQL query' : 'Configure chart'} subtitle={'Input: ' + (quickInput?.title ?? '')} wide={draft.kind === 'sql'} close={closeModal} children={content} {footer} />
+{:else if modal === 'sql' && selected?.kind === 'sql'}
+  {#snippet content()}
+    <div class="query-inputs">
+      {#if sqlCandidates.length}
+        <select aria-label="Connect input" class="inline-select" value="" onchange={(event) => {
+          if (event.currentTarget.value) addQueryInput(event.currentTarget.value);
+          event.currentTarget.value = '';
+        }}>
+          <option value="">Connect input…</option>
+          {#each sqlCandidates as input (input.id)}<option value={input.id}>{input.title}</option>{/each}
+        </select>
+      {/if}
+      {#each sqlDraftLinks.filter((link) => link.target === selectedId) as link (link.id)}
+        <code class="connection-alias" title={workspace.blocks.find((block) => block.id === link.source)?.title}>{link.alias}</code>
+      {/each}
+    </div>
+    {@render sqlCode(sqlDraft, (text) => sqlDraft = text, true)}
+  {/snippet}
+  {#snippet footer()}
+    <button class="button secondary" onclick={closeModal}>Cancel</button>
+    <button class="button secondary" disabled={!sqlDraft.trim()} onclick={() => saveQuery(false)}>Save</button>
+    <button class="button primary" disabled={!sqlDraft.trim()} onclick={() => saveQuery(true)}><Play size={14} /> Save and run</button>
+  {/snippet}
+  <Modal title="Edit SQL" subtitle={selected.title} wide close={closeModal} children={content} {footer} />
+{:else if modal === 'settings'}
+  <Settings {preferences} change={(next) => preferences = next} close={closeModal} />
 {:else if modal === 'workspace'}
   {#snippet content()}
     <label class="field">Workspace name<input maxlength="100" bind:value={workspaceTitle} placeholder="e.g. Home budget" onkeydown={(event) => { if (event.key === 'Enter') saveWorkspaceName(); }} /></label>
@@ -854,17 +1034,35 @@
 {:else if modal === 'table' && selected?.kind === 'table'}
   {@const table = selected}
   {#snippet content()}
-    <TableEditor block={table} change={(patch) => patchBlock(table.id, patch)} paste={() => openPaste(table.id)} error={message} />
+    <TableEditor block={table} hotkeys={preferences.hotkeys} change={(patch) => patchBlock(table.id, patch)} paste={() => openPaste(table.id)} error={message} />
   {/snippet}
   {#snippet footer()}<button class="button primary" onclick={closeModal}>Done</button>{/snippet}
   <Modal title={table.title} subtitle="Table" wide close={closeModal} children={content} {footer} />
 {:else if modal === 'chart' && selected?.kind === 'chart'}
   {@const chart = selected}
   {#snippet content()}
+    <div class="chart-settings">
+      {#if candidates.length || inputLinks.length}
+        <label class="field">Source<select value={inputLinks[0]?.source ?? ''} onchange={(event) => {
+          if (event.currentTarget.value) connect(event.currentTarget.value, chart.id);
+          else if (inputLinks[0]) disconnect(inputLinks[0].id);
+        }}>
+          <option value="">No source</option>
+          {#if inputLinks[0]}<option value={inputLinks[0].source}>{workspace.blocks.find((block) => block.id === inputLinks[0].source)?.title ?? 'Source'}</option>{/if}
+          {#each candidates as input (input.id)}<option value={input.id}>{input.title}</option>{/each}
+        </select></label>
+      {/if}
+      <label class="field">Chart type<select value={chart.chart} onchange={(event) => patchBlock(chart.id, { chart: event.currentTarget.value as ChartBlock['chart'] })}><option value="bar">Bar</option><option value="line">Line</option></select></label>
+      {#if selectedChart.result}
+        <label class="field">X axis<select value={chart.x} onchange={(event) => patchBlock(chart.id, { x: event.currentTarget.value })}><option value="">Automatic</option>{#each selectedChart.result.columns as column}<option value={column.name}>{column.name}</option>{/each}</select></label>
+        <label class="field">Y axis<select value={chart.y} onchange={(event) => patchBlock(chart.id, { y: event.currentTarget.value })}><option value="">Automatic</option>{#each selectedChart.result.columns.filter((column) => column.type === 'decimal') as column}<option value={column.name}>{column.name}</option>{/each}</select></label>
+      {/if}
+    </div>
     {#if selectedSeries}<div class="expanded-chart"><MiniChart series={selectedSeries} type={chart.chart} {dark} /></div>
       {#if selectedSeries.truncated}<p class="helper-text">Showing the first 100 rows.</p>{/if}
     {:else if selectedChart.error}<p class="inline-error"><CircleAlert size={15} />{selectedChart.error}</p>
     {:else}<p class="inspector-empty">Connect a source with a number column to plot.</p>{/if}
   {/snippet}
-  <Modal title={chart.title} subtitle={chart.chart === 'bar' ? 'Bar chart' : 'Line chart'} wide close={closeModal} children={content} />
+  {#snippet footer()}<button class="button primary" onclick={closeModal}>Done</button>{/snippet}
+  <Modal title={chart.title} subtitle="Chart" wide close={closeModal} children={content} {footer} />
 {/if}

@@ -1,26 +1,34 @@
 <script lang="ts">
   import { CircleAlert, ClipboardPlus, Plus, Trash2 } from 'lucide-svelte';
   import { tick } from 'svelte';
-  import { dataRowCount, newId } from '../lib/workspace';
+  import { columnLetter, dataRowCount, newId, rowNumber } from '../lib/workspace';
   import { countLabel } from '../lib/format';
-  import { describeCellIssue, invalidTableCells, MAX_COLUMNS, MAX_ROWS, parseDelimited } from '../lib/clipboard';
+  import { MAX_COLUMNS, MAX_ROWS, parseDelimited } from '../lib/clipboard';
+  import { bindCellFormula, cellFormulaText, describeCellIssue, invalidTableCells, tableData } from '../lib/table-data';
+  import { eventHotkey, hotkeyLabel } from '../lib/preferences';
+  import type { Hotkeys } from '../lib/preferences';
   import type { ColumnType, TableBlock, TableStyle } from '../lib/workspace';
 
-  let { block, change, paste, error }: {
+  let { block, hotkeys, change, paste, error, inline = false }: {
     block: TableBlock;
+    hotkeys: Hotkeys;
     change: (patch: Partial<TableBlock>) => void;
     paste: () => void;
     error: (message: string) => void;
+    inline?: boolean;
   } = $props();
 
-  const types: [ColumnType, string][] = [['text', 'Text'], ['decimal', 'Number'], ['date', 'Date'], ['boolean', 'Boolean']];
+  const types: [ColumnType, string][] = [['auto', 'Auto'], ['text', 'Text'], ['decimal', 'Number'], ['date', 'Date'], ['boolean', 'Boolean']];
   const styles: [TableStyle, string][] = [['plain', 'Plain'], ['banded', 'Banded'], ['emphasis', 'Emphasis'], ['grid', 'Grid']];
   let limit = $state(60);
-  let issues = $derived([...invalidTableCells(block)]);
+  let data = $derived(tableData(block));
+  let issues = $derived([...invalidTableCells(block, data)]);
   let issueByCell = $derived(new Map(issues.map((issue) => [issue.row + ':' + issue.column, issue.message])));
   let dataRows = $derived(dataRowCount(block));
   let titleColumns = $derived(block.titleColumns ?? 0);
   let footerRows = $derived(block.footerRows ?? 0);
+  let focusedCell = $state('');
+  let cellDraft = $state('');
 
   const editorId = $props.id();
   const cellId = (rowId: string, columnId: string) => editorId + '-cell-' + rowId + '-' + columnId;
@@ -32,8 +40,12 @@
   }
 
   function updateCell(rowIndex: number, colIndex: number, value: string) {
-    const rows = block.rows.map((row, i) => i === rowIndex
-      ? { ...row, cells: row.cells.map((cell, j) => j === colIndex ? value : cell) } : row);
+    const rows = block.rows.map((row, i) => {
+      if (i !== rowIndex) return row;
+      const formulas = { ...row.formulas };
+      bindCellFormula(formulas, block.columns, colIndex, value);
+      return { ...row, formulas, cells: row.cells.map((cell, j) => j === colIndex ? value : cell) };
+    });
     change({ rows });
   }
 
@@ -50,17 +62,23 @@
       const height = block.rows.length + addedRows;
       if (width > MAX_COLUMNS || height > MAX_ROWS) throw new Error('The pasted range would exceed the table size limit.');
       const columns = Array.from({ length: width }, (_, i) => block.columns[i]
-        ?? { id: newId(), name: 'Column ' + (i + 1), type: 'text' as const });
+        ?? { id: newId(), name: columnLetter(i), type: 'auto' as const });
       const rows = Array.from({ length: height }, (_, rowIndex) => {
         const existing = rowIndex < boundary ? block.rows[rowIndex] :
           rowIndex >= boundary + addedRows ? block.rows[rowIndex - addedRows] : undefined;
+        const formulas = { ...existing?.formulas };
+        const cells = Array.from({ length: width }, (_, columnIndex) => {
+          const pasted = grid[rowIndex - firstRow]?.[columnIndex - firstColumn];
+          if (pasted !== undefined) bindCellFormula(formulas, columns, columnIndex, pasted);
+          return pasted ?? existing?.cells[columnIndex] ?? '';
+        });
         return {
           id: existing?.id ?? newId(),
-          cells: Array.from({ length: width }, (_, columnIndex) =>
-            grid[rowIndex - firstRow]?.[columnIndex - firstColumn] ?? existing?.cells[columnIndex] ?? ''),
+          cells, formulas,
         };
       });
       change({ columns, rows, footerRows: intoFooter ? footerRows + addedRows : block.footerRows });
+      if (focusedCell) cellDraft = cellFormulaText(rows[firstRow], columns, firstColumn);
     } catch (problem) {
       error(problem instanceof Error ? problem.message : String(problem));
     }
@@ -79,10 +97,9 @@
 
   function insertColumn(index: number) {
     if (block.columns.length >= MAX_COLUMNS) { error('This table has reached the column limit.'); return; }
-    const first = block.columns.length + 1;
-    let name = 'Column ' + first;
-    for (let i = first + 1; block.columns.some((column) => column.name.toLowerCase() === name.toLowerCase()); i++) name = 'Column ' + i;
-    const column = { id: newId(), name, type: 'text' as const };
+    let position = index;
+    while (block.columns.some((column) => column.name.toLowerCase() === columnLetter(position).toLowerCase())) position++;
+    const column = { id: newId(), name: columnLetter(position), type: 'auto' as const };
     change({
       columns: [...block.columns.slice(0, index), column, ...block.columns.slice(index)],
       rows: block.rows.map((row) => ({ ...row, cells: [...row.cells.slice(0, index), '', ...row.cells.slice(index)] })),
@@ -91,17 +108,19 @@
     return column.id;
   }
 
-  function insertWithArrow(event: KeyboardEvent, row: number, column: number) {
-    if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.isComposing) return;
-    if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+  function insertWithShortcut(event: KeyboardEvent, row: number, column: number) {
+    const shortcut = eventHotkey(event);
+    const insertRowShortcut = shortcut === hotkeys.rowAbove || shortcut === hotkeys.rowBelow;
+    if (!insertRowShortcut && shortcut !== hotkeys.columnLeft && shortcut !== hotkeys.columnRight) return;
     event.preventDefault();
+    event.stopPropagation();
     if (event.repeat) return;
-    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-      const index = row + Number(event.key === 'ArrowDown');
+    if (insertRowShortcut) {
+      const index = row + Number(shortcut === hotkeys.rowBelow);
       const id = insertRow(index);
       if (id) void focusCell(index, id, block.columns[column].id);
     } else {
-      const index = column + Number(event.key === 'ArrowRight');
+      const index = column + Number(shortcut === hotkeys.columnRight);
       const id = insertColumn(index);
       if (id) void focusCell(row, block.rows[row].id, id);
     }
@@ -109,6 +128,20 @@
 
   function updateColumn(index: number, patch: { name?: string; type?: ColumnType }) {
     change({ columns: block.columns.map((column, i) => i === index ? { ...column, ...patch } : column) });
+  }
+
+  function deleteColumn(index: number) {
+    if (block.columns.length <= 1) return;
+    const columnId = block.columns[index].id;
+    change({
+      columns: block.columns.filter((column) => column.id !== columnId),
+      rows: block.rows.map((row) => {
+        const formulas = { ...row.formulas };
+        delete formulas[columnId];
+        return { ...row, formulas, cells: row.cells.filter((_, position) => position !== index) };
+      }),
+      titleColumns: index < titleColumns ? titleColumns - 1 : block.titleColumns,
+    });
   }
 
   function updateCount(event: Event & { currentTarget: HTMLInputElement }, key: 'titleColumns' | 'footerRows', max: number) {
@@ -119,10 +152,11 @@
   }
 </script>
 
+{#snippet tools()}
 <div class="table-tools">
   <button class="button secondary" onclick={paste}><ClipboardPlus size={15} /> Paste range</button>
-  <button class="button ghost" title="In a cell: ⌥↑ inserts above, ⌥↓ inserts below" onclick={() => insertRow(dataRows)}><Plus size={15} /> Row</button>
-  <button class="button ghost" title="In a cell: ⌥← inserts left, ⌥→ inserts right" onclick={() => insertColumn(block.columns.length)}><Plus size={15} /> Column</button>
+  <button class="button ghost" title={hotkeyLabel(hotkeys.rowAbove) + ' inserts above, ' + hotkeyLabel(hotkeys.rowBelow) + ' inserts below'} onclick={() => insertRow(dataRows)}><Plus size={15} /> Row</button>
+  <button class="button ghost" title={hotkeyLabel(hotkeys.columnLeft) + ' inserts left, ' + hotkeyLabel(hotkeys.columnRight) + ' inserts right'} onclick={() => insertColumn(block.columns.length)}><Plus size={15} /> Column</button>
   <label class="table-style-label">Style
     <select value={block.style} onchange={(event) => change({ style: event.currentTarget.value as TableStyle })}>
       {#each styles as [value, name]}<option {value}>{name}</option>{/each}
@@ -132,7 +166,14 @@
     onchange={(event) => updateCount(event, 'titleColumns', block.columns.length)} /></label>
   <label class="table-style-label" title="Footer rows are excluded from SQL and charts">Footer rows<input type="number" min="0" max={block.rows.length} value={footerRows}
     onchange={(event) => updateCount(event, 'footerRows', block.rows.length)} /></label>
+  <label class="table-style-label">First row
+    <select value={block.rowIndexBase ?? 1} onchange={(event) => change({ rowIndexBase: event.currentTarget.value === '0' ? 0 : 1 })}>
+      <option value={1}>1</option><option value={0}>0</option>
+    </select>
+  </label>
 </div>
+{/snippet}
+{#if !inline}{@render tools()}{/if}
 {#if issues.length}
   {@const first = issues[0]}
   <div class="table-validation" role="status">
@@ -146,7 +187,12 @@
     <thead><tr><th scope="col" class="row-index">#</th>
       {#each block.columns as column, index (column.id)}
         <th scope="col" class:title-column={index < titleColumns}>
-          <input value={column.name} onchange={(event) => updateColumn(index, { name: event.currentTarget.value })} aria-label={'Column ' + (index + 1) + ' name'} />
+          <div class="column-heading">
+            <span title="Column letter">{columnLetter(index)}</span>
+            <input value={column.name} onchange={(event) => updateColumn(index, { name: event.currentTarget.value })} aria-label={'Column ' + (index + 1) + ' name'} />
+            <button class="icon-button small" disabled={block.columns.length === 1} aria-label={'Delete column ' + column.name}
+              title={'Delete column ' + column.name} onclick={() => deleteColumn(index)}><Trash2 size={12} /></button>
+          </div>
           <select value={column.type} onchange={(event) => updateColumn(index, { type: event.currentTarget.value as ColumnType })} aria-label={column.name + ' type'}>
             {#each types as [value, name]}<option {value}>{name}</option>{/each}
           </select>
@@ -155,23 +201,31 @@
       <th scope="col"><span class="sr-only">Actions</span></th>
     </tr></thead>
     <tbody>{#each block.rows.slice(0, limit) as row, rowIndex (row.id)}
-      <tr class:footer-row={rowIndex >= dataRows}><th scope="row" class="row-index">{rowIndex + 1}</th>
+      <tr class:footer-row={rowIndex >= dataRows}><th scope="row" class="row-index">{rowNumber(block, rowIndex)}</th>
         {#each block.columns as column, columnIndex (column.id)}
           {@const id = cellId(row.id, column.id)}
           {@const issue = issueByCell.get(rowIndex + ':' + columnIndex)}
-          <td class:invalid-cell={Boolean(issue)} class:title-column={columnIndex < titleColumns}><input
+          {@const isFormula = Boolean(row.formulas?.[column.id]) || /^=\s*SUM\b/i.test(row.cells[columnIndex]?.trim() ?? '')}
+          <td class:invalid-cell={Boolean(issue)} class:title-column={columnIndex < titleColumns} class:formula-cell={isFormula}><input
             {id}
-            class:numeric={column.type === 'decimal'}
-            value={row.cells[columnIndex] ?? ''}
-            aria-label={column.name + ' row ' + (rowIndex + 1)}
+            class:numeric={data.columns[columnIndex].type === 'decimal'}
+            value={focusedCell === id ? cellDraft : data.display(rowIndex, columnIndex)}
+            title={isFormula ? cellFormulaText(row, block.columns, columnIndex) : undefined}
+            aria-label={column.name + ' row ' + rowNumber(block, rowIndex)}
             aria-invalid={issue ? true : undefined}
             aria-describedby={issue ? id + '-error' : undefined}
-            oninput={(event) => updateCell(rowIndex, columnIndex, event.currentTarget.value)}
-            onkeydown={(event) => insertWithArrow(event, rowIndex, columnIndex)}
+            onfocus={(event) => {
+              focusedCell = id;
+              cellDraft = cellFormulaText(row, block.columns, columnIndex);
+              if (isFormula) event.currentTarget.value = cellDraft;
+            }}
+            onblur={() => { if (focusedCell === id) focusedCell = ''; }}
+            oninput={(event) => { cellDraft = event.currentTarget.value; updateCell(rowIndex, columnIndex, cellDraft); }}
+            onkeydown={(event) => insertWithShortcut(event, rowIndex, columnIndex)}
             onpaste={(event) => pasteCells(event, rowIndex, columnIndex)}
           />{#if issue}<span id={id + '-error'} class="cell-validation-message">{issue}</span>{/if}</td>
         {/each}
-        <td class="row-actions"><button class="icon-button small" aria-label={'Delete row ' + (rowIndex + 1)} onclick={() => change({
+        <td class="row-actions"><button class="icon-button small" aria-label={'Delete row ' + rowNumber(block, rowIndex)} onclick={() => change({
           rows: block.rows.filter((candidate) => candidate.id !== row.id),
           footerRows: rowIndex >= dataRows ? footerRows - 1 : block.footerRows,
         })}><Trash2 size={13} /></button></td>
@@ -180,6 +234,7 @@
   </table>
   {#if !block.rows.length}<p class="grid-empty">Add a row or paste a range to begin.</p>{/if}
 </div>
+{#if inline}{@render tools()}{/if}
 <div class="table-count"><span>{countLabel(block.rows.length, 'row')} · {countLabel(block.columns.length, 'column')}</span>
   {#if block.rows.length > limit}<button class="text-button" onclick={() => limit += 100}>Show more</button>{/if}
 </div>

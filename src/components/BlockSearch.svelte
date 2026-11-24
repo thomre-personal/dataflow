@@ -3,9 +3,10 @@
   import { kinds } from '../lib/workspace';
   import type { Block, BlockKind } from '../lib/workspace';
 
-  let { blocks, icons, onPick }: {
+  let { blocks, icons, shortcut, onPick }: {
     blocks: Block[];
     icons: Record<BlockKind, typeof Search>;
+    shortcut: string;
     onPick: (id: string) => void;
   } = $props();
 
@@ -63,7 +64,7 @@
       aria-activedescendant={expanded && active ? id + '-' + active.id : undefined}
       onfocus={() => open = true} onclick={() => open = true} onkeydown={keyboard}
       oninput={(event) => { query = event.currentTarget.value; activeIndex = 0; open = true; }} />
-    <kbd aria-hidden="true">⌘ K</kbd>
+    <kbd aria-hidden="true">{shortcut}</kbd>
   </div>
   {#if expanded}
     <div class="block-search-dropdown">

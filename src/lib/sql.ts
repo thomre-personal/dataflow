@@ -3,9 +3,9 @@ import wasm from '@duckdb/duckdb-wasm/dist/duckdb-mvp.wasm?url';
 import workerUrl from '@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js?url';
 import wasmEh from '@duckdb/duckdb-wasm/dist/duckdb-eh.wasm?url';
 import workerEhUrl from '@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js?url';
-import { describeCellIssue, validateCell, MAX_ROWS } from './clipboard';
-import { dataRowCount } from './workspace';
-import type { Block, ColumnType, Result, TableBlock, Workspace } from './workspace';
+import { MAX_ROWS } from './clipboard';
+import { tableResult } from './format';
+import type { Block, Result, TableBlock, ValueType, Workspace } from './workspace';
 
 const bundles: duckdb.DuckDBBundles = {
   mvp: { mainModule: wasm, mainWorker: workerUrl },
@@ -57,7 +57,7 @@ function selectSql(sql: string): string {
   return sql.slice(0, end).trim();
 }
 
-function columnType(sqlType: string): ColumnType {
+function columnType(sqlType: string): ValueType {
   if (/^DATE$/i.test(sqlType)) return 'date';
   if (/^BOOLEAN$/i.test(sqlType)) return 'boolean';
   if (/^(U?(?:TINY|SMALL|BIG|HUGE)?INT(?:EGER)?|DECIMAL|NUMERIC|DOUBLE|FLOAT|REAL)\b/i.test(sqlType)) return 'decimal';
@@ -66,7 +66,8 @@ function columnType(sqlType: string): ColumnType {
 
 async function createSource(connection: duckdb.AsyncDuckDBConnection, name: string, table: TableBlock) {
   const names = new Set<string>();
-  const columns = table.columns.map((column) => {
+  const result = tableResult(table);
+  const columns = result.columns.map((column) => {
     const name = column.name.trim();
     const key = name.toLowerCase();
     if (!name || names.has(key)) throw new Error(table.title + ' has empty or duplicate column names.');
@@ -75,10 +76,8 @@ async function createSource(connection: duckdb.AsyncDuckDBConnection, name: stri
   });
   const scales = columns.map(() => 0);
   const integralWidths = columns.map(() => 0);
-  const values = table.rows.slice(0, dataRowCount(table)).map((row, rowIndex) => '(' + columns.map((column, index) => {
-    const cell = validateCell(row.cells[index] ?? '', column.type, table.numberFormat);
-    if (cell.message !== undefined) throw new Error(describeCellIssue(table, { row: rowIndex, column: index, message: cell.message }));
-    const value = cell.value;
+  const values = result.rows.map((row) => '(' + columns.map((column, index) => {
+    const value = row[index];
     if (value === null) return 'NULL';
     if (column.type === 'decimal') {
       const [integer, fraction = ''] = value.replace(/^-/, '').split('.');
