@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { importGrid, parseDate, parseDecimal, parseDelimited } from '../src/lib/clipboard.ts';
-import { bindImportedFormulas, cellFormulaText, invalidTableCells, tableData } from '../src/lib/table-data.ts';
+import { bindImportedFormulas, cellFormulaText } from '../src/lib/formulas.ts';
+import { invalidTableCells, tableData } from '../src/lib/table-data.ts';
 import { addLink, canConnect, createBlock, createWorkspace } from '../src/lib/workspace.ts';
 
 test('preserves quoted tabs and newlines, blank cells, and CRLF in spreadsheet ranges', () => {

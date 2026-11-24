@@ -6,8 +6,16 @@ export type TableStyle = 'plain' | 'banded' | 'emphasis' | 'grid';
 export type Position = { x: number; y: number };
 
 export type Column = { id: string; name: string; type: ColumnType };
-export type SumFormula = { columnId: string; reference: 'implicit' | 'name' | 'letter' };
-export type Row = { id: string; cells: string[]; formulas?: Record<string, SumFormula> };
+export type FormulaColumn = { columnId: string; reference: 'implicit' | 'name' | 'letter' };
+export type OrderedFunction = 'MIN' | 'MAX' | 'MEDIAN';
+export type Formula =
+  | { name: 'SUM' | 'AVERAGE' | 'AVG' | OrderedFunction; source: FormulaColumn }
+  | { name: 'COUNT'; source: FormulaColumn; distinct?: boolean }
+  | { name: 'SUMIF'; condition: FormulaColumn; criterion: string; source?: FormulaColumn }
+  | { name: 'COUNTIF'; condition: FormulaColumn; criterion: string }
+  | { name: 'CONCAT'; parts: (FormulaColumn | { literal: string })[] };
+// Earlier workspaces stored SUM as a column reference without a function name.
+export type Row = { id: string; cells: string[]; formulas?: Record<string, Formula | FormulaColumn> };
 type BlockBase = { id: string; title: string; position: Position; parentId?: string };
 type ExpandableBlock = { expanded?: boolean; expandedSize?: { width: number; height: number } };
 

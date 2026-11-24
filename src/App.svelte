@@ -21,7 +21,8 @@
   import { absolutePosition, addLink, canConnect, canGroup, createBlock, createWorkspace, kinds, related, sqlAlias, starterWorkspace } from './lib/workspace';
   import type { Block, BlockKind, ChartBlock, GroupBlock, Library, Link, NumberFormat, Position, Result, SqlBlock, Workspace } from './lib/workspace';
   import { importGrid, parseDelimited } from './lib/clipboard';
-  import { bindImportedFormulas, describeCellIssue, invalidTableCells, tableData } from './lib/table-data';
+  import { bindImportedFormulas } from './lib/formulas';
+  import { describeCellIssue, invalidTableCells, tableData } from './lib/table-data';
   import { chartSeries, countLabel, tablePreview, tableResult } from './lib/format';
   import { loadLibrary, saveLibrary } from './lib/storage';
   import { defaultHotkeys, defaultPreferences, eventHotkey, hotkeyLabel, isMac, loadPreferences } from './lib/preferences';

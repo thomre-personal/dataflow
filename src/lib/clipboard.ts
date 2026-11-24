@@ -1,5 +1,6 @@
 import type { Column, NumberFormat, Row, ValueType } from './workspace.ts';
 import { columnLetter, newId } from './workspace.ts';
+import { isFormulaEntry } from './formulas.ts';
 
 export const MAX_ROWS = 10_000;
 export const MAX_COLUMNS = 80;
@@ -148,7 +149,8 @@ export function importGrid(grid: string[][], header: boolean, numberFormat: Numb
     used.add(name.toLowerCase());
     const previous = header ? existing.find((column) => column.name.trim().toLowerCase() === name.toLowerCase()) : existing[index];
     const values = body.map((row) => row[index] ?? '');
-    return { id: previous?.id ?? newId(), name, type: previous?.type ?? (values.some((value) => /^=\s*SUM\b/i.test(value.trim())) ? 'auto' : inferType(values, numberFormat)) };
+    const needsEvaluation = values.some((value) => value.startsWith("'") || isFormulaEntry(value));
+    return { id: previous?.id ?? newId(), name, type: previous?.type ?? (needsEvaluation ? 'auto' : inferType(values, numberFormat)) };
   });
   return { columns, rows: body.map((cells) => ({ id: newId(), cells })) };
 }

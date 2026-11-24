@@ -450,3 +450,45 @@ test('calculates table sums, keeps formula references after rename, and handles 
   const canvasTable = canvasBlock(page, 'Untitled table');
   await expect(canvasTable.getByRole('textbox', { name: 'B row 0', exact: true })).toHaveValue('0.3');
 });
+
+test('suggests formulas in both table editors and uses Return to accept suggestions and cells', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New workspace', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Workspace name' }).fill('Suggested formulas');
+  await page.getByRole('button', { name: 'Create workspace' }).click();
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Untitled table' });
+  await dialog.getByRole('button', { name: 'Column', exact: true }).click();
+  const first = dialog.getByRole('textbox', { name: 'A row 1', exact: true });
+  await first.fill("'=");
+  await expect(page.getByRole('listbox', { name: 'Formula suggestions' })).toHaveCount(0);
+  await first.press('Enter');
+  await expect(first).toHaveValue('=');
+  await expect(first).not.toBeFocused();
+
+  const second = dialog.getByRole('textbox', { name: 'B row 1', exact: true });
+  await second.fill('=');
+  const suggestions = page.getByRole('listbox', { name: 'Formula suggestions' });
+  await expect(suggestions.getByRole('option', { name: /^MEDIAN/ })).toBeVisible();
+  await second.fill('=CON');
+  await expect(suggestions.getByRole('option')).toHaveCount(1);
+  await second.press('Enter');
+  await expect(second).toHaveValue('=CONCAT()');
+  await expect(second).toBeFocused();
+  await second.fill('=CONCAT("Prefix#", A, "Suffix")');
+  await second.press('Enter');
+  await expect(second).toHaveValue('Prefix#=Suffix');
+  await dialog.getByRole('button', { name: 'Done' }).click();
+
+  const inline = canvasBlock(page, 'Untitled table').getByRole('textbox', { name: 'B row 1', exact: true });
+  await inline.fill('=S');
+  await expect(suggestions.getByRole('option')).toHaveCount(2);
+  await inline.press('ArrowDown');
+  await expect(suggestions.getByRole('option', { name: /^SUMIF/ })).toHaveAttribute('aria-selected', 'true');
+  await suggestions.getByRole('option', { name: /^SUMIF/ }).click();
+  await expect(inline).toHaveValue('=SUMIF()');
+  await expect(inline).toBeFocused();
+  await inline.fill('=COUNT(DISTINCT(A))');
+  await inline.press('Enter');
+  await expect(inline).toHaveValue('1');
+});

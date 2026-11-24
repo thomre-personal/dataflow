@@ -373,6 +373,10 @@ dialog::backdrop { background: #151f386d; backdrop-filter: blur(2px); }
 .editor-grid .column-heading input { min-width: 80px; min-height: 25px; padding: 3px; }
 .editor-grid .column-heading button { width: 18px; height: 22px; }
 .editor-grid .formula-cell input { color: var(--accent); }
+.formula-suggestions { position: fixed; inset: auto; margin: 0; padding: 4px; max-height: min(260px, 42dvh); overflow: auto;
+  color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); }
+.formula-suggestions button { display: block; width: 100%; padding: 6px 8px; border-radius: 5px; text-align: left; font-size: 11px; }
+.formula-suggestions button:hover, .formula-suggestions button[aria-selected="true"] { color: var(--accent); background: var(--accent-soft); }
 .editor-grid th select { color: var(--muted); font-size: 10px; padding-bottom: 6px; }
 .editor-grid .row-index { min-width: 35px; width: 35px; text-align: center; padding: 0 4px; color: var(--subtle); font-size: 11px; }
 .editor-grid td input { min-width: 118px; width: 100%; padding: 6px 8px; border: 0; background: transparent; color: var(--text); }

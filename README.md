@@ -41,6 +41,19 @@ New columns start with letter names and the **Auto** type. Auto uses the data ro
 
 Enter `=SUM()` in a footer cell to total its own column. Enter `=SUM(Amount)` in another column to total `Amount`. You can use a column letter such as `=SUM(A)` as well. A matching column name takes precedence over a letter. Sums include data rows and skip footer rows. Click a calculated cell to see its formula. Renaming a column updates formulas that refer to its name.
 
+Type `=` to see formula suggestions. Use the arrow keys and **Return** to choose one. Press **Return** again to confirm the cell once you have finished typing. Start a value with an apostrophe to treat it as text. For example, `'=` displays `=`.
+
+| Formula | Example |
+| --- | --- |
+| `AVERAGE` or `AVG` | `=AVG(Amount)` averages the numbers in a column. |
+| `SUMIF` | `=SUMIF(Category, "Groceries", Amount)` adds the amounts for matching categories. |
+| `COUNTIF` | `=COUNTIF(Status, "Open")` counts matching rows. Numeric criteria such as `">100"` work too. |
+| `COUNT` and `DISTINCT` | `=COUNT(DISTINCT(Category))` counts unique nonempty categories. Text comparisons ignore case. |
+| `MIN`, `MAX`, and `MEDIAN` | `=MAX(Date)` finds the latest date. These functions also work with numbers. If a date median falls between days, it returns the earlier day. |
+| `CONCAT` | `=CONCAT("Order #", OrderID, " / ", Status)` joins literal text and values from the same row. Use two double quotes for a quotation mark inside a literal. |
+
+Column totals, averages, counts, and date aggregates use data rows and skip footer rows. `CONCAT` uses the row that contains the formula.
+
 Date, number, and Boolean columns validate their cells as you edit or paste. Empty cells are allowed. DataFlow shows invalid values so you can correct them before running a query or plotting the table.
 
 The app saves drafts and canvas positions in IndexedDB. DuckDB runs in a local browser worker. A separate browser profile or address has separate storage. Clearing that storage deletes its local workspaces.

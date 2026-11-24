@@ -4,10 +4,12 @@
   import { columnLetter, dataRowCount, newId, rowNumber } from '../lib/workspace';
   import { countLabel } from '../lib/format';
   import { MAX_COLUMNS, MAX_ROWS, parseDelimited } from '../lib/clipboard';
-  import { bindCellFormula, cellFormulaText, describeCellIssue, invalidTableCells, tableData } from '../lib/table-data';
+  import { bindCellFormula, cellFormulaText, isFormulaEntry, suggestFunctions } from '../lib/formulas';
+  import { describeCellIssue, invalidTableCells, tableData } from '../lib/table-data';
   import { eventHotkey, hotkeyLabel } from '../lib/preferences';
   import type { Hotkeys } from '../lib/preferences';
-  import type { ColumnType, TableBlock, TableStyle } from '../lib/workspace';
+  import type { ColumnType, Formula, TableBlock, TableStyle } from '../lib/workspace';
+  import FormulaSuggestions from './FormulaSuggestions.svelte';
 
   let { block, hotkeys, change, paste, error, inline = false }: {
     block: TableBlock;
@@ -22,15 +24,20 @@
   const styles: [TableStyle, string][] = [['plain', 'Plain'], ['banded', 'Banded'], ['emphasis', 'Emphasis'], ['grid', 'Grid']];
   let limit = $state(60);
   let data = $derived(tableData(block));
-  let issues = $derived([...invalidTableCells(block, data)]);
-  let issueByCell = $derived(new Map(issues.map((issue) => [issue.row + ':' + issue.column, issue.message])));
   let dataRows = $derived(dataRowCount(block));
   let titleColumns = $derived(block.titleColumns ?? 0);
   let footerRows = $derived(block.footerRows ?? 0);
-  let focusedCell = $state('');
+  let editing = $state<{ id: string; input: HTMLInputElement; row: number; column: number }>();
   let cellDraft = $state('');
+  let hideSuggestions = $state(false);
+  let activeSuggestion = $state(0);
+  let suggestions = $derived(editing && !hideSuggestions ? suggestFunctions(cellDraft) : []);
+  let issues = $derived([...invalidTableCells(block, data)].filter((issue) =>
+    issue.row !== editing?.row || issue.column !== editing.column || !isFormulaEntry(cellDraft)));
+  let issueByCell = $derived(new Map(issues.map((issue) => [issue.row + ':' + issue.column, issue.message])));
 
   const editorId = $props.id();
+  const suggestionsId = editorId + '-formulas';
   const cellId = (rowId: string, columnId: string) => editorId + '-cell-' + rowId + '-' + columnId;
 
   async function focusCell(rowIndex: number, rowId: string, columnId: string) {
@@ -78,7 +85,7 @@
         };
       });
       change({ columns, rows, footerRows: intoFooter ? footerRows + addedRows : block.footerRows });
-      if (focusedCell) cellDraft = cellFormulaText(rows[firstRow], columns, firstColumn);
+      if (editing) cellDraft = cellFormulaText(rows[firstRow], columns, firstColumn);
     } catch (problem) {
       error(problem instanceof Error ? problem.message : String(problem));
     }
@@ -123,6 +130,33 @@
       const index = column + Number(shortcut === hotkeys.columnRight);
       const id = insertColumn(index);
       if (id) void focusCell(row, block.rows[row].id, id);
+    }
+  }
+
+  function completeFormula(name: Formula['name']) {
+    if (!editing) return;
+    const { input, row, column } = editing;
+    cellDraft = '=' + name + '()';
+    input.value = cellDraft;
+    updateCell(row, column, cellDraft);
+    input.setSelectionRange(cellDraft.length - 1, cellDraft.length - 1);
+  }
+
+  function cellKeyboard(event: KeyboardEvent & { currentTarget: HTMLInputElement }, row: number, column: number) {
+    if (event.isComposing) return;
+    const plain = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+    if (plain && suggestions.length && ['ArrowDown', 'ArrowUp', 'Escape', 'Enter', 'Tab'].includes(event.key)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.key === 'Escape') hideSuggestions = true;
+      else if (event.key === 'Enter' || event.key === 'Tab') completeFormula(suggestions[activeSuggestion]);
+      else activeSuggestion = (activeSuggestion + (event.key === 'ArrowDown' ? 1 : suggestions.length - 1)) % suggestions.length;
+    } else if (plain && event.key === 'Enter') {
+      event.preventDefault();
+      event.stopPropagation();
+      event.currentTarget.blur();
+    } else {
+      insertWithShortcut(event, row, column);
     }
   }
 
@@ -205,23 +239,38 @@
         {#each block.columns as column, columnIndex (column.id)}
           {@const id = cellId(row.id, column.id)}
           {@const issue = issueByCell.get(rowIndex + ':' + columnIndex)}
-          {@const isFormula = Boolean(row.formulas?.[column.id]) || /^=\s*SUM\b/i.test(row.cells[columnIndex]?.trim() ?? '')}
+          {@const isFormula = Boolean(row.formulas?.[column.id]) || isFormulaEntry(row.cells[columnIndex] ?? '')}
+          {@const showMenu = editing?.id === id && suggestions.length > 0}
           <td class:invalid-cell={Boolean(issue)} class:title-column={columnIndex < titleColumns} class:formula-cell={isFormula}><input
             {id}
             class:numeric={data.columns[columnIndex].type === 'decimal'}
-            value={focusedCell === id ? cellDraft : data.display(rowIndex, columnIndex)}
+            value={editing?.id === id ? cellDraft : data.display(rowIndex, columnIndex)}
             title={isFormula ? cellFormulaText(row, block.columns, columnIndex) : undefined}
             aria-label={column.name + ' row ' + rowNumber(block, rowIndex)}
             aria-invalid={issue ? true : undefined}
             aria-describedby={issue ? id + '-error' : undefined}
+            aria-autocomplete="list"
+            aria-controls={showMenu ? suggestionsId : undefined}
+            aria-activedescendant={showMenu ? suggestionsId + '-' + suggestions[activeSuggestion] : undefined}
+            autocomplete="off"
             onfocus={(event) => {
-              focusedCell = id;
+              editing = { id, input: event.currentTarget, row: rowIndex, column: columnIndex };
               cellDraft = cellFormulaText(row, block.columns, columnIndex);
-              if (isFormula) event.currentTarget.value = cellDraft;
+              hideSuggestions = false;
+              activeSuggestion = 0;
+              if (event.currentTarget.value !== cellDraft) {
+                event.currentTarget.value = cellDraft;
+                event.currentTarget.select();
+              }
             }}
-            onblur={() => { if (focusedCell === id) focusedCell = ''; }}
-            oninput={(event) => { cellDraft = event.currentTarget.value; updateCell(rowIndex, columnIndex, cellDraft); }}
-            onkeydown={(event) => insertWithShortcut(event, rowIndex, columnIndex)}
+            onblur={() => { if (editing?.id === id) editing = undefined; }}
+            oninput={(event) => {
+              cellDraft = event.currentTarget.value;
+              hideSuggestions = false;
+              activeSuggestion = 0;
+              updateCell(rowIndex, columnIndex, cellDraft);
+            }}
+            onkeydown={(event) => cellKeyboard(event, rowIndex, columnIndex)}
             onpaste={(event) => pasteCells(event, rowIndex, columnIndex)}
           />{#if issue}<span id={id + '-error'} class="cell-validation-message">{issue}</span>{/if}</td>
         {/each}
@@ -234,6 +283,9 @@
   </table>
   {#if !block.rows.length}<p class="grid-empty">Add a row or paste a range to begin.</p>{/if}
 </div>
+{#if editing && suggestions.length}
+  <FormulaSuggestions anchor={editing.input} id={suggestionsId} choices={suggestions} active={suggestions[activeSuggestion]} pick={completeFormula} />
+{/if}
 {#if inline}{@render tools()}{/if}
 <div class="table-count"><span>{countLabel(block.rows.length, 'row')} · {countLabel(block.columns.length, 'column')}</span>
   {#if block.rows.length > limit}<button class="text-button" onclick={() => limit += 100}>Show more</button>{/if}
