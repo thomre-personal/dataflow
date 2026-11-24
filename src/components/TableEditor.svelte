@@ -35,7 +35,7 @@
   let dataRows = $derived(dataRowCount(block));
   let titleColumns = $derived(block.titleColumns ?? 0);
   let footerRows = $derived(block.footerRows ?? 0);
-  let editing = $state<{ id: string; input: HTMLInputElement; row: number; column: number }>();
+  let editing = $state<{ id: string; input: HTMLTextAreaElement; row: number; column: number }>();
   let cellDraft = $state('');
   let hideSuggestions = $state(false);
   let activeSuggestion = $state(0);
@@ -150,8 +150,13 @@
     input.setSelectionRange(cellDraft.length - 1, cellDraft.length - 1);
   }
 
-  function cellKeyboard(event: KeyboardEvent & { currentTarget: HTMLInputElement }, row: number, column: number) {
+  function cellKeyboard(event: KeyboardEvent & { currentTarget: HTMLTextAreaElement }, row: number, column: number) {
     if (event.isComposing) return;
+    const shiftOnly = event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey;
+    if (shiftOnly && event.key === 'Enter') {
+      event.stopPropagation();
+      return;
+    }
     const plain = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
     if (plain && suggestions.length && ['ArrowDown', 'ArrowUp', 'Escape', 'Enter', 'Tab'].includes(event.key)) {
       event.preventDefault();
@@ -249,12 +254,14 @@
           {@const issue = issueByCell.get(rowIndex + ':' + columnIndex)}
           {@const isFormula = Boolean(row.formulas?.[column.id]) || isFormulaEntry(row.cells[columnIndex] ?? '')}
           {@const showMenu = editing?.id === id && suggestions.length > 0}
-          <td class:invalid-cell={Boolean(issue)} class:title-column={columnIndex < titleColumns} class:formula-cell={isFormula}><input
+          {@const value = editing?.id === id ? cellDraft : data.display(rowIndex, columnIndex)}
+          <td class:invalid-cell={Boolean(issue)} class:title-column={columnIndex < titleColumns} class:formula-cell={isFormula}><textarea
             {id}
             data-table-cell=""
             class:active-cell={activeCell?.rowId === row.id && activeCell.columnId === column.id}
             class:numeric={data.columns[columnIndex].type === 'decimal'}
-            value={editing?.id === id ? cellDraft : data.display(rowIndex, columnIndex)}
+            {value}
+            rows={Math.min(8, value.split(/\r\n?|\n/).length)}
             title={isFormula ? cellFormulaText(row, block.columns, columnIndex, inputs) : undefined}
             aria-label={column.name + ' row ' + rowNumber(block, rowIndex)}
             aria-invalid={issue ? true : undefined}
@@ -283,7 +290,7 @@
             }}
             onkeydown={(event) => cellKeyboard(event, rowIndex, columnIndex)}
             onpaste={(event) => pasteCells(event, rowIndex, columnIndex)}
-          />{#if issue}<span id={id + '-error'} class="cell-validation-message">{issue}</span>{/if}</td>
+          ></textarea>{#if issue}<span id={id + '-error'} class="cell-validation-message">{issue}</span>{/if}</td>
         {/each}
         <td class="row-actions"><button class="icon-button small" aria-label={'Delete row ' + rowNumber(block, rowIndex)} onclick={() => change({
           rows: block.rows.filter((candidate) => candidate.id !== row.id),

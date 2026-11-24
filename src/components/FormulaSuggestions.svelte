@@ -3,7 +3,7 @@
   import type { Formula } from '../lib/workspace';
 
   let { anchor, id, choices, active, pick }: {
-    anchor: HTMLInputElement;
+    anchor: HTMLTextAreaElement;
     id: string;
     choices: Formula['name'][];
     active: Formula['name'];
@@ -30,6 +30,7 @@
     place();
     const observer = new ResizeObserver(place);
     observer.observe(element);
+    observer.observe(input);
     window.addEventListener('scroll', place, true);
     window.addEventListener('resize', place);
     return () => {

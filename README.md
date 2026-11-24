@@ -35,6 +35,8 @@ Use **Undo** and **Redo** in the top bar to step through workspace changes durin
 
 Open **Settings** from the gear in the top right to choose Light, Dark, or Auto, change keyboard shortcuts, and choose whether a shortcut asks before deleting a block.
 
+Press **Shift+Enter** while editing a cell to insert a line break. Press **Enter** to confirm the cell.
+
 In the table editor, select a cell and press **Option+↑** or **Option+↓** to insert a row above or below. Press **Option+←** or **Option+→** to insert a column to the left or right. Use **Alt** on a non-Mac keyboard.
 
 Set **Title columns** to highlight columns on the left. Set **Footer rows** to keep summary rows at the bottom. Footer cells can contain text or formulas in any column. DataFlow still checks for formula errors. SQL queries and charts include title columns and skip footer rows.

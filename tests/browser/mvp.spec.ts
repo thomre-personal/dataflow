@@ -602,6 +602,38 @@ test('suggests formulas in both table editors and uses Return to accept suggesti
   await expect(inline).toHaveValue('DISTINCT:1');
 });
 
+test('inserts and saves line breaks with Shift+Enter in both table editors', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New workspace', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Workspace name' }).fill('Multiline notes');
+  await page.getByRole('button', { name: 'Create workspace' }).click();
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Untitled table' });
+  const first = dialog.getByRole('textbox', { name: 'A row 1', exact: true });
+  await first.fill('FirstSecond');
+  await first.evaluate((cell: HTMLTextAreaElement) => cell.setSelectionRange(5, 5));
+  await first.press('Shift+Enter');
+  await expect(first).toHaveValue('First\nSecond');
+  await expect(first).toBeFocused();
+  await first.press('Enter');
+  await expect(first).not.toBeFocused();
+  await expect(first).toHaveAttribute('rows', '2');
+  await expect(dialog.getByRole('textbox', { name: 'A row 2', exact: true })).toHaveValue('');
+  await dialog.getByRole('button', { name: 'Done' }).click();
+
+  const table = canvasBlock(page, 'Untitled table');
+  const inline = table.getByRole('textbox', { name: 'B row 1', exact: true });
+  await inline.fill('Third');
+  await inline.press('Shift+Enter');
+  await page.keyboard.insertText('Fourth');
+  await inline.press('Enter');
+  await expect(inline).toHaveValue('Third\nFourth');
+  await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(table.getByRole('textbox', { name: 'A row 1', exact: true })).toHaveValue('First\nSecond');
+  await expect(inline).toHaveValue('Third\nFourth');
+});
+
 test('shows nested functions and searchable documentation for the active cell', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New workspace', exact: true }).click();
