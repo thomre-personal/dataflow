@@ -25,7 +25,7 @@
   import { importGrid, parseDelimited } from './lib/clipboard';
   import { bindTableFormulas, bindWorkspaceFormulas, cellFormulaText, isFormulaEntry } from './lib/formulas';
   import { describeCellIssue, invalidTableCells, tableData } from './lib/table-data';
-  import { chartSeries, countLabel, tablePreview, tableResult } from './lib/format';
+  import { chartSeries, countLabel, tableResult } from './lib/format';
   import { loadLibrary, loadWorkspaceFiles, saveLibrary } from './lib/storage';
   import {
     createWorkspaceFile, documentHash, downloadWorkspaceDocument, parseWorkspaceDocument, pickWorkspaceFile,
@@ -1263,7 +1263,6 @@
             {/if}
             <div class="inspector-body">
               <div class="result-summary"><span>{countLabel(block.rows.length, 'row')} <span class="separator">·</span> {countLabel(block.columns.length, 'column')}</span></div>
-              <ResultGrid result={tablePreview(block, 5, workspace)} limit={5} />
               {#if issue}<p class="inline-error"><CircleAlert size={15} />{issue}</p>{/if}
               <button class="button primary full-width" onclick={() => modal = 'table'}><Table2 size={15} /> Edit table</button>
             </div>
