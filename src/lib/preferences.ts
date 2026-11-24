@@ -9,10 +9,13 @@ export type Hotkeys = typeof defaultHotkeys;
 export type Preferences = {
   theme: 'light' | 'dark' | 'auto';
   confirmHotkeyDelete: boolean;
+  autoRefreshComputed: boolean;
   hotkeys: Hotkeys;
 };
 
-export const defaultPreferences: Preferences = { theme: 'auto', confirmHotkeyDelete: true, hotkeys: defaultHotkeys };
+export const defaultPreferences: Preferences = {
+  theme: 'auto', confirmHotkeyDelete: true, autoRefreshComputed: true, hotkeys: defaultHotkeys,
+};
 
 export const isMac = () => /Mac|iPhone|iPad/.test(navigator.platform);
 
@@ -41,6 +44,7 @@ export function loadPreferences(): Preferences {
     return {
       theme: saved?.theme === 'light' || saved?.theme === 'dark' ? saved.theme : 'auto',
       confirmHotkeyDelete: saved?.confirmHotkeyDelete !== false,
+      autoRefreshComputed: saved?.autoRefreshComputed !== false,
       hotkeys: Object.fromEntries(Object.entries(defaultHotkeys).map(([action, shortcut]) => {
         const value = saved?.hotkeys?.[action as HotkeyAction];
         return [action, typeof value === 'string' && value ? value : shortcut];

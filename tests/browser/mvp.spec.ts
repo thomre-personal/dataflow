@@ -582,6 +582,75 @@ test('saves appearance and shortcut preferences and can delete without a hotkey 
   await expect(shortcut).toHaveText('Delete');
 });
 
+test('refreshes dependent queries and charts by default and keeps previous results when paused', async ({ page }) => {
+  await page.goto('/');
+  const sidebar = page.getByRole('complementary', { name: 'Workspace blocks' });
+  const inspector = page.getByRole('complementary', { name: 'Block inspector' });
+  const settingsButton = page.getByRole('button', { name: 'Settings', exact: true });
+  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+  const automatic = settings.getByRole('checkbox', { name: 'Automatically refresh computed blocks when inputs change' });
+  await settingsButton.click();
+  await expect(automatic).toBeChecked();
+  await settings.getByRole('button', { name: 'Done' }).click();
+  await expect(canvasBlock(page, 'Spending by month').getByRole('img', { name: 'total chart' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Add SQL query', exact: true }).click();
+  const sql = page.getByRole('dialog', { name: 'Edit SQL' });
+  await sql.getByRole('combobox', { name: 'Connect input' }).selectOption({ label: 'Monthly totals' });
+  await sql.getByRole('textbox', { name: 'SQL code' }).fill("SELECT total FROM monthly_totals WHERE month = '2026-01';");
+  await sql.getByRole('button', { name: 'Save and run' }).click();
+  await expect(inspector.getByRole('cell', { name: '1080.20', exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Add chart', exact: true }).click();
+  const chart = page.getByRole('dialog', { name: 'Untitled chart' });
+  await chart.getByRole('combobox', { name: 'Source' }).selectOption({ label: 'Transactions' });
+  await expect(chart.getByRole('img', { name: 'Amount chart' })).toBeVisible();
+  await chart.getByRole('button', { name: 'Done' }).click();
+  const tableChart = canvasBlock(page, 'Untitled chart');
+  const selectBlock = (name: string) => sidebar.getByRole('button', { name, exact: true }).click();
+  const seeQuery = async (name: string, value: string) => {
+    await selectBlock(name);
+    await inspector.getByRole('button', { name: 'Data', exact: true }).click();
+    await expect(inspector.getByRole('cell', { name: value, exact: true })).toBeVisible();
+  };
+  const editAmount = async (...values: string[]) => {
+    await selectBlock('Transactions');
+    await inspector.getByRole('button', { name: 'Edit table', exact: true }).click();
+    const table = page.getByRole('dialog', { name: 'Transactions' });
+    for (const value of values) await table.getByRole('textbox', { name: 'Amount row 1', exact: true }).fill(value);
+    await table.getByRole('button', { name: 'Done' }).click();
+  };
+
+  await editAmount('900.00', '950.00');
+  await seeQuery('Untitled SQL query', '1180.20');
+  await expect(tableChart.getByText('Previous data', { exact: false })).toHaveCount(0);
+  await settingsButton.click();
+  await automatic.uncheck();
+  await settings.getByRole('button', { name: 'Done' }).click();
+  await editAmount('1000.00');
+  await seeQuery('Monthly totals', '1180.20');
+  await expect(inspector.getByText('Previous result', { exact: true })).toBeVisible();
+  await expect(tableChart.getByText('Previous data', { exact: false })).toBeVisible();
+  await inspector.getByRole('button', { name: 'Run query', exact: true }).click();
+  await expect(inspector.getByRole('cell', { name: '1230.20', exact: true })).toBeVisible();
+  await selectBlock('Untitled chart');
+  await inspector.getByRole('button', { name: 'Refresh chart', exact: true }).click();
+  await expect(tableChart.getByText('Previous data', { exact: false })).toHaveCount(0);
+
+  await settingsButton.click();
+  await automatic.check();
+  await settings.getByRole('button', { name: 'Done' }).click();
+  await seeQuery('Untitled SQL query', '1230.20');
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await seeQuery('Untitled SQL query', '1180.20');
+  await settingsButton.click();
+  await automatic.uncheck();
+  await settings.getByRole('button', { name: 'Done' }).click();
+  await page.reload();
+  await settingsButton.click();
+  await expect(automatic).not.toBeChecked();
+});
+
 test('calculates table sums, keeps formula references after rename, and handles deletion and zero-based rows', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New workspace', exact: true }).click();
@@ -857,6 +926,52 @@ test('formats cells and pastes a copied style into a range without changing its 
   const styled = locked.getByRole('cell', { name: 'One', exact: true });
   await expect(styled).toHaveCSS('background-color', 'rgb(240, 216, 149)');
   await expect(styled).toHaveCSS('font-size', '25px');
+});
+
+test('copies the individual cell styles of a row or column without changing formulas or values', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'platform', { get: () => 'MacIntel' }));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const table = page.getByRole('dialog', { name: 'Untitled table', exact: true });
+  await table.getByRole('button', { name: 'Column', exact: true }).click();
+  await table.getByRole('button', { name: 'Row', exact: true }).click();
+  const cell = (name: string) => table.getByRole('textbox', { name, exact: true });
+  const background = (name: string) => cell(name).locator('xpath=ancestor::td');
+  const setBackground = async (name: string, color: string) => {
+    await cell(name).click();
+    await table.getByRole('button', { name: 'Background color', exact: true }).click();
+    const palette = page.getByRole('dialog', { name: 'Background color', exact: true });
+    await palette.getByLabel('Custom color').fill(color);
+    await palette.getByRole('button', { name: 'Apply', exact: true }).click();
+  };
+  await cell('B row 2').fill('=CONCAT("Keep", " me")');
+  await cell('B row 2').press('Enter');
+  await cell('C row 2').fill('Keep this too');
+  await setBackground('A row 1', '#c33442');
+  await setBackground('B row 1', '#3355ee');
+  await cell('C row 1').click();
+  await table.getByRole('button', { name: 'Bold', exact: true }).click();
+  await cell('B row 3').click();
+  await table.getByRole('button', { name: 'Italic', exact: true }).click();
+
+  await table.getByRole('button', { name: 'Select row 1', exact: true }).click();
+  await page.keyboard.press('Alt+Meta+c');
+  await table.getByRole('button', { name: 'Select row 2', exact: true }).click();
+  await page.keyboard.press('Alt+Meta+v');
+  await expect(background('A row 2')).toHaveCSS('background-color', 'rgb(195, 52, 66)');
+  await expect(background('B row 2')).toHaveCSS('background-color', 'rgb(51, 85, 238)');
+  await expect(cell('C row 2')).toHaveCSS('font-weight', '700');
+  await expect(cell('B row 2')).toHaveValue('Keep me');
+  await expect(cell('C row 2')).toHaveValue('Keep this too');
+
+  await columnHeader(table, 'A').click();
+  await table.getByRole('button', { name: 'Copy column styles', exact: true }).click();
+  await columnHeader(table, 'B').click();
+  await table.getByRole('button', { name: 'Paste column styles', exact: true }).click();
+  await expect(background('B row 1')).toHaveCSS('background-color', 'rgb(195, 52, 66)');
+  await expect(background('B row 2')).toHaveCSS('background-color', 'rgb(195, 52, 66)');
+  await expect(cell('B row 3')).toHaveCSS('font-style', 'normal');
+  await expect(cell('B row 2')).toHaveValue('Keep me');
 });
 
 test('selects all cells in a row or column from its header and opens settings on double-click', async ({ page }) => {

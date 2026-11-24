@@ -35,6 +35,8 @@ Use **Undo** and **Redo** in the top bar to step through workspace changes durin
 
 Open **Settings** from the gear in the top right to choose Light, Dark, or Auto, change keyboard shortcuts, and choose whether a shortcut asks before deleting a block.
 
+SQL queries and charts refresh automatically when input data changes. Turn off **Automatically refresh computed blocks when inputs change** to keep the previous result until you choose **Run query** or **Refresh chart**. Charts based on SQL show the query's latest result. Table cell formulas update as you edit.
+
 Click a cell once to select it. Drag from one cell to another to select the rectangle between them. You can also select a cell and Shift-click the other corner. Click a selected cell again or press **Enter** to edit. Press **Shift+Enter** while editing to insert a line break and **Enter** to confirm. Long text wraps within the width of the cell. This visual wrapping leaves the stored text as entered.
 
 Click a row number or a column header to select the entire row or column. This includes cells beyond the visible rows. Double-click a column header or press **F2** while it has focus to open its settings.
@@ -60,6 +62,8 @@ With a selection, use **Cmd+C** and **Cmd+V** to copy and paste complete cells w
 Press **Delete** or **Backspace** on selected cells to clear their values and formulas while keeping their formatting. One **Undo** restores the whole selection's contents.
 
 On a Mac, press **Option+Cmd+C** to copy a cell's style, then select a cell or range and press **Option+Cmd+V** to paste it. Use **Ctrl+Alt+C** and **Ctrl+Alt+V** on other platforms. You can also use the copy and paste buttons in the inspector. Style paste keeps the target cells' values and formulas.
+
+Select a whole row or column to copy each cell's style in order. Select another row or column and paste to apply those styles in the same order. Paste applies as many styles as fit.
 
 | Formula | Example |
 | --- | --- |

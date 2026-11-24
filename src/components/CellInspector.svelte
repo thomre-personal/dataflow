@@ -11,13 +11,14 @@
   import type { Hotkeys } from '../lib/preferences';
   import Modal from './Modal.svelte';
 
-  let { address, column, formula, format, defaultBold, selectionKey, hotkeys, canPaste, clear, changeStyle, copyStyle, pasteStyle, resetStyle }: {
+  let { address, column, formula, format, defaultBold, selectionKey, axis, hotkeys, canPaste, clear, changeStyle, copyStyle, pasteStyle, resetStyle }: {
     address: string;
     column?: string;
     formula: string;
     format: CellStyle;
     defaultBold: boolean;
     selectionKey: string;
+    axis?: 'row' | 'column';
     hotkeys: Hotkeys;
     canPaste: boolean;
     clear: () => void;
@@ -26,6 +27,7 @@
     pasteStyle: () => void;
     resetStyle: () => void;
   } = $props();
+  let styleLabel = $derived(axis ? axis + ' styles' : 'cell style');
 
   const decorations = [
     { key: 'bold', label: 'Bold', icon: Bold },
@@ -105,9 +107,9 @@
         {/each}
       </div>
       <div class="cell-format-buttons" role="group" aria-label="Style actions">
-        <button type="button" class="icon-button small" aria-label="Copy cell style" title={'Copy cell style (' + hotkeyLabel(hotkeys.copyCellStyle) + ')'}
+        <button type="button" class="icon-button small" aria-label={'Copy ' + styleLabel} title={'Copy ' + styleLabel + ' (' + hotkeyLabel(hotkeys.copyCellStyle) + ')'}
           onclick={copyStyle}><Copy size={14} /></button>
-        <button type="button" class="icon-button small" aria-label="Paste cell style" title={'Paste cell style (' + hotkeyLabel(hotkeys.pasteCellStyle) + ')'}
+        <button type="button" class="icon-button small" aria-label={'Paste ' + styleLabel} title={'Paste ' + styleLabel + ' (' + hotkeyLabel(hotkeys.pasteCellStyle) + ')'}
           disabled={!canPaste} onclick={pasteStyle}><ClipboardPaste size={14} /></button>
         <button type="button" class="icon-button small" aria-label="Reset cell style" title="Reset cell style"
           onclick={resetStyle}><RotateCcw size={14} /></button>

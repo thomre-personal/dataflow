@@ -46,7 +46,7 @@ export function cellSelectionBounds(table: TableBlock, selection: CellSelection 
 export function updateCellStyles(
   table: TableBlock,
   bounds: NonNullable<ReturnType<typeof cellSelectionBounds>>,
-  update: (style: CellStyle) => CellStyle,
+  update: (style: CellStyle, row: number, column: number) => CellStyle,
 ): CellStyles | undefined {
   const result = { ...table.cellStyles };
   let changed = false;
@@ -58,7 +58,7 @@ export function updateCellStyles(
     for (let column = bounds.left; column <= bounds.right; column++) {
       const id = table.columns[column].id;
       const before = Object.entries(previous[id] ?? {});
-      const after = Object.entries(update(previous[id] ?? {})).filter(([, value]) => value !== undefined);
+      const after = Object.entries(update(previous[id] ?? {}, row, column)).filter(([, value]) => value !== undefined);
       if (before.length === after.length && after.every(([key, value]) => previous[id]?.[key as keyof CellStyle] === value)) continue;
       if (after.length) styles[id] = Object.fromEntries(after);
       else delete styles[id];

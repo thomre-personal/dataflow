@@ -4,7 +4,7 @@
   import {
     ArrowDownLeft, ArrowUpRight, Braces, ChartColumnIncreasing, Check,
     ChevronDown, CircleAlert, ClipboardPlus, CloudOff, Download, FileText, Focus, Folder, FolderOpen, Layers3, Link2, Maximize,
-    PanelRightClose, PanelRightOpen, Pencil, Play, Plus, Redo2, Search, Settings as SettingsIcon, Table2, Trash2, Undo2, Unplug,
+    PanelRightClose, PanelRightOpen, Pencil, Play, Plus, Redo2, RefreshCw, Search, Settings as SettingsIcon, Table2, Trash2, Undo2, Unplug,
     Workflow, X,
   } from 'lucide-svelte';
   import { onMount, tick, untrack } from 'svelte';
@@ -20,7 +20,7 @@
   import MiniChart from './components/MiniChart.svelte';
   import Settings from './components/Settings.svelte';
   import { absolutePosition, addLink, canConnect, canGroup, columnLetter, createBlock, createWorkspace, dataRowCount, kinds, newId, related, rowNumber, sqlAlias, starterWorkspace, tableInputs } from './lib/workspace';
-  import type { Block, BlockKind, ChartBlock, GroupBlock, Library, Link, NumberFormat, Position, Result, SqlBlock, Workspace } from './lib/workspace';
+  import type { Block, BlockKind, ChartBlock, GroupBlock, Library, Link, NumberFormat, Position, Result, SqlBlock, TableBlock, Workspace } from './lib/workspace';
   import { importGrid, parseDelimited } from './lib/clipboard';
   import { bindTableFormulas, bindWorkspaceFormulas, cellFormulaText, isFormulaEntry } from './lib/formulas';
   import { cellSelectionBounds, updateCellStyles } from './lib/cell-style';
@@ -68,7 +68,8 @@
   let selected = $derived(workspace.blocks.find((block) => block.id === selectedId));
   let activeCell = $state<(CellSelection & { tableId: string })>();
   let inspectorScroll = $state<HTMLDivElement>();
-  let copiedCellStyle = $state<CellStyle | null>(null);
+  let copiedCellStyle = $state<{ style: CellStyle } | { styles: CellStyle[] }>();
+  let canPasteCellStyle = $derived(Boolean(copiedCellStyle && ('style' in copiedCellStyle || activeCell?.axis)));
   let selectedCellBounds = $derived(selected?.kind === 'table' && activeCell?.tableId === selected.id
     ? cellSelectionBounds(selected, activeCell) : undefined);
   let selectedTableCell = $derived.by(() => {
@@ -135,9 +136,10 @@
   let dark = $derived(preferences.theme === 'dark' || (preferences.theme === 'auto' && systemDark));
   let flowNodes = $state.raw<Node<CardData>[]>([]);
   let flowEdges = $state.raw<Edge[]>([]);
-  type QueryState = { state: 'ready' | 'stale' | 'running' | 'error'; result?: Result; error?: string };
-  let workspaceQueries = $state<Record<string, Record<string, QueryState>>>({});
-  let runtime = $derived(workspaceQueries[workspace.id] ?? {});
+  type ComputedState = { state: 'ready' | 'stale' | 'running' | 'error'; result?: Result; error?: string };
+  let workspaceResults = $state<Record<string, Record<string, ComputedState>>>({});
+  let runtime = $derived(workspaceResults[workspace.id] ?? {});
+  let refreshingInBackground = $state(false);
   const stamps = new Map<string, number>();
   const queryKey = (workspaceId: string, blockId: string) => workspaceId + ':' + blockId;
   let saveWork = Promise.resolve();
@@ -165,7 +167,9 @@
   }
 
   function saveWorkspace(next: Workspace) {
+    const previous = workspace;
     library = { ...library, workspaces: library.workspaces.map((item) => item.id === next.id ? next : item) };
+    invalidateComputed(previous, next);
     persist();
     scheduleFileSave(next.id);
   }
@@ -340,8 +344,10 @@
         if (workspace !== draft) throw new Error('The workspace changed while the file was opening. Try again.');
         const workspaces = library.workspaces.map((item) => item.id === id ? current : item);
         if (keepDraft) workspaces.push({ ...draft, id: newId(), title: draft.title + ' (local draft)', sample: undefined });
-        invalidate(draft.blocks.map((block) => block.id));
-        delete workspaceQueries[id];
+        for (const block of draft.blocks) {
+          if (block.kind === 'sql') bumpQueryStamp(id, block.id);
+        }
+        delete workspaceResults[id];
         delete histories[id];
         library = { ...library, workspaces };
         closeModal();
@@ -366,48 +372,63 @@
     const next = entry.workspace;
     history[direction === 'undo' ? 'redo' : 'undo'].push({ workspace, selectedId });
 
-    const before = new Map(workspace.blocks.map((block) => [block.id, block]));
-    const after = new Map(next.blocks.map((block) => [block.id, block]));
-    const nextLinks = new Set(next.links.map((link) => link.id));
-    const currentLinks = new Set(workspace.links.map((link) => link.id));
-    const affected = new Set([
-      ...workspace.links.filter((link) => !nextLinks.has(link.id)).map((link) => link.target),
-      ...next.links.filter((link) => !currentLinks.has(link.id)).map((link) => link.target),
-    ]);
-    for (const [id, previous] of before) {
-      const block = after.get(id);
-      if (!block || (block.kind === 'sql' && previous.kind === 'sql' && block.sql !== previous.sql)
-        || (block.kind === 'table' && previous.kind === 'table'
-          && (block.rows !== previous.rows || block.columns !== previous.columns || block.numberFormat !== previous.numberFormat
-            || block.footerRows !== previous.footerRows))) affected.add(id);
-    }
-    for (const id of [...affected]) {
-      for (const downstream of related(next, id, 'outputs')) affected.add(downstream);
-    }
-    invalidate(affected);
-
     saveWorkspace(next);
-    if (!after.has(focused)) focused = '';
+    if (!next.blocks.some(({ id }) => id === focused)) focused = '';
     if (entry.selectedId !== selectedId) {
       selectedId = entry.selectedId;
       activeCell = undefined;
       showQueryTab('sql');
     }
-    initializeQueries(next);
+    initializeComputed(next);
   }
 
-  function invalidate(ids: Iterable<string>) {
-    for (const id of ids) {
-      const key = queryKey(workspace.id, id);
-      stamps.set(key, (stamps.get(key) ?? 0) + 1);
-      if (runtime[id]) runtime[id] = { ...runtime[id], state: 'stale', error: undefined };
+  function bumpQueryStamp(workspaceId: string, blockId: string) {
+    const key = queryKey(workspaceId, blockId);
+    const stamp = (stamps.get(key) ?? 0) + 1;
+    stamps.set(key, stamp);
+    return stamp;
+  }
+
+  function invalidateComputed(previous: Workspace, next: Workspace) {
+    const previousLinks = new Set(previous.links.map(({ id }) => id));
+    const nextLinks = new Set(next.links.map(({ id }) => id));
+    const changedInputs = new Set([
+      ...previous.links.filter(({ id }) => !nextLinks.has(id)).map(({ target }) => target),
+      ...next.links.filter(({ id }) => !previousLinks.has(id)).map(({ target }) => target),
+    ]);
+    const changed = new Set(changedInputs);
+    const nextBlocks = new Map(next.blocks.map((block) => [block.id, block]));
+    workspaceResults[next.id] ??= {};
+    const results = workspaceResults[next.id];
+    for (const before of previous.blocks) {
+      const block = nextBlocks.get(before.id);
+      if (!block) {
+        if (before.kind === 'sql') bumpQueryStamp(next.id, before.id);
+        delete results[before.id];
+      } else if ((block.kind === 'sql' && before.kind === 'sql' && block.sql !== before.sql)
+        || (block.kind === 'table' && before.kind === 'table'
+          && (block.rows !== before.rows || block.columns !== before.columns || block.numberFormat !== before.numberFormat
+            || block.footerRows !== before.footerRows))) {
+        changed.add(block.id);
+      }
+    }
+
+    for (const id of [...changed, ...related(next, changed, 'outputs')]) {
+      const block = nextBlocks.get(id);
+      if (block?.kind === 'sql') {
+        bumpQueryStamp(next.id, id);
+        results[id] = { state: 'stale', result: results[id]?.result };
+      } else if (block?.kind === 'chart') {
+        const source = chartSource(block, next);
+        if (source?.kind !== 'table') delete results[id];
+        else if (changedInputs.has(id) || !results[id]) evaluateTableChart(block, source, next);
+        else results[id] = { state: 'stale', result: results[id].result };
+      }
     }
   }
 
   function patchBlock(id: string, patch: Partial<Block>) {
     if (!workspace.blocks.some((block) => block.id === id)) return;
-    const dataChange = 'sql' in patch || 'rows' in patch || 'columns' in patch || 'numberFormat' in patch || 'footerRows' in patch;
-    if (dataChange) invalidate([id, ...related(workspace, id, 'outputs')]);
     replaceWorkspace({ ...workspace, blocks: workspace.blocks.map((block) => block.id === id ? { ...block, ...patch } as Block : block) });
   }
 
@@ -421,15 +442,15 @@
   async function runSQL(block: SqlBlock, showResult = true) {
     const source = $state.snapshot(workspace) as Workspace;
     const key = queryKey(source.id, block.id);
-    workspaceQueries[source.id] ??= {};
-    const queries = workspaceQueries[source.id];
+    workspaceResults[source.id] ??= {};
+    const queries = workspaceResults[source.id];
     if (queries[block.id]?.state === 'running') return;
-    const stamp = (stamps.get(key) ?? 0) + 1;
-    stamps.set(key, stamp);
+    const stamp = bumpQueryStamp(source.id, block.id);
     const viewRevision = queryViewRevision;
     queries[block.id] = { state: 'running', result: queries[block.id]?.result };
     try {
       const { runQuery } = await import('./lib/sql');
+      if (stamps.get(key) !== stamp) return;
       const result = await runQuery(source, block.id);
       if (stamps.get(key) !== stamp) return;
       queries[block.id] = { state: 'ready', result };
@@ -440,9 +461,14 @@
     }
   }
 
-  function initializeQueries(current: Workspace) {
-    for (const group of current.blocks) {
-      if (group.kind === 'sql' && !runtime[group.id]) void runSQL(group, false);
+  function initializeComputed(current: Workspace) {
+    for (const block of current.blocks) {
+      if (runtime[block.id]) continue;
+      if (block.kind === 'sql') void runSQL(block, false);
+      if (block.kind === 'chart') {
+        const chartInput = chartSource(block, current);
+        if (chartInput?.kind === 'table') evaluateTableChart(block, chartInput, current);
+      }
     }
   }
 
@@ -466,7 +492,7 @@
         ready = true;
         saveState = 'error';
       }
-      initializeQueries(workspace);
+      initializeComputed(workspace);
       if (workspaceFile) void checkFile(workspace.id);
     })();
     return () => {
@@ -483,16 +509,48 @@
     }
   });
 
-  function chartInput(block: ChartBlock): { result?: Result; state?: 'ready' | 'stale' | 'running' | 'error'; error?: string } {
-    const link = workspace.links.find((item) => item.target === block.id);
-    const source = workspace.blocks.find((item) => item.id === link?.source);
-    if (source?.kind === 'table') {
-      try { return { result: tableResult(source, workspace), state: 'ready' }; }
-      catch (error) { return { state: 'error', error: error instanceof Error ? error.message : String(error) }; }
-    }
-    if (source?.kind === 'sql') return runtime[source.id] ?? {};
-    return {};
+  function chartSource(block: ChartBlock, current = workspace) {
+    const sourceId = current.links.find((item) => item.target === block.id)?.source;
+    return current.blocks.find((item) => item.id === sourceId);
   }
+
+  function evaluateTableChart(block: ChartBlock, source: TableBlock, current: Workspace) {
+    workspaceResults[current.id] ??= {};
+    const results = workspaceResults[current.id];
+    try {
+      results[block.id] = { result: tableResult(source, current), state: 'ready' };
+    } catch (error) {
+      results[block.id] = { state: 'error', result: results[block.id]?.result, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  function chartInput(block: ChartBlock): Partial<ComputedState> {
+    const source = chartSource(block);
+    return runtime[source?.kind === 'sql' ? source.id : block.id] ?? {};
+  }
+
+  function refreshChart(block: ChartBlock) {
+    const source = chartSource(block);
+    if (source?.kind === 'table') evaluateTableChart(block, source, workspace);
+    if (source?.kind === 'sql') void runSQL(source, false);
+  }
+
+  $effect(() => {
+    if (!ready || !preferences.autoRefreshComputed || refreshingInBackground
+      || !workspace.blocks.some(({ id }) => runtime[id]?.state === 'stale')) return;
+    // Coalesce edits before taking a snapshot for the SQL engine.
+    const timer = setTimeout(() => {
+      for (const block of workspace.blocks) {
+        if (block.kind === 'chart' && runtime[block.id]?.state === 'stale') refreshChart(block);
+      }
+      const query = workspace.blocks.find((block): block is SqlBlock => block.kind === 'sql' && runtime[block.id]?.state === 'stale');
+      if (query) {
+        refreshingInBackground = true;
+        void runSQL(query, false).finally(() => { refreshingInBackground = false; });
+      }
+    }, 180);
+    return () => clearTimeout(timer);
+  });
 
   function tableProblem(block: Block) {
     if (block.kind !== 'table') return undefined;
@@ -681,21 +739,39 @@
     panel = true;
   }
 
-  function formatSelectedCells(update: (style: CellStyle) => CellStyle) {
+  function formatSelectedCells(update: (style: CellStyle, row: number, column: number) => CellStyle) {
     if (selected?.kind !== 'table' || !selectedCellBounds) return;
     const cellStyles = updateCellStyles(selected, selectedCellBounds, update);
     if (cellStyles !== selected.cellStyles) patchBlock(selected.id, { cellStyles });
   }
 
   function copyCellStyle() {
-    if (!selectedTableCell) return;
-    copiedCellStyle = { ...selectedTableCell.format };
-    message('Cell style copied');
+    if (selected?.kind !== 'table' || !selectedTableCell || !selectedCellBounds) return;
+    const { rows, columns, cellStyles } = selected;
+    const { row, column } = selectedCellBounds;
+    if (activeCell?.axis === 'row') {
+      copiedCellStyle = { styles: columns.map(({ id }) => ({ ...cellStyles?.[rows[row].id]?.[id] })) };
+      message('Row styles copied');
+    } else if (activeCell?.axis === 'column') {
+      copiedCellStyle = { styles: rows.map(({ id }) => ({ ...cellStyles?.[id]?.[columns[column].id] })) };
+      message('Column styles copied');
+    } else {
+      copiedCellStyle = { style: { ...selectedTableCell.format } };
+      message('Cell style copied');
+    }
   }
 
   function pasteCellStyle() {
-    const style = copiedCellStyle;
-    if (style !== null) formatSelectedCells(() => style);
+    const copied = copiedCellStyle;
+    if (!copied || !selectedCellBounds) return;
+    if ('style' in copied) {
+      formatSelectedCells(() => copied.style);
+      return;
+    }
+    const axis = activeCell?.axis;
+    if (!axis) return;
+    const { top, left } = selectedCellBounds;
+    formatSelectedCells((style, row, column) => copied.styles[axis === 'row' ? column - left : row - top] ?? style);
   }
 
   function openBlock(id: string) {
@@ -725,7 +801,6 @@
     if (selected?.kind !== 'sql' || !sqlDraft.trim()) return;
     const query = { ...selected, sql: sqlDraft };
     if (query.sql !== selected.sql || sqlDraftLinks.length !== workspace.links.length) {
-      invalidate([query.id, ...related(workspace, query.id, 'outputs')]);
       replaceWorkspace({ ...workspace, blocks: workspace.blocks.map((block) => block.id === query.id ? query : block), links: sqlDraftLinks });
     }
     closeModal();
@@ -846,7 +921,6 @@
       const bound = bindTableFormulas(targetBlock, tableInputs(next, target));
       if (bound !== targetBlock) next.blocks = next.blocks.map((block) => block.id === target ? bound : block);
     }
-    invalidate([target, ...related(workspace, target, 'outputs')]);
     replaceWorkspace(next);
   }
 
@@ -916,7 +990,6 @@
   function disconnect(id: string) {
     const link = workspace.links.find((candidate) => candidate.id === id);
     if (!link) return;
-    invalidate([link.target, ...related(workspace, link.target, 'outputs')]);
     replaceWorkspace({ ...workspace, links: workspace.links.filter((candidate) => candidate.id !== id) });
   }
 
@@ -931,7 +1004,6 @@
 
   function removeBlock(block: Block, confirmDelete = true) {
     if (confirmDelete && !confirm('Delete “' + block.title + '” from this workspace?')) return;
-    invalidate([block.id, ...related(workspace, block.id, 'outputs')]);
     replaceWorkspace({
       ...workspace,
       blocks: workspace.blocks.filter((item) => item.id !== block.id).map((item) =>
@@ -955,7 +1027,7 @@
     selectedId = workspace.blocks[0]?.id ?? '';
     showQueryTab('sql');
     const saved = binding ? rememberFile(id, binding) : persist();
-    initializeQueries(workspace);
+    initializeComputed(workspace);
     void fitCanvas();
     if (workspaceFiles[id]) {
       fileStates[id] = { kind: 'saving' };
@@ -1132,7 +1204,7 @@
 
 {#snippet inspectCell()}
   {#if selectedTableCell}
-    <CellInspector {...selectedTableCell} hotkeys={preferences.hotkeys} canPaste={copiedCellStyle !== null}
+    <CellInspector {...selectedTableCell} axis={activeCell?.axis} hotkeys={preferences.hotkeys} canPaste={canPasteCellStyle}
       clear={() => activeCell = undefined} copyStyle={copyCellStyle} pasteStyle={pasteCellStyle}
       changeStyle={(patch) => formatSelectedCells((style) => ({ ...style, ...patch }))}
       resetStyle={() => formatSelectedCells(() => ({}))} />
@@ -1330,6 +1402,9 @@
               {#if selectedChart.error}<p class="inline-error" role="alert"><CircleAlert size={15} />{selectedChart.error}</p>
               {:else if selectedChart.state && selectedChart.state !== 'ready'}<p class="inline-warning">{selectedChart.state === 'running' ? 'Refreshing data…' : 'Source result may be out of date'}</p>{/if}
               {#if selectedSeries}<div class="inspector-chart"><MiniChart series={selectedSeries} type={block.chart} {dark} compact /></div>{/if}
+              {#if inputLinks.length && selectedChart.state !== 'ready'}
+                <button class="button secondary full-width" disabled={selectedChart.state === 'running'} onclick={() => refreshChart(block)}><RefreshCw size={14} /> Refresh chart</button>
+              {/if}
               <button class="button secondary full-width" onclick={() => openBlock(block.id)}><Maximize size={15} /> Open chart</button>
             </div>
           {:else}

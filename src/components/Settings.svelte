@@ -51,6 +51,8 @@
     </label>
     <label class="checkbox"><input type="checkbox" checked={preferences.confirmHotkeyDelete}
       onchange={(event) => change({ ...preferences, confirmHotkeyDelete: event.currentTarget.checked })} />Confirm block deletion by shortcut</label>
+    <label class="checkbox"><input type="checkbox" checked={preferences.autoRefreshComputed}
+      onchange={(event) => change({ ...preferences, autoRefreshComputed: event.currentTarget.checked })} />Automatically refresh computed blocks when inputs change</label>
   </div>
   <section class="settings-shortcuts" aria-label="Keyboard shortcuts">
     <h3>Keyboard shortcuts</h3>
