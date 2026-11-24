@@ -1097,8 +1097,9 @@
                 <span>{item.title}</span>{#if library.activeId === item.id}<Check size={14} />{/if}
               </button>
             {/each}
+            <hr class="workspace-menu-divider" />
             <button onclick={() => workspaceDialog(true)}><Layers3 size={15} /> Rename workspace</button>
-            <button class="new-workspace" onclick={() => workspaceDialog()}><Plus size={15} /> New workspace</button>
+            <button onclick={() => workspaceDialog()}><Plus size={15} /> New workspace</button>
             <div class="workspace-file-actions">
               {#if supportsWorkspaceFiles()}
                 <button disabled={!ready || fileAction} onclick={openFile}><FolderOpen size={15} /> Open file…</button>

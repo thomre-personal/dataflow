@@ -94,7 +94,7 @@ code { font-family: var(--mono); }
 .workspace-menu button { display: flex; align-items: center; gap: 8px; text-align: left; width: 100%; padding: 8px; border-radius: 6px; }
 .workspace-menu button span { flex: 1; }
 .workspace-menu button:hover, .workspace-menu button.current { background: var(--accent-soft); color: var(--accent); }
-.workspace-menu .new-workspace { margin-top: 4px; border-top: 1px solid var(--divider); }
+.workspace-menu-divider { margin: 4px 0; border: 0; border-top: 1px solid var(--divider); }
 .workspace-file-actions { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--divider); }
 .header-right { display: flex; align-items: center; justify-content: flex-end; gap: 13px; }
 .history-actions { display: flex; align-items: center; flex-shrink: 0; gap: 2px; }
