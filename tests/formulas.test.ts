@@ -5,6 +5,25 @@ import { tableResult } from '../src/lib/format.ts';
 import { invalidTableCells, tableData } from '../src/lib/table-data.ts';
 import { addLink, canConnect, createBlock, createWorkspace, tableInputs } from '../src/lib/workspace.ts';
 
+test('uses linked config values in exact arithmetic and keeps references after a rename', () => {
+  const table = createBlock('table', { x: 0, y: 0 });
+  const config = createBlock('config', { x: 0, y: 0 });
+  config.title = 'Meine Config';
+  config.fields = [{ id: 'factor', name: 'Soli Factor', type: 'input', value: '0,055' }];
+  const workspace = { ...createWorkspace('Config formulas'), blocks: [table, config] };
+  const linked = addLink(workspace, config.id, table.id);
+  table.rows[0].cells = ['120', '=(A1+20)*[Meine Config].[Soli Factor]'];
+  table.rows[1].cells = ['=B2', '=A2'];
+  const bound = bindTableFormulas(table, tableInputs(linked, table.id));
+  assert.equal(tableData(bound, linked).display(0, 1), '7.7');
+  assert.equal(tableData(bound, linked).display(1, 1), '#ERROR');
+  config.title = 'Tax';
+  config.fields[0] = { id: 'factor', name: 'Rate', type: 'input', value: '0.1' };
+  assert.equal(tableData(bound, linked).display(0, 1), '14');
+  assert.equal(cellFormulaText(bound.rows[0], bound.columns, 1, tableInputs(linked, table.id)), '=(A1+20)*Tax.Rate');
+  assert.match(tableData(bound, workspace).cell(0, 1).message ?? '', /Reconnect the referenced config/);
+});
+
 test('evaluates aggregates for text, numbers, and dates with footer rows excluded', () => {
   const table = createBlock('table', { x: 0, y: 0 });
   assert.ok(table.kind === 'table');

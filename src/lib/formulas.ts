@@ -1,7 +1,9 @@
 import { columnLetter, isBooleanFunction, tableInputs } from './workspace.ts';
-import type { BooleanFormula, Column, Formula, FormulaColumn, Row, TableInput, Workspace } from './workspace.ts';
+import type { BooleanFormula, Column, Formula, FormulaColumn, FormulaInput, Row, Workspace } from './workspace.ts';
+import { parseScalar, scalarText } from './scalar-formula.ts';
 
-export type FormulaFunction = Formula['name'] | 'DISTINCT';
+export type FormulaCall = Exclude<Formula['name'], 'VALUE'>;
+export type FormulaFunction = FormulaCall | 'DISTINCT';
 
 export const formulaFunctions = {
   SUM: {
@@ -172,13 +174,14 @@ function resolveColumn(columns: Column[], argument: string): FormulaColumn | und
   if (byLetter >= 0) return { columnId: columns[byLetter].id, reference: 'letter' };
 }
 
-function matchingInputs(inputs: TableInput[], name: string) {
+function matchingInputs(inputs: FormulaInput[], name: string) {
   const key = name.toLowerCase();
-  const aliases = inputs.filter((input) => input.alias.toLowerCase() === key);
-  return aliases.length ? aliases : inputs.filter((input) => input.table.title.toLowerCase() === key);
+  const tables = inputs.filter((input) => 'table' in input);
+  const aliases = tables.filter((input) => input.alias.toLowerCase() === key);
+  return aliases.length ? aliases : tables.filter((input) => input.table.title.toLowerCase() === key);
 }
 
-function resolveReference(columns: Column[], argument: string, inputs: TableInput[]): { column?: FormulaColumn; message?: string } {
+function resolveReference(columns: Column[], argument: string, inputs: FormulaInput[]): { column?: FormulaColumn; message?: string } {
   const qualified = /^(\[(?:[^\]]|\]\])*\]|"(?:[^"]|"")*"|[^:[\]"]+?)\s*::\s*(.*)$/s.exec(argument);
   if (!qualified) return { column: resolveColumn(columns, argument) };
   const name = identifier(qualified[1].trim());
@@ -190,15 +193,19 @@ function resolveReference(columns: Column[], argument: string, inputs: TableInpu
     : { message: 'Choose a unique column name or letter from ' + input.table.title + '.' };
 }
 
-export function parseFormula(value: string, columns: Column[], index: number, inputs: TableInput[] = []): { formula?: Formula; message?: string } {
+export function parseFormula(value: string, columns: Column[], index: number, inputs: FormulaInput[] = []): { formula?: Formula; message?: string } {
   if (!isFormulaEntry(value)) return {};
   return parseExpression(value.trimStart().slice(1).trim(), columns, index, inputs, 0);
 }
 
-function parseExpression(value: string, columns: Column[], index: number, inputs: TableInput[], depth: number): ReturnType<typeof parseFormula> {
+function parseExpression(value: string, columns: Column[], index: number, inputs: FormulaInput[], depth: number): ReturnType<typeof parseFormula> {
   if (depth >= 64) return { message: 'Use fewer nested functions.' };
-  const name = /^([a-z]+)/i.exec(value)?.[1].toUpperCase() as Formula['name'] | undefined;
-  if (!name || !functionNames.includes(name)) return { message: 'Choose a supported function from the suggestions.' };
+  const name = /^([a-z]+)\s*\(/i.exec(value)?.[1].toUpperCase() as FormulaCall | undefined;
+  if (!name || !functionNames.includes(name)) {
+    const { expression, message } = parseScalar(value, columns, inputs);
+    return expression ? { formula: { name: 'VALUE', expression } }
+      : { message: message ?? 'Enter an expression or choose a supported function.' };
+  }
   const input = /^[a-z]+\s*\((.*)\)$/is.exec(value)?.[1];
   const args = input === undefined ? undefined : splitArguments(input);
   const syntaxError = { message: 'Use =' + formulaFunctions[name].signature + '.' };
@@ -217,7 +224,6 @@ function parseExpression(value: string, columns: Column[], index: number, inputs
         operands.push(column);
         continue;
       }
-      if (!/^[a-z]+\s*\(/i.test(argument)) return { message: 'Use TRUE, FALSE, a column, or a Boolean formula in ' + name + '.' };
       const nested = parseExpression(argument, columns, index, inputs, depth + 1);
       if (!nested.formula) return nested;
       operands.push({ expression: nested.formula });
@@ -237,7 +243,6 @@ function parseExpression(value: string, columns: Column[], index: number, inputs
         parts.push(column);
         continue;
       }
-      if (!/^[a-z]+\s*\(/i.test(argument)) return referenceError;
       const nested = parseExpression(argument, columns, index, inputs, depth + 1);
       if (!nested.formula) return nested;
       parts.push({ expression: nested.formula });
@@ -263,13 +268,13 @@ function parseExpression(value: string, columns: Column[], index: number, inputs
   return { formula: { name, condition, criterion, source: sum.column } };
 }
 
-export function bindCellFormula(formulas: NonNullable<Row['formulas']>, columns: Column[], index: number, value: string, inputs: TableInput[] = []) {
+export function bindCellFormula(formulas: NonNullable<Row['formulas']>, columns: Column[], index: number, value: string, inputs: FormulaInput[] = []) {
   const { formula } = parseFormula(value, columns, index, inputs);
   if (formula) formulas[columns[index].id] = formula;
   else delete formulas[columns[index].id];
 }
 
-export function bindTableFormulas<T extends { columns: Column[]; rows: Row[] }>(data: T, inputs: TableInput[] = []): T {
+export function bindTableFormulas<T extends { columns: Column[]; rows: Row[] }>(data: T, inputs: FormulaInput[] = []): T {
   let changed = false;
   const rows = data.rows.map((row) => {
     let formulas: Row['formulas'];
@@ -301,16 +306,18 @@ export function readFormula(row: Row, columnId: string): Formula | undefined {
   return stored && ('name' in stored ? stored : { name: 'SUM', source: stored });
 }
 
-export function cellFormulaText(row: Row, columns: Column[], index: number, inputs: TableInput[] = []) {
+export function cellFormulaText(row: Row, columns: Column[], index: number, inputs: FormulaInput[] = []) {
   const raw = row.cells[index] ?? '';
   const formula = readFormula(row, columns[index].id);
   const expression = formula && expressionText(formula, columns, inputs);
   return expression ? '=' + expression : raw;
 }
 
-function expressionText(formula: Formula, columns: Column[], inputs: TableInput[]): string | undefined {
+function expressionText(formula: Formula, columns: Column[], inputs: FormulaInput[]): string | undefined {
+  if (formula.name === 'VALUE') return scalarText(formula.expression, columns, inputs);
+  const tables = inputs.filter((input) => 'table' in input);
   function reference(source: FormulaColumn, concat = false) {
-    const input = source.tableId ? inputs.find(({ table }) => table.id === source.tableId) : undefined;
+    const input = source.tableId ? tables.find(({ table }) => table.id === source.tableId) : undefined;
     if (source.tableId && !input) return;
     const sourceColumns = input?.table.columns ?? columns;
     const index = sourceColumns.findIndex((column) => column.id === source.columnId);

@@ -1,8 +1,9 @@
 <script module lang="ts">
   import type { ResizeParams } from '@xyflow/svelte';
-  import type { Block, Result, SqlBlock, TableBlock, Workspace } from '../lib/workspace';
+  import type { Block, ConfigBlock, Result, SqlBlock, TableBlock, Workspace } from '../lib/workspace';
   import type { Hotkeys } from '../lib/preferences';
   import type { CellSelection } from '../lib/cell-style';
+  import type { Confirmation } from './ConfirmDialog.svelte';
   export type CardData = Record<string, unknown> & {
     block: Block;
     result?: Result;
@@ -16,6 +17,7 @@
     resize?: (bounds: ResizeParams) => void;
     canResize?: (bounds: ResizeParams) => boolean;
     query?: { setPreview: (view: NonNullable<SqlBlock['preview']>) => void; run: () => void };
+    config?: { patch: (patch: Partial<ConfigBlock>) => void; confirm: (request: Confirmation) => void };
     group?: { count: number; drop: { target: string }; focused: boolean; focusExpanded: boolean; hasInput: boolean; hasOutput: boolean };
     edit?: {
       workspace: Workspace;
@@ -33,7 +35,7 @@
 <script lang="ts">
   import { Handle, NodeResizer, Position, useConnection } from '@xyflow/svelte';
   import type { Node, NodeProps } from '@xyflow/svelte';
-  import { Braces, ChartColumnIncreasing, CircleAlert, Folder, Lock, LockOpen, Maximize2, Minimize2, Plus, Table2 } from 'lucide-svelte';
+  import { Braces, ChartColumnIncreasing, CircleAlert, Folder, Lock, LockOpen, Maximize2, Minimize2, Plus, SlidersHorizontal, Table2 } from 'lucide-svelte';
   import { countLabel, chartSeries, tablePreview } from '../lib/format';
   import { canConnect } from '../lib/workspace';
   import { tableCardContentSize } from '../lib/table-layout';
@@ -41,11 +43,12 @@
   import BlockName from './BlockName.svelte';
   import ResultGrid from './ResultGrid.svelte';
   import TableEditor from './TableEditor.svelte';
+  import ConfigEditor from './ConfigEditor.svelte';
 
   let { data, selected }: NodeProps<Node<CardData>> = $props();
   const connection = useConnection();
-  const icons = { table: Table2, sql: Braces, chart: ChartColumnIncreasing, group: Folder };
-  const labels = { table: 'Table', sql: 'SQL query', chart: 'Chart', group: 'Group' };
+  const icons = { table: Table2, sql: Braces, chart: ChartColumnIncreasing, config: SlidersHorizontal, group: Folder };
+  const labels = { table: 'Table', sql: 'SQL query', chart: 'Chart', config: 'Config', group: 'Group' };
   let block = $derived(data.block);
   let expanded = $derived(block.kind !== 'sql' && (block.expanded !== false || data.group?.focusExpanded === true));
   let connectionSource = $derived(connection.current.fromHandle?.type === 'source' ? connection.current.fromNode?.id : undefined);
@@ -119,7 +122,7 @@
     {#if block.kind === 'table' || block.kind === 'sql' || block.kind === 'chart'}
       <Handle type="target" position={Position.Left} isConnectable={true} aria-label="Input port" />
     {/if}
-    {#if block.kind === 'table' || block.kind === 'sql'}
+    {#if block.kind === 'table' || block.kind === 'sql' || block.kind === 'config'}
       <Handle type="source" position={Position.Right} isConnectable={true} aria-label="Output port" />
       <Handle id="quick-create" class="quick-exit" type="source" position={Position.Right} isConnectable={true}
         isConnectableEnd={false} aria-label={'Connect or add a block from ' + block.title} title="Drag onto a table to connect, or onto the canvas to add a block">
@@ -195,6 +198,17 @@
           {/if}
           <button class="nodrag" onclick={(event) => { event.stopPropagation(); data.open(); }}>Open query</button>
         </div>
+      </footer>
+    {:else if block.kind === 'config'}
+      <div class="node-preview node-inline nodrag nopan nowheel">
+        {#if expanded && data.config}
+          <ConfigEditor {block} change={data.config.patch} confirm={data.config.confirm} />
+        {:else}
+          <p class="helper-text">{countLabel(block.presets.length, 'preset')}</p>
+        {/if}
+      </div>
+      <footer class="node-footer"><span>{countLabel(block.fields.length, 'field')}</span>
+        <button class="nodrag" onclick={(event) => { event.stopPropagation(); data.open(); }}>Open config</button>
       </footer>
     {:else}
       <div class="node-preview node-chart">{#if series}

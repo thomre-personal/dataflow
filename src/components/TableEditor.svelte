@@ -5,13 +5,14 @@
   import { countLabel } from '../lib/format';
   import { copyGrid, MAX_COLUMNS, MAX_ROWS, parseDelimited, readCopiedGrid } from '../lib/clipboard';
   import { bindCellFormula, cellFormulaText, isFormulaEntry, suggestFunctions } from '../lib/formulas';
+  import type { FormulaCall } from '../lib/formulas';
   import { cellSelectionBounds, cellStyleCss } from '../lib/cell-style';
   import type { CellAddress, CellSelection } from '../lib/cell-style';
   import { describeCellIssue, invalidTableCells, tableData } from '../lib/table-data';
   import { eventHotkey, hotkeyLabel } from '../lib/preferences';
   import type { Hotkeys } from '../lib/preferences';
   import { tableCardContentSize } from '../lib/table-layout';
-  import type { Column, ColumnType, Formula, TableBlock, TableStyle, Workspace } from '../lib/workspace';
+  import type { Column, ColumnType, TableBlock, TableStyle, Workspace } from '../lib/workspace';
   import FormulaSuggestions from './FormulaSuggestions.svelte';
   import Modal from './Modal.svelte';
 
@@ -326,7 +327,7 @@
     }
   }
 
-  function completeFormula(name: Formula['name']) {
+  function completeFormula(name: FormulaCall) {
     if (!editing) return;
     const { input, row, column } = editing;
     cellDraft = '=' + name + '()';

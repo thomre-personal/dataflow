@@ -16,7 +16,7 @@ Open [DataFlow on your computer](http://127.0.0.1:5173/). Use that same address 
 ## Turn a table into a chart
 
 1. Open a new workspace from the workspace menu.
-2. Copy cells in Numbers or Excel. Choose **Paste data** and paste the range. Select the number format if automatic detection does not match the source.
+2. Copy cells in Numbers or Excel. Choose **Paste data** and paste the range. Select the number format if automatic detection does not match the source. Press **Enter** to create the table or **Shift+Enter** to add a line break while entering the range.
 3. Add a **SQL** block and connect the table in the SQL editor. Use the displayed input name in your query. Choose **Save and run** to see the result in **Data**.
 4. Add a **Chart** block. In the chart dialog, choose the source, the chart type, and the axes.
 5. Type in **Find a block** at the top and choose a match to see its inputs and outputs. **Cmd+K** or **Ctrl+K** focuses the search. Drag from an output port to an input port to connect blocks. Use the inspector to assign a block to a group.
@@ -38,6 +38,16 @@ Use **Undo** and **Redo** in the top bar to step through workspace changes durin
 Open **Settings** from the gear in the top right to choose Light, Dark, or Auto, change keyboard shortcuts, and choose whether a shortcut asks before deleting a block.
 
 SQL queries and charts refresh automatically when input data changes. Turn off **Automatically refresh computed blocks when inputs change** to keep the previous result until you choose **Run query** or **Refresh chart**. Charts based on SQL show the query's latest result. Table cell formulas update as you edit.
+
+### Config blocks
+
+Add a **Config** block for values you want to reuse. Give the block a name and add fields with sliders, multiple-choice checkboxes, toggles, or text inputs. Change the current values directly on the canvas. Open the config to save the current values under a preset name, load a saved preset, or delete one.
+
+Connect the config to a table from its output port or through **Connect input**. A formula such as `=A1*MeineConfig.SoliFactor` reads the current field value. Use brackets around names with spaces, as in `=[Tax settings].[Soli factor]`.
+
+In SQL, connect the config and use its input alias as a one-row table. For example, `SELECT SoliFactor FROM meineconfig` reads the current factor. Sliders and numeric input values are numbers, toggles are Boolean, and multiple-choice selections are JSON arrays stored as text. Changing a value or loading a preset updates dependent formulas and follows the automatic refresh setting for SQL.
+
+### Table editing
 
 Click a cell once to select it. Drag from one cell to another to select the rectangle between them. You can also select a cell and Shift-click the other corner. Click a selected cell again or press **Enter** to edit. Press **Shift+Enter** while editing to insert a line break and **Enter** to confirm. Long text wraps within the width of the cell. This visual wrapping leaves the stored text as entered.
 

@@ -1,6 +1,6 @@
 import type { CellStyle, CellStyles } from './cell-style.ts';
 
-export type BlockKind = 'table' | 'sql' | 'chart' | 'group';
+export type BlockKind = 'table' | 'sql' | 'chart' | 'config' | 'group';
 export type ValueType = 'text' | 'decimal' | 'date' | 'boolean';
 export type ColumnType = ValueType | 'auto';
 export type NumberFormat = 'auto' | 'decimal-comma' | 'decimal-point';
@@ -9,6 +9,11 @@ export type Position = { x: number; y: number };
 
 export type Column = { id: string; name: string; type: ColumnType };
 export type FormulaColumn = { columnId: string; reference: 'implicit' | 'name' | 'letter'; tableId?: string };
+export type ScalarExpression =
+  | { kind: 'number'; value: string }
+  | { kind: 'cell'; columnId: string; row: number }
+  | { kind: 'config'; blockId: string; fieldId: string }
+  | { kind: 'binary'; operator: '+' | '-' | '*' | '/'; left: ScalarExpression; right: ScalarExpression };
 export type OrderedFunction = 'MIN' | 'MAX' | 'MEDIAN';
 export const booleanFunctions = ['AND', 'OR', 'NOT', 'XOR', 'XNOR', 'XAND', 'NAND', 'NOR'] as const;
 export type BooleanFunction = typeof booleanFunctions[number];
@@ -22,6 +27,7 @@ export function isBooleanFunction(value: unknown): value is BooleanFunction {
 }
 
 export type Formula =
+  | { name: 'VALUE'; expression: ScalarExpression }
   | { name: 'SUM' | 'AVERAGE' | 'AVG' | OrderedFunction; source: FormulaColumn }
   | { name: 'COUNT'; source: FormulaColumn; distinct?: boolean }
   | { name: 'SUMIF'; condition: FormulaColumn; criterion: string; source?: FormulaColumn }
@@ -50,7 +56,17 @@ export type TableBlock = BlockBase & ExpandableBlock & {
 export type SqlBlock = BlockBase & { kind: 'sql'; sql: string; preview?: 'query' | 'results' };
 export type ChartBlock = BlockBase & ExpandableBlock & { kind: 'chart'; chart: 'bar' | 'line'; x: string; y: string };
 export type GroupBlock = BlockBase & ExpandableBlock & { kind: 'group' };
-export type Block = TableBlock | SqlBlock | ChartBlock | GroupBlock;
+export type ConfigValue = string | number | boolean | string[];
+type ConfigFieldBase = { id: string; name: string };
+export type ConfigField = ConfigFieldBase & (
+  | { type: 'input'; value: string }
+  | { type: 'slider'; value: number; min: number; max: number; step: number }
+  | { type: 'toggle'; value: boolean }
+  | { type: 'multi'; value: string[]; options: string[] }
+);
+export type ConfigPreset = { id: string; name: string; values: Record<string, ConfigValue> };
+export type ConfigBlock = BlockBase & ExpandableBlock & { kind: 'config'; fields: ConfigField[]; presets: ConfigPreset[] };
+export type Block = TableBlock | SqlBlock | ChartBlock | ConfigBlock | GroupBlock;
 export type Link = { id: string; source: string; target: string; alias: string };
 export type Workspace = {
   id: string;
@@ -61,6 +77,7 @@ export type Workspace = {
 };
 export type Library = { activeId: string; workspaces: Workspace[] };
 export type TableInput = { table: TableBlock; alias: string };
+export type FormulaInput = TableInput | { config: ConfigBlock; alias: string };
 export type Result = {
   columns: { name: string; type: ValueType }[];
   rows: (string | null)[][];
@@ -79,11 +96,12 @@ export function dataRowCount(table: TableBlock) {
   return Math.max(0, table.rows.length - (table.footerRows ?? 0));
 }
 
-export function tableInputs(workspace: Workspace | undefined, tableId: string): TableInput[] {
-  return workspace?.links.flatMap((link) => {
+export function tableInputs(workspace: Workspace | undefined, tableId: string): FormulaInput[] {
+  return workspace?.links.flatMap((link): FormulaInput[] => {
     if (link.target !== tableId) return [];
     const table = workspace.blocks.find((block) => block.id === link.source);
-    return table?.kind === 'table' ? [{ table, alias: link.alias }] : [];
+    return table?.kind === 'table' ? [{ table, alias: link.alias }]
+      : table?.kind === 'config' ? [{ config: table, alias: link.alias }] : [];
   }) ?? [];
 }
 
@@ -103,6 +121,7 @@ export const kinds = {
   table: { label: 'Table', plural: 'Tables' },
   sql: { label: 'SQL query', plural: 'SQL queries' },
   chart: { label: 'Chart', plural: 'Charts' },
+  config: { label: 'Config', plural: 'Configs' },
   group: { label: 'Group', plural: 'Groups' },
 } satisfies Record<BlockKind, { label: string; plural: string }>;
 
@@ -125,6 +144,8 @@ export function createBlock(kind: BlockKind, position: Position): Block {
       return { ...base, kind, sql: 'SELECT 42 AS value;' };
     case 'chart':
       return { ...base, kind, chart: 'bar', x: '', y: '' };
+    case 'config':
+      return { ...base, kind, fields: [], presets: [] };
     case 'group':
       return { ...base, kind };
   }
@@ -159,8 +180,8 @@ export function canConnect(workspace: Workspace, source: string, target: string)
   const from = workspace.blocks.find((block) => block.id === source);
   const to = workspace.blocks.find((block) => block.id === target);
   return Boolean(from && to && source !== target
-    && (from.kind === 'table' || from.kind === 'sql')
-    && (to.kind === 'sql' || to.kind === 'chart' || (from.kind === 'table' && to.kind === 'table'))
+    && (from.kind === 'table' || from.kind === 'sql' || from.kind === 'config')
+    && (to.kind === 'sql' || (from.kind !== 'config' && to.kind === 'chart') || (from.kind !== 'sql' && to.kind === 'table'))
     && !workspace.links.some((link) => link.source === source && link.target === target)
     && !related(workspace, target, 'outputs').has(source));
 }

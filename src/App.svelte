@@ -4,7 +4,7 @@
   import {
     ArrowDownLeft, ArrowUpRight, Braces, ChartColumnIncreasing, Check,
     ChevronDown, CircleAlert, ClipboardPlus, CloudOff, Download, FileText, Focus, Folder, FolderOpen, Layers3, Link2, Maximize,
-    PanelRightClose, PanelRightOpen, Pencil, Play, Plus, Redo2, RefreshCw, Search, Settings as SettingsIcon, Table2, Trash2, Undo2, Unplug,
+    PanelRightClose, PanelRightOpen, Pencil, Play, Plus, Redo2, RefreshCw, Search, Settings as SettingsIcon, SlidersHorizontal, Table2, Trash2, Undo2, Unplug,
     Workflow, X,
   } from 'lucide-svelte';
   import { onMount, tick, untrack } from 'svelte';
@@ -14,6 +14,9 @@
   import CanvasControls from './components/CanvasControls.svelte';
   import type { CanvasPosition, FitCanvas } from './components/CanvasControls.svelte';
   import Modal from './components/Modal.svelte';
+  import ConfirmDialog from './components/ConfirmDialog.svelte';
+  import type { Confirmation } from './components/ConfirmDialog.svelte';
+  import ConfigEditor from './components/ConfigEditor.svelte';
   import TableEditor from './components/TableEditor.svelte';
   import CellInspector from './components/CellInspector.svelte';
   import ResultGrid from './components/ResultGrid.svelte';
@@ -37,8 +40,8 @@
   import { defaultHotkeys, defaultPreferences, eventHotkey, hotkeyLabel, isMac, loadPreferences } from './lib/preferences';
   import type { Preferences } from './lib/preferences';
 
-  const icons = { table: Table2, sql: Braces, chart: ChartColumnIncreasing, group: Folder };
-  const blockKinds: BlockKind[] = ['table', 'sql', 'chart', 'group'];
+  const icons = { table: Table2, sql: Braces, chart: ChartColumnIncreasing, config: SlidersHorizontal, group: Folder };
+  const blockKinds: BlockKind[] = ['table', 'sql', 'chart', 'config', 'group'];
   const blockDragType = 'application/x-dataflow-block';
   const groupInset = { x: 24, y: 55 };
   const addLabel = (kind: BlockKind) => 'Add ' + (kind === 'sql' ? 'SQL query' : kinds[kind].label.toLowerCase());
@@ -102,7 +105,8 @@
   let connectionDrag: { port?: Connection } | undefined;
   let workspaceMenu = $state(false);
   let activeTab = $state<'sql' | 'data'>('sql');
-  let modal = $state<'paste' | 'table' | 'sql' | 'chart' | 'workspace' | 'workspace-file' | 'settings' | 'quick-create' | 'configure' | null>(null);
+  let modal = $state<'paste' | 'table' | 'sql' | 'chart' | 'config' | 'workspace' | 'workspace-file' | 'settings' | 'quick-create' | 'configure' | null>(null);
+  let confirmation = $state.raw<Confirmation>();
   let quickSource = $state('');
   let quickPosition = $state<Position>({ x: 0, y: 0 });
   let quickPointer = $state<Position>({ x: 0, y: 0 });
@@ -407,6 +411,7 @@
         if (before.kind === 'sql') bumpQueryStamp(next.id, before.id);
         delete results[before.id];
       } else if ((block.kind === 'sql' && before.kind === 'sql' && block.sql !== before.sql)
+        || (block.kind === 'config' && before.kind === 'config' && block.fields !== before.fields)
         || (block.kind === 'table' && before.kind === 'table'
           && (block.rows !== before.rows || block.columns !== before.columns || block.numberFormat !== before.numberFormat
             || block.footerRows !== before.footerRows))) {
@@ -560,9 +565,10 @@
   }
 
   function nodeSize(block: Block, focusScope?: ReadonlySet<string>): { width: number; height: number } {
-    if ((block.kind === 'table' || block.kind === 'chart') && block.expanded !== false) {
+    if ((block.kind === 'table' || block.kind === 'chart' || block.kind === 'config') && block.expanded !== false) {
       if (block.expandedSize) return block.expandedSize;
       if (block.kind === 'chart') return { width: 420, height: 320 };
+      if (block.kind === 'config') return { width: 300, height: 260 };
       return { width: 320, height: Math.max(280, 132 + Math.min(block.rows.length, 13) * 28) };
     }
     if (block.kind !== 'group') return { width: 260, height: 228 };
@@ -691,6 +697,10 @@
           toggleExpanded: expandable ? () => toggleExpanded(block) : undefined,
           resize: expandable ? (bounds: ResizeParams) => resizeBlock(block.id, bounds) : undefined,
           canResize: block.kind === 'group' ? (bounds: ResizeParams) => groupCanResize(block, bounds) : undefined,
+          config: block.kind === 'config' ? {
+            patch: (patch: Partial<typeof block>) => patchBlock(block.id, patch),
+            confirm: (request: Confirmation) => confirmation = request,
+          } : undefined,
           query: block.kind === 'sql' ? {
             setPreview: (preview: NonNullable<SqlBlock['preview']>) => {
               if (preview !== (block.preview ?? 'query')) patchBlock(block.id, { preview });
@@ -792,6 +802,7 @@
     const block = workspace.blocks.find((candidate) => candidate.id === id);
     if (block?.kind === 'table') modal = 'table';
     if (block?.kind === 'chart') modal = 'chart';
+    if (block?.kind === 'config') modal = 'config';
     if (block?.kind === 'sql') {
       sqlDraft = block.sql;
       sqlDraftLinks = workspace.links;
@@ -880,7 +891,7 @@
     if (dropPosition && block.kind === 'table') block.expandedSize = { width: 440, height: 300 };
     replaceWorkspace({ ...workspace, blocks: [...workspace.blocks, block] });
     select(block.id);
-    if (kind === 'sql' || kind === 'chart' || (kind === 'table' && !dropPosition)) openBlock(block.id);
+    if (kind === 'sql' || kind === 'chart' || kind === 'config' || (kind === 'table' && !dropPosition)) openBlock(block.id);
     if (!dropPosition) void fitCanvas();
   }
 
@@ -979,7 +990,7 @@
 
   function configureNewBlock(kind: 'table' | 'sql' | 'chart') {
     const source = workspace.blocks.find((block) => block.id === quickSource);
-    if (!source || (kind === 'table' && source.kind !== 'table')) return closeModal();
+    if (!source || (kind === 'table' && source.kind === 'sql') || (kind === 'chart' && source.kind === 'config')) return closeModal();
     const group = groupAtPoint(quickPosition);
     const created = createBlock(kind, group ? groupPosition(quickPosition, group) : quickPosition);
     created.parentId = group?.id;
@@ -1019,7 +1030,11 @@
   }
 
   function removeBlock(block: Block, confirmDelete = true) {
-    if (confirmDelete && !confirm('Delete “' + block.title + '” from this workspace?')) return;
+    if (confirmDelete) {
+      confirmation = { title: 'Delete block?', message: 'Delete “' + block.title + '” from this workspace?',
+        label: 'Delete block', accept: () => removeBlock(block, false) };
+      return;
+    }
     replaceWorkspace({
       ...workspace,
       blocks: workspace.blocks.filter((item) => item.id !== block.id).map((item) =>
@@ -1083,7 +1098,7 @@
     modal = 'paste';
   }
 
-  function importPaste() {
+  function importPaste(confirmed = false) {
     try {
       const target = workspace.blocks.find((item) => item.id === pasteTarget);
       const hasValues = target?.kind === 'table' && target.rows.some((row) => row.cells.some((cell) => cell.trim()));
@@ -1094,7 +1109,11 @@
       const existing = target?.kind === 'table' && (hasValues || (!defaultColumns && !legacyDefaultColumn)) ? target.columns : undefined;
       const data = bindTableFormulas(importGrid(parseDelimited(pasteText), pasteHeader, pasteNumberFormat, existing), tableInputs(workspace, pasteTarget));
       if (target?.kind === 'table') {
-        if (hasValues && !confirm('Replace the existing data in “' + target.title + '”?')) return;
+        if (hasValues && !confirmed) {
+          confirmation = { title: 'Replace table data?', message: 'Replace the existing data in “' + target.title + '”?',
+            label: 'Replace data', accept: () => importPaste(true) };
+          return;
+        }
         patchBlock(target.id, {
           ...data, numberFormat: pasteNumberFormat,
           titleColumns: Math.min(target.titleColumns ?? 0, data.columns.length),
@@ -1133,6 +1152,7 @@
     draftBlock = undefined;
   }
   function keyboard(event: KeyboardEvent) {
+    if (confirmation) return;
     if (event.key === 'Escape' && modal === 'quick-create') closeModal();
     if (event.defaultPrevented || event.isComposing) return;
     const shortcut = eventHotkey(event);
@@ -1427,6 +1447,11 @@
               {/if}
               <button class="button secondary full-width" onclick={() => openBlock(block.id)}><Maximize size={15} /> Open chart</button>
             </div>
+          {:else if block.kind === 'config'}
+            <div class="inspector-body">
+              <div class="result-summary">{countLabel(block.fields.length, 'field')} · {countLabel(block.presets.length, 'preset')}</div>
+              <button class="button secondary full-width" onclick={() => openBlock(block.id)}><SlidersHorizontal size={15} /> Open config</button>
+            </div>
           {:else}
             <div class="inspector-body"><p class="helper-text">{countLabel(workspace.blocks.filter((item) => item.parentId === block.id).length, 'block')} in this group</p></div>
           {/if}
@@ -1438,10 +1463,10 @@
                 {@const input = workspace.blocks.find((item) => item.id === link.source)}
                 <div class="connection-row"><button class="connection-link" onclick={() => focusBlock(link.source)}><Link2 size={14} /><span>{input?.title ?? 'Source'}</span></button><button class="icon-button small" aria-label={'Disconnect ' + (input?.title ?? 'source')} onclick={() => disconnect(link.id)}><Unplug size={13} /></button></div>
                 {#if block.kind === 'sql'}<code class="connection-alias">{link.alias}</code>
-                {:else if block.kind === 'table'}<code class="connection-alias">{link.alias}::…</code>{/if}
+                {:else if block.kind === 'table'}<code class="connection-alias">{link.alias}{input?.kind === 'config' ? '.Field' : '::…'}</code>{/if}
               {/each}
               {#if candidates.length}<select aria-label="Connect input" class="inline-select" value="" onchange={(event) => { const id = event.currentTarget.value; if (id) connect(id, block.id); event.currentTarget.value = ''; }}><option value="">Connect input…</option>{#each candidates as item}<option value={item.id}>{item.title}</option>{/each}</select>
-              {:else if inputLinks.length === 0}<p class="helper-text">{block.kind === 'table' ? 'Connect a table to reference its columns.' : 'Add a table or query to connect it.'}</p>{/if}
+              {:else if inputLinks.length === 0 && block.kind !== 'config'}<p class="helper-text">{block.kind === 'table' ? 'Connect a table or config to reference its values.' : 'Add a data source to connect it.'}</p>{/if}
               {#if block.kind !== 'chart'}
                 <div class="section-title spaced"><ArrowUpRight size={15} /><h3>Outputs</h3><span>{outputLinks.length}</span></div>
                 {#each outputLinks as link (link.id)}
@@ -1473,8 +1498,10 @@
     <div bind:this={quickPicker} class="quick-picker" role="group" aria-label="Add connected block" style:left={quickPointer.x + 'px'} style:top={quickPointer.y + 'px'}>
       <p>Connect from <strong>{quickInput?.title}</strong></p>
       <button bind:this={quickFirstButton} onclick={() => configureNewBlock('sql')}><span class="kind-icon sql"><Braces size={16} /></span><span>SQL query<small>Filter or calculate</small></span></button>
-      <button onclick={() => configureNewBlock('chart')}><span class="kind-icon chart"><ChartColumnIncreasing size={16} /></span><span>Chart<small>Plot the source data</small></span></button>
-      {#if quickInput?.kind === 'table'}
+      {#if quickInput?.kind !== 'config'}
+        <button onclick={() => configureNewBlock('chart')}><span class="kind-icon chart"><ChartColumnIncreasing size={16} /></span><span>Chart<small>Plot the source data</small></span></button>
+      {/if}
+      {#if quickInput?.kind === 'table' || quickInput?.kind === 'config'}
         <button onclick={() => configureNewBlock('table')}><span class="kind-icon table"><Table2 size={16} /></span><span>Table<small>Reference the source in formulas</small></span></button>
       {/if}
     </div>
@@ -1483,7 +1510,13 @@
   {@const draft = draftBlock}
   {@const kindLabel = kinds[draft.kind].label}
   {#snippet content()}
-    <label class="field">Name<input maxlength="100" bind:value={draft.title} /></label>
+    <label class="field">Name<input maxlength="100" bind:value={draft.title}
+      onkeydown={(event) => {
+        if (draft.kind === 'table' && event.key === 'Enter' && !event.isComposing) {
+          event.preventDefault();
+          createConnectedBlock();
+        }
+      }} /></label>
     {#if draft.kind === 'sql'}
       {@render sqlCode(draft.sql, (text) => draft.sql = text)}
     {:else if draft.kind === 'chart'}
@@ -1557,12 +1590,18 @@
   <Modal title={renamingWorkspace ? 'Rename workspace' : 'New workspace'} close={closeModal} children={content} {footer} />
 {:else if modal === 'paste'}
   {#snippet content()}
-    <label class="field">Cell range<textarea class="paste-editor" placeholder={'Date\tCategory\tAmount\n2026-01-01\tGroceries\t24.50'} bind:value={pasteText} spellcheck="false"></textarea></label>
+    <label class="field">Cell range<textarea class="paste-editor" placeholder={'Date\tCategory\tAmount\n2026-01-01\tGroceries\t24.50'} bind:value={pasteText} spellcheck="false"
+      onkeydown={(event) => {
+        if (!pasteTarget && event.key === 'Enter' && !event.shiftKey && !event.isComposing && pasteText.trim()) {
+          event.preventDefault();
+          importPaste();
+        }
+      }}></textarea></label>
     <div class="paste-options"><label class="checkbox"><input type="checkbox" bind:checked={pasteHeader} /> First row contains headers</label>
     <label class="field">Number format<select bind:value={pasteNumberFormat}><option value="auto">Detect automatically</option><option value="decimal-comma">1.234,56</option><option value="decimal-point">1,234.56</option></select></label></div>
     {#if pasteError}<p class="inline-error" role="alert"><CircleAlert size={15} />{pasteError}</p>{/if}
   {/snippet}
-  {#snippet footer()}<button class="button secondary" onclick={closeModal}>Cancel</button><button class="button primary" onclick={importPaste} disabled={!pasteText.trim()}><ClipboardPlus size={15} /> {pasteTarget ? 'Replace table data' : 'Create table'}</button>{/snippet}
+  {#snippet footer()}<button class="button secondary" onclick={closeModal}>Cancel</button><button class="button primary" onclick={() => importPaste()} disabled={!pasteText.trim()}><ClipboardPlus size={15} /> {pasteTarget ? 'Replace table data' : 'Create table'}</button>{/snippet}
   <Modal title="Paste data" subtitle="Copy a cell range in Numbers or Excel and paste it below." close={closeModal} children={content} {footer} />
 {:else if modal === 'table' && selected?.kind === 'table'}
   {@const table = selected}
@@ -1583,6 +1622,15 @@
   {/snippet}
   {#snippet footer()}<button class="button primary" onclick={closeModal}>Done</button>{/snippet}
   <Modal title={table.title} subtitle="Table" wide close={closeModal} children={content} {footer} />
+{:else if modal === 'config' && selected?.kind === 'config'}
+  {@const block = selected}
+  {#snippet content()}
+    <label class="field">Name<input maxlength="100" value={block.title}
+      onchange={(event) => event.currentTarget.value = renameBlock(block.id, event.currentTarget.value)} /></label>
+    <ConfigEditor {block} change={(patch) => patchBlock(block.id, patch)} confirm={(request) => confirmation = request} manage />
+  {/snippet}
+  {#snippet footer()}<button class="button primary" onclick={closeModal}>Done</button>{/snippet}
+  <Modal title={block.title} subtitle="Config" close={closeModal} children={content} {footer} />
 {:else if modal === 'chart' && selected?.kind === 'chart'}
   {@const chart = selected}
   {#snippet content()}
@@ -1611,3 +1659,4 @@
   {#snippet footer()}<button class="button primary" onclick={closeModal}>Done</button>{/snippet}
   <Modal title={chart.title} subtitle="Chart" wide close={closeModal} children={content} {footer} />
 {/if}
+{#if confirmation}<ConfirmDialog request={confirmation} close={() => confirmation = undefined} />{/if}

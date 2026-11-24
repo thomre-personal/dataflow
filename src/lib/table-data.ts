@@ -1,12 +1,13 @@
 import { inferType, parseBoolean, parseDate, parseDecimal, validateCell } from './clipboard.ts';
 import { isFormulaEntry, parseFormula, readFormula } from './formulas.ts';
+import { configValueText } from './config.ts';
 import { dataRowCount, rowNumber, tableInputs } from './workspace.ts';
-import type { BooleanFormula, Column, Formula, OrderedFunction, TableBlock, TableInput, ValueType, Workspace } from './workspace.ts';
+import type { BooleanFormula, Column, Formula, FormulaInput, OrderedFunction, ScalarExpression, TableBlock, ValueType, Workspace } from './workspace.ts';
 
 type CellIssue = { row: number; column: number; message: string };
 type CellValue = { value: string; calculated?: 'number' | 'date' | 'text' | 'boolean'; forcedText?: boolean; message?: string };
 type Decimal = { units: bigint; scale: number };
-type RowFormula = Extract<Formula, { name: 'CONCAT' } | BooleanFormula>;
+type RowFormula = Extract<Formula, { name: 'CONCAT' | 'VALUE' } | BooleanFormula>;
 type AggregateFormula = Exclude<Formula, RowFormula>;
 type TableEvaluation = {
   columns: (Column & { type: ValueType })[];
@@ -71,7 +72,7 @@ export function tableData(table: TableBlock, workspace?: Workspace) {
   return evaluate(table);
 }
 
-function createTableData(table: TableBlock, inputs: TableInput[], evaluate: (table: TableBlock) => TableEvaluation): TableEvaluation {
+function createTableData(table: TableBlock, inputs: FormulaInput[], evaluate: (table: TableBlock) => TableEvaluation): TableEvaluation {
   const rowCount = dataRowCount(table);
   const indices = new Map(table.columns.map((column, index) => [column.id, index]));
   const results = new Map<string, CellValue>();
@@ -84,7 +85,7 @@ function createTableData(table: TableBlock, inputs: TableInput[], evaluate: (tab
     const value = item.cells[column] ?? '';
     if (value.startsWith("'")) return { value: value.slice(1), forcedText: true };
     const formula = readFormula(item, table.columns[column].id);
-    if (formula) return formula.name === 'CONCAT' || 'args' in formula ? readRowFormula(formula, row, column) : calculateAggregate(formula);
+    if (formula) return formula.name === 'CONCAT' || formula.name === 'VALUE' || 'args' in formula ? readRowFormula(formula, row, column) : calculateAggregate(formula);
     if (!isFormulaEntry(value)) return { value };
     const { message } = parseFormula(value, table.columns, column, inputs);
     return { value, message: message ?? 'Re-enter the formula to link its columns.' };
@@ -103,9 +104,55 @@ function createTableData(table: TableBlock, inputs: TableInput[], evaluate: (tab
   }
 
   function evaluateExpression(formula: Formula, row: number): CellValue {
+    if (formula.name === 'VALUE') return evaluateScalar(formula.expression);
     if (formula.name === 'CONCAT') return concat(formula, row);
     if ('args' in formula) return calculateBoolean(formula, row);
     return calculateAggregate(formula);
+  }
+
+  function evaluateScalar(expression: ScalarExpression): CellValue {
+    switch (expression.kind) {
+      case 'number': return { value: expression.value, calculated: 'number' };
+      case 'cell': {
+        const column = indices.get(expression.columnId);
+        const row = expression.row - (table.rowIndexBase ?? 1);
+        if (column === undefined || row < 0 || row >= table.rows.length) return { value: '', message: 'The referenced cell does not exist.' };
+        const cell = read(row, column);
+        const number = !cell.message && numeric(cell, column);
+        return number ? { value: compactDecimal(decimalText(number)), calculated: 'number' } : cell;
+      }
+      case 'config': {
+        const input = inputs.find((item) => 'config' in item && item.config.id === expression.blockId);
+        if (!input || !('config' in input)) return { value: '', message: 'Reconnect the referenced config as an input.' };
+        const field = input.config.fields.find(({ id }) => id === expression.fieldId);
+        if (!field) return { value: '', message: 'The referenced config field was deleted.' };
+        const value = configValueText(field.value);
+        if (field.type === 'toggle') return { value, calculated: 'boolean' };
+        const number = field.type === 'multi' ? null : parseDecimal(value);
+        return number === null ? { value, calculated: 'text' } : { value: number, calculated: 'number' };
+      }
+      case 'binary': {
+        const left = evaluateScalar(expression.left);
+        if (left.message) return left;
+        const right = evaluateScalar(expression.right);
+        if (right.message) return right;
+        if (left.calculated !== 'number' || right.calculated !== 'number') return { value: '', message: 'Arithmetic needs numbers.' };
+        const a = decimal(left.value);
+        const b = decimal(right.value);
+        const operator = expression.operator;
+        let result: Decimal;
+        if (operator === '*') result = { units: a.units * b.units, scale: a.scale + b.scale };
+        else if (operator === '/') {
+          if (!b.units) return { value: '', message: 'Cannot divide by zero.' };
+          const scale = a.scale + 12;
+          result = { units: atScale(a, scale + b.scale) / b.units, scale };
+        } else {
+          const scale = Math.max(a.scale, b.scale);
+          result = { units: atScale(a, scale) + (operator === '+' ? 1n : -1n) * atScale(b, scale), scale };
+        }
+        return { value: compactDecimal(decimalText(result)), calculated: 'number' };
+      }
+    }
   }
 
   function concat(formula: Extract<Formula, { name: 'CONCAT' }>, row: number): CellValue {
@@ -169,8 +216,8 @@ function createTableData(table: TableBlock, inputs: TableInput[], evaluate: (tab
     const conditionId = 'condition' in formula ? formula.condition.tableId : undefined;
     const tableId = sourceId ?? conditionId;
     if (!tableId) return calculate(formula);
-    const input = inputs.find(({ table }) => table.id === tableId);
-    if (!input) return { value: '', message: 'Reconnect the referenced table as an input.' };
+    const input = inputs.find((item) => 'table' in item && item.table.id === tableId);
+    if (!input || !('table' in input)) return { value: '', message: 'Reconnect the referenced table as an input.' };
     return evaluate(input.table).calculate(formula);
   }
 

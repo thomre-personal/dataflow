@@ -1,5 +1,5 @@
 import { canConnect, canGroup, isBooleanFunction, newId } from './workspace.ts';
-import type { Block, Column, Link, Row, Workspace } from './workspace.ts';
+import type { Block, Column, ConfigField, ConfigPreset, Link, Row, Workspace } from './workspace.ts';
 import { isCellStyle } from './cell-style.ts';
 
 const format = 'dataflow-workspace';
@@ -46,6 +46,18 @@ function reference(value: unknown): boolean {
     && ['name', 'letter', 'implicit'].some((kind) => kind === value.reference);
 }
 
+function scalar(value: unknown, depth: number): boolean {
+  if (!record(value) || depth >= 64) return false;
+  switch (value.kind) {
+    case 'number': return typeof value.value === 'string' && /^\d+(?:\.\d+)?$/.test(value.value);
+    case 'cell': return id(value.columnId) && finiteNumber(value.row) && Number.isSafeInteger(value.row) && value.row >= 0;
+    case 'config': return id(value.blockId) && id(value.fieldId);
+    case 'binary': return ['+', '-', '*', '/'].some((operator) => operator === value.operator)
+      && scalar(value.left, depth + 1) && scalar(value.right, depth + 1);
+    default: return false;
+  }
+}
+
 function formula(value: unknown, depth = 0): boolean {
   if (!record(value) || depth >= 64) return false;
   if (isBooleanFunction(value.name)) {
@@ -54,6 +66,7 @@ function formula(value: unknown, depth = 0): boolean {
         : 'boolean' in argument ? typeof argument.boolean === 'boolean' : argument.tableId === undefined && reference(argument)));
   }
   switch (value.name) {
+    case 'VALUE': return scalar(value.expression, 0);
     case undefined: return depth === 0 && reference(value);
     case 'SUM': case 'AVERAGE': case 'AVG': case 'MIN': case 'MAX': case 'MEDIAN':
       return reference(value.source);
@@ -70,6 +83,30 @@ function formula(value: unknown, depth = 0): boolean {
           : 'literal' in part ? typeof part.literal === 'string' : reference(part)));
     default: return false;
   }
+}
+
+const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === 'string');
+
+function configField(value: unknown): value is ConfigField {
+  if (!record(value) || !id(value.id) || typeof value.name !== 'string' || !value.name || value.name !== value.name.trim()) return false;
+  switch (value.type) {
+    case 'input': return typeof value.value === 'string';
+    case 'toggle': return typeof value.value === 'boolean';
+    case 'slider': return finiteNumber(value.value) && finiteNumber(value.min) && finiteNumber(value.max)
+      && finiteNumber(value.step) && value.step > 0 && value.min < value.max && value.value >= value.min && value.value <= value.max;
+    case 'multi': {
+      const options = value.options;
+      return strings(options) && new Set(options).size === options.length
+        && strings(value.value) && value.value.every((option) => options.includes(option));
+    }
+    default: return false;
+  }
+}
+
+function configPreset(value: unknown): value is ConfigPreset {
+  return record(value) && id(value.id) && typeof value.name === 'string' && Boolean(value.name.trim()) && record(value.values)
+    && Object.entries(value.values).every(([key, entry]) => id(key)
+      && (typeof entry === 'string' || typeof entry === 'boolean' || finiteNumber(entry) || strings(entry)));
 }
 
 function row(value: unknown): value is Row {
@@ -90,6 +127,8 @@ function block(value: unknown): value is Block {
     || !finiteNumber(value.expandedSize.height) || value.expandedSize.height <= 0)) return false;
   switch (value.kind) {
     case 'group': return true;
+    case 'config': return objectsWithIds(value.fields, configField) && objectsWithIds(value.presets, configPreset)
+      && new Set(value.fields.map((field) => field.name.toLowerCase())).size === value.fields.length;
     case 'chart': return (value.chart === 'bar' || value.chart === 'line')
       && typeof value.x === 'string' && typeof value.y === 'string';
     case 'table': {

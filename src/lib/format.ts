@@ -1,10 +1,23 @@
 import { describeCellIssue, tableData } from './table-data.ts';
 import { cellFontLineHeight } from './cell-style.ts';
+import { parseDecimal } from './clipboard.ts';
+import { configValueText } from './config.ts';
 import { dataRowCount, defaultPreviewRowHeight, defaultTableColumnWidth } from './workspace.ts';
-import type { ChartBlock, Result, TableBlock, Workspace } from './workspace.ts';
+import type { ChartBlock, ConfigBlock, Result, TableBlock, Workspace } from './workspace.ts';
 
 export const countLabel = (value: number, singular: string, plural = singular + 's') =>
   value.toLocaleString('en') + ' ' + (value === 1 ? singular : plural);
+
+export function configResult(block: ConfigBlock): Result {
+  if (!block.fields.length) throw new Error('Add at least one field to ' + block.title + '.');
+  const fields = block.fields.map((field) => {
+    const value = configValueText(field.value);
+    const number = field.type === 'input' || field.type === 'slider' ? parseDecimal(value) : null;
+    const type: Result['columns'][number]['type'] = field.type === 'toggle' ? 'boolean' : number === null ? 'text' : 'decimal';
+    return { column: { name: field.name, type }, value: number ?? value };
+  });
+  return { columns: fields.map(({ column }) => column), rows: [fields.map(({ value }) => value)] };
+}
 
 export function tableResult(table: TableBlock, workspace?: Workspace): Result {
   const data = tableData(table, workspace);

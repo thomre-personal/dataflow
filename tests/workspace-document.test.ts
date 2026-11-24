@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { bindWorkspaceFormulas } from '../src/lib/formulas.ts';
 import { parseWorkspaceDocument, serializeWorkspaceDocument } from '../src/lib/workspace-document.ts';
-import { starterWorkspace } from '../src/lib/workspace.ts';
+import { createBlock, starterWorkspace } from '../src/lib/workspace.ts';
 
 test('workspace files round-trip canvas state and preserve stable formula references', () => {
   const source = starterWorkspace();
@@ -18,6 +18,10 @@ test('workspace files round-trip canvas state and preserve stable formula refere
   table.cellStyles = { 'txn-1': { category: { color: '#123456', background: '#abcdef', fontSize: 22, italic: true } } };
   source.blocks.unshift({ id: 'group-1', kind: 'group', title: 'Summary', position: { x: 20, y: 30 }, expanded: false });
   table.parentId = 'group-1';
+  const config = createBlock('config', { x: 0, y: 0 });
+  config.fields = [{ id: 'rate', name: 'Rate', type: 'slider', min: 0, max: 1, step: 0.05, value: 0.15 }];
+  config.presets = [{ id: 'baseline', name: 'Baseline', values: { rate: 0.15 } }];
+  source.blocks.push(config);
 
   const file = serializeWorkspaceDocument(bindWorkspaceFormulas(source));
   const reopened = parseWorkspaceDocument(file, 'browser-copy');
@@ -26,6 +30,7 @@ test('workspace files round-trip canvas state and preserve stable formula refere
   assert.equal(serializeWorkspaceDocument(reopened), file);
   assert.deepEqual(reopened.links, source.links);
   assert.deepEqual(reopened.blocks[2], query);
+  assert.deepEqual(reopened.blocks.at(-1), config);
   const reopenedTable = reopened.blocks[1];
   if (reopenedTable.kind !== 'table') throw new Error('Expected the sample table after its group.');
   assert.equal(reopenedTable.parentId, 'group-1');

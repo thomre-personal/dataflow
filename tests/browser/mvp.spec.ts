@@ -23,7 +23,7 @@ test('pastes a Numbers-style range, queries exact values, links a chart and rest
   await page.keyboard.press('ControlOrMeta+V');
   await expect(cellRange).toHaveValue(/1\.234,50/);
   await page.getByRole('combobox', { name: 'Number format' }).selectOption('decimal-comma');
-  await page.getByRole('button', { name: 'Create table' }).click();
+  await cellRange.press('Enter');
   const pastedTable = page.getByRole('dialog', { name: 'Pasted data' });
   await expect(pastedTable.getByRole('combobox', { name: 'Style', exact: true })).toHaveValue('grid');
   await expect(pastedTable.getByRole('textbox', { name: 'Note row 1' })).toHaveValue('');
@@ -352,8 +352,9 @@ test('creates a connected table from a table output and resolves its source in f
   await picker.getByRole('button', { name: /^Table/ }).click();
   const config = page.getByRole('dialog', { name: 'Configure table', exact: true });
   await expect(config).toContainText('Input: Transactions');
-  await config.getByRole('textbox', { name: 'Name', exact: true }).fill('Transaction summary');
-  await config.getByRole('button', { name: 'Create table', exact: true }).click();
+  const name = config.getByRole('textbox', { name: 'Name', exact: true });
+  await name.fill('Transaction summary');
+  await name.press('Enter');
   const inspector = page.getByRole('complementary', { name: 'Block inspector' });
   await expect(inspector.getByRole('heading', { name: 'Transaction summary', exact: true })).toBeVisible();
   await expect(inspector.getByRole('button', { name: 'Disconnect Transactions', exact: true })).toBeVisible();
@@ -363,6 +364,89 @@ test('creates a connected table from a table output and resolves its source in f
   await cell.fill('=MEDIAN(Transactions::Amount)');
   await cell.press('Enter');
   await expect(cell).toHaveValue('104.775');
+});
+
+test('stores config presets and supplies live values to table formulas and SQL', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Add config', exact: true }).click();
+  const name = page.getByRole('dialog', { name: 'Untitled config', exact: true }).getByRole('textbox', { name: 'Name', exact: true });
+  await name.fill('MeineConfig');
+  await name.press('Tab');
+  const config = page.getByRole('dialog', { name: 'MeineConfig', exact: true });
+  const field = (name: string) => config.getByRole('region', { name, exact: true });
+  let index = 0;
+  const addField = async (name: string, type: string) => {
+    await config.getByRole('button', { name: 'Add field', exact: true }).click();
+    const input = field('Value' + ++index).getByRole('textbox', { name: 'Field name', exact: true });
+    await input.fill(name);
+    await input.press('Tab');
+    await field(name).getByRole('combobox', { name: 'Control' }).selectOption(type);
+  };
+  await addField('SoliFactor', 'slider');
+  for (const [name, value] of [['Maximum', '0.1'], ['Step', '0.05']]) {
+    const input = field('SoliFactor').getByRole('spinbutton', { name, exact: true });
+    await input.fill(value);
+    await input.press('Tab');
+  }
+  const slider = field('SoliFactor').getByRole('slider', { name: 'SoliFactor' });
+  await slider.press('End');
+  await expect(slider).toHaveValue('0.1');
+  await addField('Enabled', 'toggle');
+  await field('Enabled').getByRole('checkbox', { name: 'Enabled' }).check();
+  await addField('Note', 'input');
+  await field('Note').getByRole('textbox', { name: 'Note', exact: true }).fill('Baseline');
+  await addField('Regions', 'multi');
+  const options = field('Regions').getByRole('textbox', { name: 'Options (one per line)' });
+  await options.fill('EU\nUS');
+  await options.press('Tab');
+  for (const option of ['EU', 'US']) await field('Regions').getByRole('checkbox', { name: option }).check();
+  await config.getByRole('textbox', { name: 'Preset name' }).fill('Baseline');
+  await config.getByRole('button', { name: 'Save preset' }).click();
+  await slider.press('Home');
+  await field('Enabled').getByRole('checkbox', { name: 'Enabled' }).uncheck();
+  await field('Regions').getByRole('checkbox', { name: 'US' }).uncheck();
+  await config.getByRole('button', { name: 'Load preset' }).click();
+  await expect(slider).toHaveValue('0.1');
+  await expect(field('Enabled').getByRole('checkbox', { name: 'Enabled' })).toBeChecked();
+  await expect(field('Regions').getByRole('checkbox', { name: 'US' })).toBeChecked();
+  await expect(field('Note').getByRole('textbox', { name: 'Note', exact: true })).toHaveValue('Baseline');
+  await config.getByRole('button', { name: 'Done' }).click();
+
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const table = page.getByRole('dialog', { name: 'Untitled table', exact: true });
+  await table.getByRole('textbox', { name: 'A row 1', exact: true }).fill('120');
+  await table.getByRole('button', { name: 'Done' }).click();
+  const inspector = page.getByRole('complementary', { name: 'Block inspector' });
+  await inspector.getByRole('combobox', { name: 'Connect input' }).selectOption({ label: 'MeineConfig' });
+  await inspector.getByRole('button', { name: 'Edit table', exact: true }).click();
+  const formula = table.getByRole('textbox', { name: 'B row 1', exact: true });
+  await formula.fill('=A1*MeineConfig.SoliFactor');
+  await formula.press('Enter');
+  await expect(formula).toHaveValue('12');
+  await table.getByRole('button', { name: 'Done' }).click();
+
+  await page.getByRole('button', { name: 'Add SQL query', exact: true }).click();
+  const sql = page.getByRole('dialog', { name: 'Edit SQL', exact: true });
+  await sql.getByRole('combobox', { name: 'Connect input' }).selectOption({ label: 'MeineConfig' });
+  await sql.getByRole('textbox', { name: 'SQL code' }).fill('SELECT SoliFactor AS factor FROM meineconfig;');
+  await sql.getByRole('button', { name: 'Save and run' }).click();
+  await expect(inspector.getByRole('cell', { name: '0.1', exact: true })).toBeVisible();
+
+  const configCard = canvasBlock(page, 'MeineConfig');
+  await configCard.getByRole('slider', { name: 'SoliFactor' }).press('ArrowLeft');
+  await expect(inspector.getByRole('cell', { name: '0.05', exact: true })).toBeVisible();
+  const output = canvasBlock(page, 'Untitled table').getByRole('textbox', { name: 'B row 1', exact: true });
+  await expect(output).toHaveValue('6');
+  await configCard.getByRole('button', { name: 'Open config', exact: true }).click();
+  await config.getByRole('combobox', { name: 'Preset', exact: true }).selectOption({ label: 'Baseline' });
+  await config.getByRole('button', { name: 'Load preset', exact: true }).click();
+  await expect(slider).toHaveValue('0.1');
+  await config.getByRole('button', { name: 'Delete preset', exact: true }).click();
+  const confirmation = page.getByRole('dialog', { name: 'Delete preset?', exact: true });
+  await confirmation.getByRole('button', { name: 'Delete preset', exact: true }).click();
+  await expect(config.getByRole('combobox', { name: 'Preset', exact: true })).toHaveCount(0);
+  await config.getByRole('button', { name: 'Done' }).click();
+  await expect(output).toHaveValue('12');
 });
 
 test('switches the SQL card between code and scrollable results and saves the choice', async ({ page }) => {
@@ -458,8 +542,14 @@ test('renames inline, deletes from the canvas or inspector, and restores changes
   await expect(inspector.getByText('transactions', { exact: true })).toBeVisible();
 
   await page.getByRole('complementary', { name: 'Workspace blocks' }).getByRole('button', { name: 'Household spending', exact: true }).click();
-  page.once('dialog', (dialog) => dialog.accept());
+  const confirmation = page.getByRole('dialog', { name: 'Delete block?', exact: true });
   await page.keyboard.press('Delete');
+  await expect(confirmation).toContainText('Household spending');
+  await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(table).toBeVisible();
+  await page.getByRole('complementary', { name: 'Workspace blocks' }).getByRole('button', { name: 'Household spending', exact: true }).click();
+  await page.keyboard.press('Delete');
+  await confirmation.getByRole('button', { name: 'Delete block', exact: true }).click();
   await expect(table).toHaveCount(0);
   await undo.click();
   await expect(table).toBeVisible();
@@ -467,8 +557,8 @@ test('renames inline, deletes from the canvas or inspector, and restores changes
   await expect(table).toHaveCount(0);
   await page.keyboard.press('ControlOrMeta+z');
   await expect(table).toBeVisible();
-  page.once('dialog', (dialog) => dialog.accept());
   await inspector.getByRole('button', { name: 'Delete block' }).click();
+  await confirmation.getByRole('button', { name: 'Delete block', exact: true }).click();
   await expect(table).toHaveCount(0);
   await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
 });

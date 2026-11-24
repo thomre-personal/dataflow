@@ -1,13 +1,13 @@
 <script lang="ts">
   import { formulaFunctions } from '../lib/formulas';
-  import type { Formula } from '../lib/workspace';
+  import type { FormulaCall } from '../lib/formulas';
 
   let { anchor, id, choices, active, pick }: {
     anchor: HTMLTextAreaElement;
     id: string;
-    choices: Formula['name'][];
-    active: Formula['name'];
-    pick: (name: Formula['name']) => void;
+    choices: FormulaCall[];
+    active: FormulaCall;
+    pick: (name: FormulaCall) => void;
   } = $props();
   let popup = $state<HTMLDivElement>();
 

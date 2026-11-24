@@ -4,8 +4,8 @@ import workerUrl from '@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js?url
 import wasmEh from '@duckdb/duckdb-wasm/dist/duckdb-eh.wasm?url';
 import workerEhUrl from '@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js?url';
 import { MAX_ROWS } from './clipboard';
-import { tableResult } from './format';
-import type { Block, Result, TableBlock, ValueType, Workspace } from './workspace';
+import { configResult, tableResult } from './format';
+import type { Block, Result, ValueType, Workspace } from './workspace';
 
 const bundles: duckdb.DuckDBBundles = {
   mvp: { mainModule: wasm, mainWorker: workerUrl },
@@ -64,13 +64,12 @@ function columnType(sqlType: string): ValueType {
   return 'text';
 }
 
-async function createSource(connection: duckdb.AsyncDuckDBConnection, name: string, table: TableBlock, workspace: Workspace) {
+async function createSource(connection: duckdb.AsyncDuckDBConnection, name: string, title: string, result: Result) {
   const names = new Set<string>();
-  const result = tableResult(table, workspace);
   const columns = result.columns.map((column) => {
     const name = column.name.trim();
     const key = name.toLowerCase();
-    if (!name || names.has(key)) throw new Error(table.title + ' has empty or duplicate column names.');
+    if (!name || names.has(key)) throw new Error(title + ' has empty or duplicate column names.');
     names.add(key);
     return { ...column, name };
   });
@@ -121,7 +120,9 @@ async function execute(db: duckdb.AsyncDuckDB, workspace: Workspace, blockId: st
       if (existing) return existing;
       const name = '_dataflow_' + block.id.replace(/[^a-z0-9]/gi, '_');
       if (block.kind === 'table') {
-        await createSource(connection, name, block, workspace);
+        await createSource(connection, name, block.title, tableResult(block, workspace));
+      } else if (block.kind === 'config') {
+        await createSource(connection, name, block.title, configResult(block));
       } else if (block.kind === 'sql') {
         const links = workspace.links.filter((link) => link.target === block.id);
         const inputs = [];
@@ -145,7 +146,7 @@ async function execute(db: duckdb.AsyncDuckDB, workspace: Workspace, blockId: st
           for (const alias of created) await connection.query('DROP VIEW ' + identifier(alias));
         }
       } else {
-        throw new Error('Connect a table or SQL query.');
+        throw new Error('Connect a table, config, or SQL query.');
       }
       tables.set(block.id, name);
       return name;
