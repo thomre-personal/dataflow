@@ -4,14 +4,14 @@
     Bold, ChevronRight, ClipboardPaste, Copy, Italic, RotateCcw, Search, Strikethrough, Underline, X,
   } from 'lucide-svelte';
   import { cellFonts, cellFontSize } from '../lib/cell-style';
-  import type { CellStyle } from '../lib/cell-style';
+  import type { CellStyle, CellTextStyle } from '../lib/cell-style';
   import { formulaCatalog, formulaFunctions, usedFormulaFunctions } from '../lib/formulas';
   import type { FormulaFunction } from '../lib/formulas';
   import { hotkeyLabel } from '../lib/preferences';
   import type { Hotkeys } from '../lib/preferences';
   import Modal from './Modal.svelte';
 
-  let { address, column, formula, format, defaultBold, selectionKey, axis, hotkeys, canPaste, clear, changeStyle, copyStyle, pasteStyle, resetStyle }: {
+  let { address, column, formula, format, defaultBold, selectionKey, axis, hotkeys, canPaste, clear, changeStyle, toggleTextStyle, copyStyle, pasteStyle, resetStyle }: {
     address: string;
     column?: string;
     formula: string;
@@ -23,6 +23,7 @@
     canPaste: boolean;
     clear: () => void;
     changeStyle: (patch: CellStyle) => void;
+    toggleTextStyle: (style: CellTextStyle) => void;
     copyStyle: () => void;
     pasteStyle: () => void;
     resetStyle: () => void;
@@ -30,10 +31,10 @@
   let styleLabel = $derived(axis ? axis + ' styles' : 'cell style');
 
   const decorations = [
-    { key: 'bold', label: 'Bold', icon: Bold },
-    { key: 'italic', label: 'Italic', icon: Italic },
-    { key: 'underline', label: 'Underline', icon: Underline },
-    { key: 'strikethrough', label: 'Strikethrough', icon: Strikethrough },
+    { key: 'bold', label: 'Bold', icon: Bold, shortcut: 'toggleBold' },
+    { key: 'italic', label: 'Italic', icon: Italic, shortcut: 'toggleItalic' },
+    { key: 'underline', label: 'Underline', icon: Underline, shortcut: 'toggleUnderline' },
+    { key: 'strikethrough', label: 'Strikethrough', icon: Strikethrough, shortcut: undefined },
   ] as const;
   const colors = [
     { key: 'color', label: 'Font color', initial: '#000000', theme: 'var(--text)' },
@@ -100,10 +101,11 @@
     <h4>Formatting</h4>
     <div class="cell-format-row">
       <div class="cell-format-buttons" role="group" aria-label="Text styles">
-        {#each decorations as { key, label, icon: Icon } (key)}
+        {#each decorations as { key, label, icon: Icon, shortcut } (key)}
           {@const enabled = format[key] ?? (key === 'bold' && defaultBold)}
-          <button type="button" class="icon-button small" aria-label={label} aria-pressed={enabled} title={label}
-            onclick={() => changeStyle({ [key]: !enabled })}><Icon size={15} /></button>
+          <button type="button" class="icon-button small" aria-label={label} aria-pressed={enabled}
+            title={shortcut ? label + ' (' + hotkeyLabel(hotkeys[shortcut]) + ')' : label}
+            onclick={() => toggleTextStyle(key)}><Icon size={15} /></button>
         {/each}
       </div>
       <div class="cell-format-buttons" role="group" aria-label="Style actions">

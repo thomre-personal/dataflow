@@ -19,6 +19,7 @@ export type CellStyle = {
   verticalAlign?: 'top' | 'middle' | 'bottom';
 };
 export type CellStyles = Record<string, Record<string, CellStyle>>;
+export type CellTextStyle = keyof Pick<CellStyle, 'bold' | 'italic' | 'underline' | 'strikethrough'>;
 export type CellAddress = { rowId: string; columnId: string };
 export type CellSelection =
   | (CellAddress & { axis?: undefined; end?: CellAddress })

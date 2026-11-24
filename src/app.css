@@ -208,6 +208,9 @@ code { font-family: var(--mono); }
 .node-heading { cursor: grab; padding: 8px 11px; display: flex; align-items: center; gap: 9px; min-width: 0; border-bottom: 1px solid var(--divider); border-radius: 10px 10px 0 0; }
 .node-heading:active { cursor: grabbing; }
 .node-heading > div { flex: 1; min-width: 0; }
+.node-heading .node-query-toggle { display: flex; flex: 0 0 auto; gap: 2px; align-items: center; padding: 2px; border: 1px solid var(--divider); border-radius: 6px; background: var(--raised); cursor: default; }
+.node-query-toggle button { padding: 3px 5px; border-radius: 4px; color: var(--muted); font-size: 10px; font-weight: 640; }
+.node-query-toggle button:hover, .node-query-toggle button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
 .node-heading p { color: var(--subtle); font-size: 10px; font-weight: 620; margin-bottom: 1px; }
 .node-heading h3 { font-size: 14px; line-height: 19px; font-weight: 720; letter-spacing: -.2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .block-name-button { display: inline-flex; align-items: center; max-width: 100%; gap: 4px; text-align: left; border-radius: 3px; cursor: text; }

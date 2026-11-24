@@ -293,6 +293,64 @@ test('configures and connects a SQL query and chart through hovered output handl
   await expect(inspector.getByRole('img', { name: 'total chart' })).toBeVisible();
 });
 
+test('creates a connected table from a table output and resolves its source in formulas', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('img', { name: 'total chart' })).toBeVisible();
+  const picker = await dragOutput(page, 'Transactions', .20);
+  await picker.getByRole('button', { name: /^Table/ }).click();
+  const config = page.getByRole('dialog', { name: 'Configure table', exact: true });
+  await expect(config).toContainText('Input: Transactions');
+  await config.getByRole('textbox', { name: 'Name', exact: true }).fill('Transaction summary');
+  await config.getByRole('button', { name: 'Create table', exact: true }).click();
+  const inspector = page.getByRole('complementary', { name: 'Block inspector' });
+  await expect(inspector.getByRole('heading', { name: 'Transaction summary', exact: true })).toBeVisible();
+  await expect(inspector.getByRole('button', { name: 'Disconnect Transactions', exact: true })).toBeVisible();
+  await inspector.getByRole('button', { name: 'Edit table', exact: true }).click();
+  const table = page.getByRole('dialog', { name: 'Transaction summary', exact: true });
+  const cell = table.getByRole('textbox', { name: 'A row 1', exact: true });
+  await cell.fill('=MEDIAN(Transactions::Amount)');
+  await cell.press('Enter');
+  await expect(cell).toHaveValue('104.775');
+});
+
+test('switches the SQL card between code and scrollable results and saves the choice', async ({ page }) => {
+  await page.goto('/');
+  const card = canvasBlock(page, 'Monthly totals');
+  const toggle = card.getByRole('group', { name: 'SQL preview', exact: true });
+  const showSql = toggle.getByRole('button', { name: 'SQL', exact: true });
+  const showResults = toggle.getByRole('button', { name: 'Results', exact: true });
+  const results = card.getByRole('region', { name: 'Query results', exact: true });
+  await expect(showSql).toHaveAttribute('aria-pressed', 'true');
+  await expect(card.locator('.node-code')).toContainText('FROM transactions');
+  await showResults.click();
+  await expect(showResults).toHaveAttribute('aria-pressed', 'true');
+  await expect(results.getByRole('cell', { name: '1080.20', exact: true })).toBeVisible();
+  await showSql.click();
+  await expect(results).toHaveCount(0);
+  await expect(card.locator('.node-code')).toBeVisible();
+  await showResults.click();
+
+  await card.getByRole('button', { name: 'Open query', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit SQL', exact: true });
+  await editor.getByRole('textbox', { name: 'SQL code', exact: true }).fill('SELECT i AS entry FROM range(1, 41) t(i);');
+  await editor.getByRole('button', { name: 'Save and run', exact: true }).click();
+  await expect(results.getByRole('table')).toHaveAttribute('aria-rowcount', '41');
+  await results.evaluate((element) => element.scrollTop = element.scrollHeight);
+  await expect(results.getByRole('cell', { name: '40', exact: true })).toBeVisible();
+  await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(showResults).toHaveAttribute('aria-pressed', 'true');
+  await expect(results.getByRole('columnheader', { name: 'entry' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Add SQL query', exact: true }).click();
+  await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
+  const newCard = canvasBlock(page, 'Untitled SQL query');
+  await newCard.getByRole('button', { name: 'Results', exact: true }).click();
+  await expect(newCard.getByText('Run the query to see results.', { exact: true })).toBeVisible();
+  await newCard.getByRole('button', { name: 'Run query', exact: true }).click();
+  await expect(newCard.getByRole('cell', { name: '42', exact: true })).toBeVisible();
+});
+
 test('opens the SQL editor from the data tab, discards a draft, and resizes a chart that starts expanded', async ({ page }) => {
   await page.goto('/');
   const inspector = page.getByRole('complementary', { name: 'Block inspector' });
@@ -926,6 +984,42 @@ test('formats cells and pastes a copied style into a range without changing its 
   const styled = locked.getByRole('cell', { name: 'One', exact: true });
   await expect(styled).toHaveCSS('background-color', 'rgb(240, 216, 149)');
   await expect(styled).toHaveCSS('font-size', '25px');
+});
+
+test('toggles bold, italic and underline with shortcuts on selected cells', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'platform', { get: () => 'MacIntel' }));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Untitled table', exact: true });
+  const first = dialog.getByRole('textbox', { name: 'A row 1', exact: true });
+  const second = dialog.getByRole('textbox', { name: 'B row 1', exact: true });
+  await first.fill('Keep this');
+  await first.press('Enter');
+  await second.click({ modifiers: ['Shift'] });
+  const format = dialog.getByRole('region', { name: 'Cell formatting' });
+  for (const [shortcut, label, property, on, off] of [
+    ['Meta+b', 'Bold', 'font-weight', '700', '400'],
+    ['Meta+i', 'Italic', 'font-style', 'italic', 'normal'],
+    ['Meta+u', 'Underline', 'text-decoration-line', 'underline', 'none'],
+  ]) {
+    await page.keyboard.press(shortcut);
+    await expect(format.getByRole('button', { name: label, exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(first).toHaveCSS(property, on);
+    await expect(second).toHaveCSS(property, on);
+    await page.keyboard.press(shortcut);
+    await expect(first).toHaveCSS(property, off);
+    await expect(second).toHaveCSS(property, off);
+  }
+  await expect(first).toHaveValue('Keep this');
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+  await page.getByRole('button', { name: 'Fit canvas', exact: true }).click();
+  await waitForCanvasFit(page);
+  const card = canvasBlock(page, 'Untitled table');
+  await card.getByRole('button', { name: 'Select row 1', exact: true }).click();
+  await page.keyboard.press('Meta+b');
+  await expect(card.getByRole('textbox', { name: 'B row 1', exact: true })).toHaveCSS('font-weight', '700');
+  await page.keyboard.press('Meta+z');
+  await expect(card.getByRole('textbox', { name: 'B row 1', exact: true })).toHaveCSS('font-weight', '400');
 });
 
 test('copies the individual cell styles of a row or column without changing formulas or values', async ({ page }) => {

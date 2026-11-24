@@ -6,8 +6,10 @@ import { starterWorkspace } from '../src/lib/workspace.ts';
 
 test('workspace files round-trip canvas state and preserve stable formula references', () => {
   const source = starterWorkspace();
-  const table = source.blocks[0];
+  const [table, query] = source.blocks;
   if (table.kind !== 'table') throw new Error('Expected the sample table first.');
+  if (query.kind !== 'sql') throw new Error('Expected the sample query after the table.');
+  query.preview = 'results';
   table.rows.push({ id: 'footer-1', cells: ['Total', '', '=SUM(Amount)'] });
   table.rows[0].cells[1] = '=AND(TRUE, NOT(FALSE))';
   table.footerRows = 1;
@@ -23,6 +25,7 @@ test('workspace files round-trip canvas state and preserve stable formula refere
   assert.notEqual(reopened.id, source.id);
   assert.equal(serializeWorkspaceDocument(reopened), file);
   assert.deepEqual(reopened.links, source.links);
+  assert.deepEqual(reopened.blocks[2], query);
   const reopenedTable = reopened.blocks[1];
   if (reopenedTable.kind !== 'table') throw new Error('Expected the sample table after its group.');
   assert.equal(reopenedTable.parentId, 'group-1');

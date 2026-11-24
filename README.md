@@ -21,9 +21,9 @@ Open [DataFlow on your computer](http://127.0.0.1:5173/). Use that same address 
 4. Add a **Chart** block. In the chart dialog, choose the source, the chart type, and the axes.
 5. Type in **Find a block** at the top and choose a match to see its inputs and outputs. **Cmd+K** or **Ctrl+K** focuses the search. Drag from an output port to an input port to connect blocks. Use the inspector to assign a block to a group.
 
-Tables and charts start expanded on the canvas. Drag any edge or corner to resize one, or use the collapse button for a smaller preview. Edit expanded tables directly on the canvas. Choose **Lock** for a read-only view and **Unlock** to edit again. When you hover over a table or SQL query, drag its **+** output onto an empty part of the canvas to configure a connected query or chart.
+Tables and charts start expanded on the canvas. Drag any edge or corner to resize one, or use the collapse button for a smaller preview. Edit expanded tables directly on the canvas. Choose **Lock** for a read-only view and **Unlock** to edit again. Drag a **+** output onto an empty part of the canvas to configure a connected query or chart. When the source is a table, you can also create a connected table and reference the source in formulas.
 
-Click a block name to rename it directly on the canvas. Press **Enter** to save or **Esc** to cancel. **Open query** opens the SQL editor in a dialog. **Open chart** opens the chart preview and settings in a dialog. To remove a selected block, press **Delete** or choose **Delete block** at the bottom of the inspector.
+Click a block name to rename it directly on the canvas. Press **Enter** to save or **Esc** to cancel. In a SQL block, choose **SQL** or **Results** to switch between the code preview and the scrollable result table. The workspace saves this choice for each SQL block. Use **Run** to execute the query and **Open query** to edit it. **Open chart** opens the chart preview and settings in a dialog. To remove a selected block, press **Delete** or choose **Delete block** at the bottom of the inspector.
 
 Click a connection line and press **Delete** to disconnect two blocks. You can also disconnect inputs in the inspector. Table formulas that depend on a removed connection show a validation error. **Undo** restores the connection.
 
@@ -56,6 +56,8 @@ Type `=` to see formula suggestions. Use the arrow keys and **Return** to choose
 Select a cell to see its formula and the functions it uses in **Cell options**. Expand a function for its syntax and an example. **Search functions** filters the full catalog below the functions used in the cell. Cell options are also available in the table dialog.
 
 Use **Formatting** in **Cell options** to set the font, size, text styles, alignment, font color, and background color. Choose a color from the palette or the custom picker, then choose **Apply**. Formatting applies to every selected cell.
+
+Press **Cmd+B**, **Cmd+I**, or **Cmd+U** to toggle bold, italic, or underline for the selected cells. Use **Ctrl** on other platforms. You can change these shortcuts in **Settings**.
 
 With a selection, use **Cmd+C** and **Cmd+V** to copy and paste complete cells within DataFlow. Use **Ctrl+C** and **Ctrl+V** on other platforms. While editing, those shortcuts act on the text in the editor.
 

@@ -24,7 +24,7 @@
   import { importGrid, parseDelimited } from './lib/clipboard';
   import { bindTableFormulas, bindWorkspaceFormulas, cellFormulaText, isFormulaEntry } from './lib/formulas';
   import { cellSelectionBounds, updateCellStyles } from './lib/cell-style';
-  import type { CellSelection, CellStyle } from './lib/cell-style';
+  import type { CellSelection, CellStyle, CellTextStyle } from './lib/cell-style';
   import { describeCellIssue, invalidTableCells, tableData } from './lib/table-data';
   import { chartSeries, countLabel, tableResult } from './lib/format';
   import { loadLibrary, loadWorkspaceFiles, saveLibrary } from './lib/storage';
@@ -106,7 +106,8 @@
   let quickSource = $state('');
   let quickPosition = $state<Position>({ x: 0, y: 0 });
   let quickPointer = $state<Position>({ x: 0, y: 0 });
-  let draftBlock = $state<SqlBlock | ChartBlock | undefined>();
+  let draftBlock = $state<TableBlock | SqlBlock | ChartBlock | undefined>();
+  let quickPicker = $state<HTMLDivElement>();
   let sqlDraft = $state('');
   let sqlDraftLinks = $state<Link[]>([]);
   let quickFirstButton = $state<HTMLButtonElement>();
@@ -690,6 +691,12 @@
           toggleExpanded: expandable ? () => toggleExpanded(block) : undefined,
           resize: expandable ? (bounds: ResizeParams) => resizeBlock(block.id, bounds) : undefined,
           canResize: block.kind === 'group' ? (bounds: ResizeParams) => groupCanResize(block, bounds) : undefined,
+          query: block.kind === 'sql' ? {
+            setPreview: (preview: NonNullable<SqlBlock['preview']>) => {
+              if (preview !== (block.preview ?? 'query')) patchBlock(block.id, { preview });
+            },
+            run: () => void runSQL(block, false),
+          } : undefined,
           group: block.kind === 'group' ? {
             drop: groupDrop,
             count: childrenByParent.get(block.id)?.length ?? 0,
@@ -743,6 +750,12 @@
     if (selected?.kind !== 'table' || !selectedCellBounds) return;
     const cellStyles = updateCellStyles(selected, selectedCellBounds, update);
     if (cellStyles !== selected.cellStyles) patchBlock(selected.id, { cellStyles });
+  }
+
+  function toggleSelectedTextStyle(key: CellTextStyle) {
+    if (!selectedTableCell) return;
+    const enabled = selectedTableCell.format[key] ?? (key === 'bold' && selectedTableCell.defaultBold);
+    formatSelectedCells((style) => ({ ...style, [key]: !enabled }));
   }
 
   function copyCellStyle() {
@@ -954,22 +967,25 @@
     if (hit.closest('.svelte-flow__node') && !hit.matches('.group-card:not(.collapsed)')) return;
     quickSource = source;
     quickPosition = { ...connection.to };
-    quickPointer = { x: Math.max(8, Math.min(pointer.clientX, innerWidth - 256)), y: Math.max(8, Math.min(pointer.clientY, innerHeight - 140)) };
     modal = 'quick-create';
     await tick();
-    quickFirstButton?.focus();
+    if (modal !== 'quick-create' || !quickPicker) return;
+    quickPointer = {
+      x: Math.max(8, Math.min(pointer.clientX, innerWidth - quickPicker.offsetWidth - 8)),
+      y: Math.max(8, Math.min(pointer.clientY, innerHeight - quickPicker.offsetHeight - 8)),
+    };
+    quickFirstButton?.focus({ preventScroll: true });
   };
 
-  function configureNewBlock(kind: 'sql' | 'chart') {
+  function configureNewBlock(kind: 'table' | 'sql' | 'chart') {
     const source = workspace.blocks.find((block) => block.id === quickSource);
-    if (!source) return closeModal();
+    if (!source || (kind === 'table' && source.kind !== 'table')) return closeModal();
     const group = groupAtPoint(quickPosition);
     const created = createBlock(kind, group ? groupPosition(quickPosition, group) : quickPosition);
     created.parentId = group?.id;
-    if (created.kind !== 'sql' && created.kind !== 'chart') return;
     draftBlock = created.kind === 'sql'
       ? { ...created, title: source.title + ' query', sql: 'SELECT *\nFROM "' + sqlAlias(source.title) + '";' }
-      : { ...created, title: source.title + ' chart' };
+      : { ...created, title: source.title + ' ' + created.kind };
     modal = 'configure';
   }
 
@@ -1137,12 +1153,15 @@
       stepHistory(undo ? 'undo' : 'redo');
       return;
     }
-    if ((shortcut === hotkeys.copyCellStyle || shortcut === hotkeys.pasteCellStyle) && selectedTableCell
+    const textStyle = shortcut === hotkeys.toggleBold ? 'bold' : shortcut === hotkeys.toggleItalic ? 'italic'
+      : shortcut === hotkeys.toggleUnderline ? 'underline' : undefined;
+    if ((textStyle || shortcut === hotkeys.copyCellStyle || shortcut === hotkeys.pasteCellStyle) && selectedTableCell
       && (modal === 'table' || (!modal && selected?.kind === 'table' && selected.expanded !== false && !selected.inlineLocked))) {
-      if (editingText && !cell && !target?.closest('.cell-format-controls')) return;
+      if (target?.closest('.cell-color-dialog') || (editingText && !cell && !target?.closest('.cell-format-controls'))) return;
       event.preventDefault();
       if (event.repeat) return;
-      if (shortcut === hotkeys.copyCellStyle) copyCellStyle();
+      if (textStyle) toggleSelectedTextStyle(textStyle);
+      else if (shortcut === hotkeys.copyCellStyle) copyCellStyle();
       else pasteCellStyle();
       return;
     }
@@ -1206,6 +1225,7 @@
   {#if selectedTableCell}
     <CellInspector {...selectedTableCell} axis={activeCell?.axis} hotkeys={preferences.hotkeys} canPaste={canPasteCellStyle}
       clear={() => activeCell = undefined} copyStyle={copyCellStyle} pasteStyle={pasteCellStyle}
+      toggleTextStyle={toggleSelectedTextStyle}
       changeStyle={(patch) => formatSelectedCells((style) => ({ ...style, ...patch }))}
       resetStyle={() => formatSelectedCells(() => ({}))} />
   {/if}
@@ -1450,19 +1470,23 @@
 {#if modal === 'quick-create'}
   <div class="quick-overlay">
     <button class="quick-backdrop" aria-label="Cancel adding a connected block" tabindex="-1" onclick={closeModal}></button>
-    <div class="quick-picker" role="group" aria-label="Add connected block" style:left={quickPointer.x + 'px'} style:top={quickPointer.y + 'px'}>
+    <div bind:this={quickPicker} class="quick-picker" role="group" aria-label="Add connected block" style:left={quickPointer.x + 'px'} style:top={quickPointer.y + 'px'}>
       <p>Connect from <strong>{quickInput?.title}</strong></p>
       <button bind:this={quickFirstButton} onclick={() => configureNewBlock('sql')}><span class="kind-icon sql"><Braces size={16} /></span><span>SQL query<small>Filter or calculate</small></span></button>
       <button onclick={() => configureNewBlock('chart')}><span class="kind-icon chart"><ChartColumnIncreasing size={16} /></span><span>Chart<small>Plot the source data</small></span></button>
+      {#if quickInput?.kind === 'table'}
+        <button onclick={() => configureNewBlock('table')}><span class="kind-icon table"><Table2 size={16} /></span><span>Table<small>Reference the source in formulas</small></span></button>
+      {/if}
     </div>
   </div>
 {:else if modal === 'configure' && draftBlock}
   {@const draft = draftBlock}
+  {@const kindLabel = kinds[draft.kind].label}
   {#snippet content()}
     <label class="field">Name<input maxlength="100" bind:value={draft.title} /></label>
     {#if draft.kind === 'sql'}
       {@render sqlCode(draft.sql, (text) => draft.sql = text)}
-    {:else}
+    {:else if draft.kind === 'chart'}
       <label class="field">Chart type<select bind:value={draft.chart}><option value="bar">Bar</option><option value="line">Line</option></select></label>
       {#if quickColumns.length}
         <label class="field">X axis<select bind:value={draft.x}><option value="">Automatic</option>{#each quickColumns as column}<option value={column.name}>{column.name}</option>{/each}</select></label>
@@ -1472,9 +1496,9 @@
   {/snippet}
   {#snippet footer()}
     <button class="button secondary" onclick={closeModal}>Cancel</button>
-    <button class="button primary" onclick={createConnectedBlock} disabled={!draft.title.trim() || (draft.kind === 'sql' && !draft.sql.trim())}>{draft.kind === 'sql' ? 'Create SQL query' : 'Create chart'}</button>
+    <button class="button primary" onclick={createConnectedBlock} disabled={!draft.title.trim() || (draft.kind === 'sql' && !draft.sql.trim())}>Create {draft.kind === 'sql' ? kindLabel : kindLabel.toLowerCase()}</button>
   {/snippet}
-  <Modal title={draft.kind === 'sql' ? 'Configure SQL query' : 'Configure chart'} subtitle={'Input: ' + (quickInput?.title ?? '')} wide={draft.kind === 'sql'} close={closeModal} children={content} {footer} />
+  <Modal title={'Configure ' + (draft.kind === 'sql' ? kindLabel : kindLabel.toLowerCase())} subtitle={'Input: ' + (quickInput?.title ?? '')} wide={draft.kind === 'sql'} close={closeModal} children={content} {footer} />
 {:else if modal === 'sql' && selected?.kind === 'sql'}
   {#snippet content()}
     <div class="query-inputs">

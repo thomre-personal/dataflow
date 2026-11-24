@@ -2,6 +2,7 @@ export const defaultHotkeys = {
   search: 'Mod+K', runQuery: 'Mod+Enter', undo: 'Mod+Z', redo: 'Mod+Shift+Z', deleteBlock: 'Delete',
   rowAbove: 'Alt+ArrowUp', rowBelow: 'Alt+ArrowDown', columnLeft: 'Alt+ArrowLeft', columnRight: 'Alt+ArrowRight',
   copyCellStyle: 'Mod+Alt+C', pasteCellStyle: 'Mod+Alt+V',
+  toggleBold: 'Mod+B', toggleItalic: 'Mod+I', toggleUnderline: 'Mod+U',
 };
 
 export type HotkeyAction = keyof typeof defaultHotkeys;

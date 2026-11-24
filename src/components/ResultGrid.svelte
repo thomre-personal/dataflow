@@ -2,7 +2,9 @@
   import { cellStyleCss } from '../lib/cell-style';
   import { defaultPreviewRowHeight as rowHeight } from '../lib/workspace';
   import type { Result } from '../lib/workspace';
-  let { result, limit = 8, compact = false, full = false }: { result: Result; limit?: number; compact?: boolean; full?: boolean } = $props();
+  let { result, limit = 8, compact = false, full = false, label = 'Full table data' }: {
+    result: Result; limit?: number; compact?: boolean; full?: boolean; label?: string;
+  } = $props();
   const overscan = 5;
   let scroller = $state<HTMLDivElement>();
   let scrollTop = $state(0);
@@ -47,7 +49,7 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex (The full table must be reachable for keyboard scrolling.) -->
 <div bind:this={scroller} class="result-grid" data-table-style={result.tableStyle ?? 'banded'} class:compact class:full-grid={full} class:nowheel={full} class:nopan={full} class:nodrag={full}
-  role={full ? 'region' : undefined} aria-label={full ? 'Full table data' : undefined} tabindex={full ? 0 : undefined}
+  role={full ? 'region' : undefined} aria-label={full ? label : undefined} tabindex={full ? 0 : undefined}
   onscroll={(event) => { if (full) scrollTop = event.currentTarget.scrollTop; }}>
   <table class:sized-preview={Boolean(widths)} style:width={widths ? widths.reduce((sum, width) => sum + width, 0) + 'px' : undefined}
     aria-rowcount={full ? result.rows.length + 1 : undefined}>

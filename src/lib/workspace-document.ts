@@ -82,7 +82,8 @@ function block(value: unknown): value is Block {
   if (!record(value) || !id(value.id) || typeof value.title !== 'string'
     || !record(value.position) || !finiteNumber(value.position.x) || !finiteNumber(value.position.y)
     || (value.parentId !== undefined && !id(value.parentId))) return false;
-  if (value.kind === 'sql') return typeof value.sql === 'string';
+  if (value.kind === 'sql') return typeof value.sql === 'string'
+    && (value.preview === undefined || value.preview === 'query' || value.preview === 'results');
   if (value.expanded !== undefined && typeof value.expanded !== 'boolean') return false;
   if (value.expandedSize !== undefined && (!record(value.expandedSize)
     || !finiteNumber(value.expandedSize.width) || value.expandedSize.width <= 0

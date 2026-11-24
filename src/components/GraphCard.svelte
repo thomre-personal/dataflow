@@ -1,6 +1,6 @@
 <script module lang="ts">
   import type { ResizeParams } from '@xyflow/svelte';
-  import type { Block, Result, TableBlock, Workspace } from '../lib/workspace';
+  import type { Block, Result, SqlBlock, TableBlock, Workspace } from '../lib/workspace';
   import type { Hotkeys } from '../lib/preferences';
   import type { CellSelection } from '../lib/cell-style';
   export type CardData = Record<string, unknown> & {
@@ -15,6 +15,7 @@
     toggleExpanded?: () => void;
     resize?: (bounds: ResizeParams) => void;
     canResize?: (bounds: ResizeParams) => boolean;
+    query?: { setPreview: (view: NonNullable<SqlBlock['preview']>) => void; run: () => void };
     group?: { count: number; drop: { target: string }; focused: boolean; focusExpanded: boolean; hasInput: boolean; hasOutput: boolean };
     edit?: {
       workspace: Workspace;
@@ -53,6 +54,7 @@
   let Icon = $derived(icons[block.kind]);
   let series = $derived(block.kind === 'chart' ? chartSeries(block, data.result) : undefined);
   let codeLines = $derived(block.kind === 'sql' ? block.sql.trim().split('\n').slice(0, 6) : []);
+  let showQueryResults = $derived(block.kind === 'sql' && block.preview === 'results');
   let card = $state<HTMLDivElement>();
   let movedResize = false;
   const sqlKeyword = /^(?:SELECT|FROM|WHERE|JOIN|AS|GROUP|BY|ORDER|LIMIT|SUM|WITH|AND|DESC|ASC|VALUES)$/i;
@@ -128,7 +130,14 @@
       <span class="kind-icon {block.kind}"><Icon size={17} strokeWidth={1.85} /></span>
       <div><p>{labels[block.kind]}</p><h3 aria-label={block.title}><BlockName title={block.title} rename={data.rename} /></h3></div>
       {#if data.focusSide}<span class="node-relationship">{data.focusSide}</span>{/if}
-      {#if block.kind !== 'sql'}{@render expansionButton()}{/if}
+      {#if block.kind === 'sql'}
+        <div class="node-query-toggle nodrag nopan" role="group" aria-label="SQL preview">
+          <button type="button" aria-pressed={!showQueryResults}
+            onclick={(event) => { event.stopPropagation(); data.query?.setPreview('query'); }}>SQL</button>
+          <button type="button" aria-pressed={showQueryResults}
+            onclick={(event) => { event.stopPropagation(); data.query?.setPreview('results'); }}>Results</button>
+        </div>
+      {:else}{@render expansionButton()}{/if}
     </header>
 
     {#if block.kind === 'table'}
@@ -159,15 +168,33 @@
         </div>
       </footer>
     {:else if block.kind === 'sql'}
-      <div class="node-preview node-code" aria-hidden="true">
-        {#each codeLines as line, index}
-          <div><span class="line-number">{index + 1}</span><code>{#each line.split(/(\b\w+\b)/) as token}<span class:keyword={sqlKeyword.test(token)}>{token}</span>{/each}</code></div>
-        {/each}
-        {#if !codeLines.length}<div><span class="line-number">1</span><code class="muted-text">-- Write a query</code></div>{/if}
-      </div>
+      {#if showQueryResults}
+        <div class="node-preview node-table">
+          {#if data.result}
+            <ResultGrid full result={data.result} label="Query results" />
+          {:else}
+            <p class="node-placeholder" title={data.issue}>
+              {data.dataState === 'running' ? 'Running query…' : data.dataState === 'error' ? 'Query failed.' : 'Run the query to see results.'}
+            </p>
+          {/if}
+        </div>
+      {:else}
+        <div class="node-preview node-code" aria-hidden="true">
+          {#each codeLines as line, index}
+            <div><span class="line-number">{index + 1}</span><code>{#each line.split(/(\b\w+\b)/) as token}<span class:keyword={sqlKeyword.test(token)}>{token}</span>{/each}</code></div>
+          {/each}
+          {#if !codeLines.length}<div><span class="line-number">1</span><code class="muted-text">-- Write a query</code></div>{/if}
+        </div>
+      {/if}
       <footer class="node-footer">
-        <span class="node-state {data.dataState ?? ''}"><i></i>{data.dataState === 'ready' ? countLabel(data.result?.rows.length ?? 0, 'result row') : data.dataState === 'running' ? 'Running…' : data.dataState === 'stale' ? 'Needs run' : data.dataState === 'error' ? 'Query error' : 'SQL'}</span>
-        <button class="nodrag" onclick={(event) => { event.stopPropagation(); data.open(); }}>Open query</button>
+        <span class="node-state {data.dataState ?? ''}" title={data.issue}><i></i>{data.dataState === 'ready' ? countLabel(data.result?.rows.length ?? 0, 'result row') : data.dataState === 'running' ? 'Running…' : data.dataState === 'stale' ? 'Needs run' : data.dataState === 'error' ? 'Query error' : 'SQL'}</span>
+        <div class="node-actions">
+          {#if showQueryResults}
+            <button class="nodrag" aria-label="Run query" disabled={data.dataState === 'running'}
+              onclick={(event) => { event.stopPropagation(); data.query?.run(); }}>Run</button>
+          {/if}
+          <button class="nodrag" onclick={(event) => { event.stopPropagation(); data.open(); }}>Open query</button>
+        </div>
       </footer>
     {:else}
       <div class="node-preview node-chart">{#if series}

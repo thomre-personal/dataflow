@@ -47,7 +47,7 @@ export type TableBlock = BlockBase & ExpandableBlock & {
   rowHeights?: Record<string, number>;
   cellStyles?: CellStyles;
 };
-export type SqlBlock = BlockBase & { kind: 'sql'; sql: string };
+export type SqlBlock = BlockBase & { kind: 'sql'; sql: string; preview?: 'query' | 'results' };
 export type ChartBlock = BlockBase & ExpandableBlock & { kind: 'chart'; chart: 'bar' | 'line'; x: string; y: string };
 export type GroupBlock = BlockBase & ExpandableBlock & { kind: 'group' };
 export type Block = TableBlock | SqlBlock | ChartBlock | GroupBlock;
