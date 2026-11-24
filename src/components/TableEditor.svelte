@@ -12,7 +12,7 @@
   import { eventHotkey, hotkeyLabel } from '../lib/preferences';
   import type { Hotkeys } from '../lib/preferences';
   import { tableCardContentSize } from '../lib/table-layout';
-  import type { Column, ColumnType, TableBlock, Workspace } from '../lib/workspace';
+  import type { Column, ColumnType, Row, TableBlock, Workspace } from '../lib/workspace';
   import FormulaSuggestions from './FormulaSuggestions.svelte';
   import Modal from './Modal.svelte';
 
@@ -56,6 +56,23 @@
   let cellDrag: { pointer: number; end: HTMLTableCellElement; editOnRelease: boolean } | undefined;
   type Resize = { id: string; pointer: number; start: number; scale: number; initial: number; size: number; min: number; widths?: Record<string, number> };
   let resizing = $state<Resize>();
+  const defaultAddedRowHeight = 33;
+  type HandleResize = {
+    axis: 'row' | 'column';
+    original: TableBlock;
+    size: { width: number; height: number };
+    fit: { width: number; height: number };
+    minimum: number;
+    maximum: number;
+    dataRows: number;
+    widths: Record<string, number>;
+    rowSizes: number[];
+    columns: Column[];
+    rows: Row[];
+    offset: number;
+    changed: boolean;
+  };
+  let handleResize: HandleResize | undefined;
   let columnWidths = $derived(resizing?.widths && resizing.size !== resizing.initial
     ? { ...resizing.widths, [resizing.id]: resizing.size } : block.columnWidths);
   let gridWidth = $derived(rowIndexWidth + rowActionsWidth + block.columns.reduce((width, column) =>
@@ -127,51 +144,119 @@
     resizeGrid({ columnWidths: widths }, width);
   }
 
-  function resizeGrid(patch: Partial<TableBlock>, width?: number, rowDelta = 0, continueGrowth = false, growHeight = 0) {
+  function resizeGrid(patch: Partial<TableBlock>, width?: number, rowDelta = 0) {
     const card = inline ? table?.closest<HTMLElement>('.graph-card.table') : undefined;
     const needed = card && tableCardContentSize(card, width, rowDelta);
     if (card && needed) {
       const next = {
         width: width === undefined ? card.offsetWidth : Math.max(card.offsetWidth, needed.width),
-        height: width === undefined ? Math.max(card.offsetHeight + growHeight, needed.height) : card.offsetHeight,
+        height: width === undefined ? Math.max(card.offsetHeight, needed.height) : card.offsetHeight,
       };
       if (next.width !== card.offsetWidth || next.height !== card.offsetHeight) patch.expandedSize = next;
     }
-    change(patch, continueGrowth);
+    change(patch);
   }
 
   export function revealRows() {
     if (block.rows.length > limit) limit += 100;
   }
 
-  export function grow(axis: 'row' | 'column', count: number, continueGrowth: boolean) {
-    if (locked || count < 1) return;
+  export function startHandleResize(axis: 'row' | 'column') {
+    const card = table?.closest<HTMLElement>('.graph-card.table');
+    const fit = card && tableCardContentSize(card);
+    if (locked || !card || !fit) return;
+    let minimum = 0;
     if (axis === 'row') {
-      count = Math.min(count, MAX_ROWS - block.rows.length);
-      if (!count) return;
-      const rows = Array.from({ length: count }, () => ({ id: newId(), cells: block.columns.map(() => '') }));
-      const visible = Math.max(0, Math.min(count, limit - block.rows.length));
-      resizeGrid({ rows: [...block.rows.slice(0, dataRows), ...rows, ...block.rows.slice(dataRows)] },
-        undefined, visible * 33, continueGrowth, count * 33);
-      return;
+      for (let index = dataRows - 1; index >= 0; index--) {
+        const row = block.rows[index];
+        if (row.cells.some((value) => value !== '') || Object.keys(row.formulas ?? {}).length) break;
+        minimum--;
+      }
+    } else {
+      for (let index = block.columns.length - 1; index >= 1; index--) {
+        const { id } = block.columns[index];
+        if (block.rows.some((row) => row.cells[index] !== '' || row.formulas?.[id] !== undefined)) break;
+        minimum--;
+      }
     }
-    count = Math.min(count, MAX_COLUMNS - block.columns.length);
-    if (!count) return;
-    const used = new Set(block.columns.map(({ name }) => name.toLowerCase()));
-    const widths = renderedColumnWidths();
-    let index = block.columns.length;
-    const added = Array.from({ length: count }, () => {
+    handleResize = {
+      axis, original: block, size: { width: card.offsetWidth, height: card.offsetHeight }, fit,
+      minimum, maximum: axis === 'row' ? MAX_ROWS - block.rows.length : MAX_COLUMNS - block.columns.length,
+      dataRows, widths: axis === 'column' ? renderedColumnWidths() : {},
+      rowSizes: axis === 'row' ? Array.from(table?.tBodies[0]?.rows ?? [], ({ offsetHeight }) => offsetHeight) : [],
+      columns: [], rows: [], offset: 0, changed: false,
+    };
+  }
+
+  export function resizeFromHandle(requested: number) {
+    const gesture = handleResize;
+    if (!gesture || locked) return;
+    const offset = Math.max(gesture.minimum, Math.min(gesture.maximum, requested));
+    if (offset === gesture.offset) return;
+    const { original } = gesture;
+    const patch = offset === 0
+      ? { rows: original.rows, columns: original.columns, columnWidths: original.columnWidths,
+          rowHeights: original.rowHeights, cellStyles: original.cellStyles, expandedSize: original.expandedSize,
+          titleColumns: original.titleColumns }
+      : gesture.axis === 'row' ? rowsFromHandle(gesture, offset) : columnsFromHandle(gesture, offset);
+    change(patch, gesture.changed);
+    gesture.offset = offset;
+    gesture.changed = true;
+  }
+
+  export function finishHandleResize() {
+    handleResize = undefined;
+  }
+
+  function rowsFromHandle(gesture: HandleResize, offset: number): Partial<TableBlock> {
+    const { original, dataRows: originalDataRows, rowSizes, size, fit } = gesture;
+    while (gesture.rows.length < offset) gesture.rows.push({ id: newId(), cells: original.columns.map(() => '') });
+    const dataEnd = originalDataRows + Math.min(0, offset);
+    const rows = [...original.rows.slice(0, dataEnd), ...gesture.rows.slice(0, Math.max(0, offset)), ...original.rows.slice(originalDataRows)];
+    const removed = new Set(original.rows.slice(dataEnd, originalDataRows).map(({ id }) => id));
+    const visibleCount = Math.min(limit, original.rows.length + offset) - Math.min(limit, original.rows.length);
+    const removedSizes = rowSizes.slice(dataEnd, originalDataRows);
+    const removedHeight = removedSizes.reduce((sum, height) => sum + height, 0);
+    const visibleDelta = offset > 0 ? visibleCount * defaultAddedRowHeight : -removedHeight;
+    const heightDelta = offset > 0 ? offset * defaultAddedRowHeight
+      : -(removedHeight + Math.max(0, -offset - removedSizes.length) * defaultAddedRowHeight);
+    const fitHeight = offset > 0 ? fit.height : Math.min(fit.height, size.height);
+    return {
+      rows, rowHeights: omitEntries(original.rowHeights, removed), cellStyles: omitEntries(original.cellStyles, removed),
+      expandedSize: { width: size.width, height: Math.max(170, size.height + heightDelta, fitHeight + visibleDelta) },
+    };
+  }
+
+  function columnsFromHandle(gesture: HandleResize, offset: number): Partial<TableBlock> {
+    const { original, widths, size, fit } = gesture;
+    const used = new Set([...original.columns, ...gesture.columns].map(({ name }) => name.toLowerCase()));
+    let index = original.columns.length + gesture.columns.length;
+    while (gesture.columns.length < offset) {
       while (used.has(columnLetter(index).toLowerCase())) index++;
-      const column = { id: newId(), name: columnLetter(index++), type: 'auto' as const };
-      widths[column.id] = defaultTableColumnWidth;
-      return column;
-    });
-    const width = rowIndexWidth + rowActionsWidth + Object.values(widths).reduce((sum, size) => sum + size, 0);
-    resizeGrid({
-      columns: [...block.columns, ...added],
-      columnWidths: widths,
-      rows: block.rows.map((row) => ({ ...row, cells: [...row.cells, ...added.map(() => '')] })),
-    }, width, 0, continueGrowth);
+      gesture.columns.push({ id: newId(), name: columnLetter(index++), type: 'auto' });
+    }
+    const columnEnd = original.columns.length + Math.min(0, offset);
+    const columns = [...original.columns.slice(0, columnEnd), ...gesture.columns.slice(0, Math.max(0, offset))];
+    const removed = new Set(original.columns.slice(columnEnd).map(({ id }) => id));
+    const widthDelta = offset > 0 ? offset * defaultTableColumnWidth
+      : -original.columns.slice(columnEnd).reduce((sum, { id }) => sum + widths[id], 0);
+    const cellStyles = original.cellStyles && Object.fromEntries(Object.entries(original.cellStyles).flatMap(([id, styles]) => {
+      const kept = omitEntries(styles, removed);
+      return kept ? [[id, kept]] : [];
+    }));
+    return {
+      columns, columnWidths: Object.fromEntries(columns.map(({ id }) => [id, widths[id] ?? defaultTableColumnWidth])),
+      rows: original.rows.map((row) => ({ ...row, cells: [...row.cells.slice(0, columnEnd), ...Array<string>(Math.max(0, offset)).fill('')] })),
+      cellStyles: cellStyles && Object.keys(cellStyles).length ? cellStyles : undefined,
+      titleColumns: original.titleColumns !== undefined ? Math.min(original.titleColumns, columns.length) : undefined,
+      expandedSize: { width: Math.max(260, Math.ceil((offset > 0 ? Math.max(size.width, fit.width) : size.width) + widthDelta)), height: size.height },
+    };
+  }
+
+  function omitEntries<T>(entries: Record<string, T> | undefined, ids: ReadonlySet<string>) {
+    if (!entries || !ids.size) return entries;
+    const kept = Object.entries(entries).filter(([id]) => !ids.has(id));
+    return kept.length ? Object.fromEntries(kept) : undefined;
   }
 
   function withoutEntry<T>(entries: Record<string, T> | undefined, id: string) {

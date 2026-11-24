@@ -61,8 +61,13 @@
   let showQueryResults = $derived(block.kind === 'sql' && block.preview === 'results');
   let card = $state<HTMLDivElement>();
   type GrowthAxis = 'row' | 'column';
-  let tableEditor = $state<{ grow: (axis: GrowthAxis, count: number, continueGrowth: boolean) => void; revealRows: () => void }>();
-  let growth: { axis: GrowthAxis; pointer: number; start: number; step: number; added: number } | undefined;
+  let tableEditor = $state<{
+    startHandleResize: (axis: GrowthAxis) => void;
+    resizeFromHandle: (offset: number) => void;
+    finishHandleResize: () => void;
+    revealRows: () => void;
+  }>();
+  let growth: { axis: GrowthAxis; pointer: number; start: number; step: number } | undefined;
   let skipGrowthClick = false;
   let movedResize = false;
   const sqlKeyword = /^(?:SELECT|FROM|WHERE|JOIN|AS|GROUP|BY|ORDER|LIMIT|SUM|WITH|AND|DESC|ASC|VALUES)$/i;
@@ -71,26 +76,27 @@
     if (event.button !== 0 || !card) return;
     const scale = card.getBoundingClientRect().width / card.offsetWidth;
     event.currentTarget.setPointerCapture(event.pointerId);
+    tableEditor?.startHandleResize(axis);
     skipGrowthClick = false;
     growth = { axis, pointer: event.pointerId, start: axis === 'row' ? event.clientY : event.clientX,
-      step: scale * (axis === 'row' ? 33 : defaultTableColumnWidth), added: 0 };
+      step: scale * (axis === 'row' ? 33 : defaultTableColumnWidth) };
   }
 
   function moveGrowth(event: PointerEvent) {
     if (growth?.pointer !== event.pointerId) return;
     const distance = (growth.axis === 'row' ? event.clientY : event.clientX) - growth.start;
-    if (distance <= 4 || growth.step <= 0) return;
-    const count = Math.floor(distance / growth.step) + 1;
-    if (count <= growth.added) return;
-    tableEditor?.grow(growth.axis, count - growth.added, growth.added > 0);
-    growth.added = count;
-    skipGrowthClick = true;
+    if (growth.step <= 0) return;
+    const magnitude = Math.abs(distance);
+    const offset = magnitude <= 4 ? 0 : Math.sign(distance) * (Math.floor(magnitude / growth.step) + 1);
+    if (offset) skipGrowthClick = true;
+    tableEditor?.resizeFromHandle(offset);
   }
 
   function stopGrowth(event: PointerEvent) {
     if (growth?.pointer !== event.pointerId) return;
     if (event.type === 'pointerup') moveGrowth(event);
     growth = undefined;
+    tableEditor?.finishHandleResize();
   }
 
   $effect(() => {
@@ -121,11 +127,15 @@
 
 {#snippet growthHandle(axis: GrowthAxis)}
   <button type="button" class="table-grow nodrag nopan" class:table-grow-row={axis === 'row'}
-    aria-label={'Add ' + axis} title={'Click or drag to add ' + axis + 's'}
+    aria-label={'Add ' + axis} title={'Click to add one ' + axis + '. Drag out to add or in to remove empty ' + axis + 's.'}
     onpointerdown={(event) => startGrowth(event, axis)} onpointermove={moveGrowth} onpointerup={stopGrowth} onlostpointercapture={stopGrowth}
     onclick={(event) => {
       event.stopPropagation();
-      if (event.detail === 0 || !skipGrowthClick) tableEditor?.grow(axis, 1, false);
+      if (event.detail === 0 || !skipGrowthClick) {
+        tableEditor?.startHandleResize(axis);
+        tableEditor?.resizeFromHandle(1);
+        tableEditor?.finishHandleResize();
+      }
       skipGrowthClick = false;
     }}>
     {#if axis === 'row'}<Equal size={15} />{:else}<Pause size={15} />{/if}

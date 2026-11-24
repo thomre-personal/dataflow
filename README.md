@@ -55,7 +55,7 @@ Click the button on the switch to apply an option and click again to apply the o
 
 ### Table editing
 
-Select a table on the canvas to show its add-row and add-column handles outside the card. Click a handle to add one row or column, or drag it outward to add several and grow the table. Locking a table keeps its layout and disables editing. Paste clipboard data by selecting the starting cell and pressing **Cmd+V**.
+Select a table on the canvas to show its row and column handles outside the card. Click a handle to add one row or column. Drag outward to add several, or inward to remove empty rows or columns at the end. The drag stops at the first cell value or formula. Row drags keep footer rows in place. Locking a table keeps its layout and disables editing. Paste clipboard data by selecting the starting cell and pressing **Cmd+V**.
 
 Click a cell once to select it. Drag from one cell to another to select the rectangle between them. You can also select a cell and Shift-click the other corner. Click a selected cell again or press **Enter** to edit. Press **Shift+Enter** while editing to insert a line break and **Enter** to confirm. Long text wraps within the width of the cell. This visual wrapping leaves the stored text as entered.
 

@@ -262,6 +262,62 @@ test('keeps the table geometry when locking and grows the table from the outside
   await expect(table.getByRole('columnheader', { name: 'E', exact: true })).toBeVisible();
 });
 
+test('drags table handles inward one step at a time and keeps values, formulas and the footer', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New workspace', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Workspace name' }).fill('Shrink table');
+  await page.getByRole('button', { name: 'Create workspace' }).click();
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Untitled table', exact: true });
+  for (let index = 0; index < 3; index++) await dialog.getByRole('button', { name: 'Row', exact: true }).click();
+  for (let index = 0; index < 2; index++) await dialog.getByRole('button', { name: 'Column', exact: true }).click();
+  const formula = dialog.getByRole('textbox', { name: 'B row 2', exact: true });
+  await formula.fill('=CONCAT("")');
+  await formula.press('Enter');
+  await expect(formula).toHaveValue('');
+  await dialog.getByRole('textbox', { name: 'B row 5', exact: true }).fill('Keep the footer');
+  const footerRows = dialog.getByRole('spinbutton', { name: 'Footer rows', exact: true });
+  await footerRows.fill('1');
+  await footerRows.press('Tab');
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+  await page.getByRole('button', { name: 'Fit canvas', exact: true }).click();
+  await waitForCanvasFit(page);
+  const card = canvasBlock(page, 'Untitled table');
+  const rows = card.getByRole('table').locator('tbody tr');
+  const rowHandle = card.getByRole('button', { name: 'Add row', exact: true });
+  const columnHandle = card.getByRole('button', { name: 'Add column', exact: true });
+  const before = await cardSize(card);
+  await rowHandle.hover();
+  const bounds = (await rowHandle.boundingBox())!;
+  const x = bounds.x + bounds.width / 2;
+  const y = bounds.y + bounds.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y - 12);
+  await expect(rows).toHaveCount(4);
+  await page.mouse.move(x, y - 110);
+  await expect(rows).toHaveCount(3);
+  await page.mouse.move(x, y - 12);
+  await expect(rows).toHaveCount(4);
+  await page.mouse.move(x, y - 110);
+  await page.mouse.up();
+  await expect(rows).toHaveCount(3);
+  expect((await cardSize(card)).height).toBeLessThan(before.height);
+  await expect(card.locator('.footer-row').getByRole('textbox', { name: 'B row 3', exact: true })).toHaveValue('Keep the footer');
+  await dragResize(page, rowHandle, 0, -80);
+  await expect(rows).toHaveCount(3);
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(rows).toHaveCount(5);
+
+  await dragResize(page, columnHandle, -300, 0);
+  await expect(card.getByRole('columnheader', { name: 'B', exact: true })).toBeVisible();
+  await expect(card.getByRole('columnheader', { name: 'C', exact: true })).toHaveCount(0);
+  expect((await cardSize(card)).width).toBeLessThan(before.width);
+  await expect(card.getByRole('textbox', { name: 'B row 2', exact: true })).toHaveValue('');
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(card.getByRole('columnheader', { name: 'D', exact: true })).toBeVisible();
+});
+
 test('resizes an expanded table, scrolls to its last row and restores the size', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New workspace', exact: true }).click();
