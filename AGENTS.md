@@ -4,3 +4,8 @@
 - Write documentation in plain English. Use short sections with descriptive headings, and explain technical terms when readers need them.
 - Use examples for behavior or workflows that are easier to understand in context.
 - Clearly distinguish agreed requirements from ideas that are still open for discussion.
+
+# Product planning
+
+- Keep DataFlow plans and decisions in Markdown in this repository.
+- Record DataFlow TODOs in `TODO.md`, with links to the relevant feature notes.

@@ -95,4 +95,6 @@ To use an installed Chrome instead, run `DATAFLOW_BROWSER=chrome npm run test:br
 - [Version history and collaboration](VERSIONING.md)
 - [Data protection](DATA-PROTECTION.md)
 - [Future features](FUTURE-FEATURES.md)
+- [Data connectors](DATA-CONNECTORS.md)
+- [TODO](TODO.md)
 - [AI suggestions](AI-SUGGESTIONS.md)
