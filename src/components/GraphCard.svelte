@@ -2,6 +2,7 @@
   import type { ResizeParams } from '@xyflow/svelte';
   import type { Block, Result, TableBlock, Workspace } from '../lib/workspace';
   import type { Hotkeys } from '../lib/preferences';
+  import type { CellAddress } from './TableEditor.svelte';
   export type CardData = Record<string, unknown> & {
     block: Block;
     result?: Result;
@@ -22,6 +23,8 @@
       hotkeys: Hotkeys;
       paste: () => void;
       error: (message: string) => void;
+      activeCell?: CellAddress;
+      selectCell: (cell: CellAddress) => void;
     };
   };
 </script>
@@ -102,7 +105,8 @@
     {#if block.kind === 'table'}
       {#if expanded && !block.inlineLocked && data.edit}
         <div class="node-preview node-inline nodrag nopan nowheel" role="group" aria-label={'Edit ' + block.title}>
-          <TableEditor {block} workspace={data.edit.workspace} hotkeys={data.edit.hotkeys} change={data.edit.patch} paste={data.edit.paste} error={data.edit.error} inline />
+          <TableEditor {block} workspace={data.edit.workspace} hotkeys={data.edit.hotkeys} change={data.edit.patch}
+            paste={data.edit.paste} error={data.edit.error} activeCell={data.edit.activeCell} selectCell={data.edit.selectCell} inline />
         </div>
       {:else}
         <div class="node-preview node-table">

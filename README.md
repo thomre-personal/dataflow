@@ -45,6 +45,8 @@ Enter `=SUM()` in a footer cell to total its own column. Enter `=SUM(Amount)` in
 
 Type `=` to see formula suggestions. Use the arrow keys and **Return** to choose one. Press **Return** again to confirm the cell once you have finished typing. Start a value with an apostrophe to treat it as text. For example, `'=` displays `=`.
 
+Select a cell to see its formula and the functions it uses in **Cell options**. Expand a function for its syntax and an example. **Search functions** filters the full catalog below the functions used in the cell. Cell options are also available in the table dialog.
+
 | Formula | Example |
 | --- | --- |
 | `AVERAGE` or `AVG` | `=AVG(Amount)` averages the numbers in a column. |

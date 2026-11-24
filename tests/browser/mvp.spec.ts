@@ -602,6 +602,58 @@ test('suggests formulas in both table editors and uses Return to accept suggesti
   await expect(inline).toHaveValue('DISTINCT:1');
 });
 
+test('shows nested functions and searchable documentation for the active cell', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New workspace', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Workspace name' }).fill('Function reference');
+  await page.getByRole('button', { name: 'Create workspace' }).click();
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Untitled table' });
+  const dialogInspector = dialog.getByRole('complementary', { name: 'Cell inspector' });
+  await dialog.getByRole('textbox', { name: 'A row 1', exact: true }).fill('Groceries');
+  const formula = '=CONCAT("MAX(A): ", COUNT(DISTINCT(A)), COUNT(A))';
+  const dialogCell = dialog.getByRole('textbox', { name: 'B row 1', exact: true });
+  await dialogCell.fill(formula);
+  await dialogCell.press('Enter');
+  await expect(dialogCell).toHaveValue('MAX(A): 11');
+  const usedInDialog = dialogInspector.getByRole('region', { name: 'Functions in this cell' });
+  await expect(usedInDialog.locator('summary')).toHaveText(['CONCAT', 'COUNT', 'DISTINCT']);
+  await usedInDialog.locator('summary').filter({ hasText: 'DISTINCT' }).click();
+  await expect(usedInDialog.getByText('Use inside COUNT to count unique nonempty values.', { exact: false })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Done' }).click();
+
+  const table = canvasBlock(page, 'Untitled table');
+  const inlineCell = table.getByRole('textbox', { name: 'B row 1', exact: true });
+  await inlineCell.click();
+  const inspector = page.getByRole('complementary', { name: 'Block inspector' });
+  const options = inspector.getByRole('region', { name: 'Cell options' });
+  await expect(options.getByText('B1', { exact: true })).toBeVisible();
+  await expect(options.getByLabel('Cell formula')).toHaveText(formula);
+  const used = options.getByRole('region', { name: 'Functions in this cell' });
+  await expect(used.locator('summary')).toHaveText(['CONCAT', 'COUNT', 'DISTINCT']);
+  const catalog = options.getByRole('region', { name: 'Function catalog' });
+  await expect(catalog.locator('summary')).toHaveCount(11);
+  const search = catalog.getByRole('searchbox', { name: 'Search functions' });
+  await search.fill('mEdIaN');
+  await expect(inlineCell).not.toBeFocused();
+  await expect(catalog.locator('summary')).toHaveText(['MEDIAN']);
+  await catalog.locator('summary').click();
+  await expect(catalog.getByText('=MEDIAN(Amount)', { exact: true })).toBeVisible();
+  await search.fill('unknown function');
+  await expect(catalog.getByText('No matching functions.')).toBeVisible();
+  await search.clear();
+  await expect(catalog.locator('summary')).toHaveCount(11);
+
+  await inspector.getByRole('button', { name: 'Delete block' }).scrollIntoViewIfNeeded();
+  await table.getByRole('textbox', { name: 'B row 2', exact: true }).fill("'=MAX(A)");
+  await expect(options.getByRole('heading', { name: 'Cell options' })).toBeInViewport();
+  await expect(options.getByText('B2', { exact: true })).toBeVisible();
+  await expect(used.getByText('No functions in this cell.')).toBeVisible();
+  await expect(options.getByLabel('Cell formula')).toHaveCount(0);
+  await options.getByRole('button', { name: 'Clear cell selection' }).click();
+  await expect(options).toHaveCount(0);
+});
+
 test('pastes a range over a blank two-by-two table and infers the pasted column types', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Add table', exact: true }).click();

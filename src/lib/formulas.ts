@@ -1,20 +1,69 @@
 import { columnLetter } from './workspace.ts';
 import type { Column, Formula, FormulaColumn, Row, TableInput } from './workspace.ts';
 
-export const formulaFunctions = {
-  SUM: 'SUM([Column])',
-  AVERAGE: 'AVERAGE([Column])',
-  AVG: 'AVG([Column])',
-  SUMIF: 'SUMIF(Column, Criterion, [Sum column])',
-  COUNTIF: 'COUNTIF(Column, Criterion)',
-  COUNT: 'COUNT(Column or DISTINCT(Column))',
-  MIN: 'MIN([Column])',
-  MAX: 'MAX([Column])',
-  MEDIAN: 'MEDIAN([Column])',
-  CONCAT: 'CONCAT("Text", Column, Expression, …)',
-} satisfies Record<Formula['name'], string>;
+export type FormulaFunction = Formula['name'] | 'DISTINCT';
 
-const functionNames = Object.keys(formulaFunctions) as Formula['name'][];
+export const formulaFunctions = {
+  SUM: {
+    signature: 'SUM([Column])',
+    description: 'Adds the numbers in a column. Omit the column to total the current column.',
+    example: '=SUM(Amount)',
+  },
+  AVERAGE: {
+    signature: 'AVERAGE([Column])',
+    description: 'Returns the arithmetic mean of the numbers in a column. AVG is an alias.',
+    example: '=AVERAGE(Amount)',
+  },
+  AVG: {
+    signature: 'AVG([Column])',
+    description: 'A shorter name for AVERAGE. Returns the arithmetic mean of the numbers in a column.',
+    example: '=AVG(Amount)',
+  },
+  SUMIF: {
+    signature: 'SUMIF(Column, Criterion, [Sum column])',
+    description: 'Adds numbers for rows that match a criterion. Omit the sum column to add numbers from the condition column.',
+    example: '=SUMIF(Category, "Groceries", Amount)',
+  },
+  COUNTIF: {
+    signature: 'COUNTIF(Column, Criterion)',
+    description: 'Counts rows that match a criterion. Use text such as "Open" or a numeric comparison such as ">100".',
+    example: '=COUNTIF(Status, "Open")',
+  },
+  COUNT: {
+    signature: 'COUNT(Column or DISTINCT(Column))',
+    description: 'Counts nonempty values in a column. Wrap the column in DISTINCT to count unique values.',
+    example: '=COUNT(Category)',
+  },
+  MIN: {
+    signature: 'MIN([Column])',
+    description: 'Returns the smallest number or earliest date in a column.',
+    example: '=MIN(Date)',
+  },
+  MAX: {
+    signature: 'MAX([Column])',
+    description: 'Returns the largest number or latest date in a column.',
+    example: '=MAX(Amount)',
+  },
+  MEDIAN: {
+    signature: 'MEDIAN([Column])',
+    description: 'Returns the middle value of a column of numbers or dates. With two middle values, it returns their midpoint, rounded down to a whole day for dates.',
+    example: '=MEDIAN(Amount)',
+  },
+  CONCAT: {
+    signature: 'CONCAT("Text", Column, Expression, …)',
+    description: 'Joins quoted text, column values from the current row, and results of other functions.',
+    example: '=CONCAT("Total: ", SUM(Amount))',
+  },
+  DISTINCT: {
+    signature: 'DISTINCT(Column)',
+    description: 'Use inside COUNT to count unique nonempty values. Text comparisons ignore case.',
+    example: '=COUNT(DISTINCT(Category))',
+  },
+} satisfies Record<FormulaFunction, { signature: string; description: string; example: string }>;
+
+const catalogNames = Object.keys(formulaFunctions) as FormulaFunction[];
+const functionNames = catalogNames.filter((name) => name !== 'DISTINCT');
+export const formulaCatalog = [...catalogNames].sort();
 
 export function isFormulaEntry(value: string) {
   return value.trimStart().startsWith('=');
@@ -23,6 +72,18 @@ export function isFormulaEntry(value: string) {
 export function suggestFunctions(value: string) {
   const prefix = /^\s*=\s*([a-z]*)$/i.exec(value)?.[1].toUpperCase();
   return prefix === undefined ? [] : functionNames.filter((name) => name.startsWith(prefix));
+}
+
+export function usedFormulaFunctions(value: string) {
+  const used = new Set<FormulaFunction>();
+  if (!isFormulaEntry(value)) return [];
+  // Skip quoted text and bracketed names so function-like text is not counted.
+  const tokens = /"(?:[^"]|"")*(?:"|$)|\[(?:[^\]]|\]\])*(?:\]|$)|\b([a-z][a-z0-9_]*)\s*\(/gi;
+  for (const [, call] of value.matchAll(tokens)) {
+    const name = call?.toUpperCase() as FormulaFunction | undefined;
+    if (name && Object.hasOwn(formulaFunctions, name)) used.add(name);
+  }
+  return [...used];
 }
 
 function splitArguments(text: string) {
@@ -100,7 +161,7 @@ function parseExpression(value: string, columns: Column[], index: number, inputs
   if (!name || !functionNames.includes(name)) return { message: 'Choose a supported function from the suggestions.' };
   const input = /^[a-z]+\s*\((.*)\)$/is.exec(value)?.[1];
   const args = input === undefined ? undefined : splitArguments(input);
-  const syntaxError = { message: 'Use =' + formulaFunctions[name] + '.' };
+  const syntaxError = { message: 'Use =' + formulaFunctions[name].signature + '.' };
   const referenceError = { message: 'Choose a unique column name or letter for ' + name + '.' };
   if (!args) return syntaxError;
   if (name === 'CONCAT') {

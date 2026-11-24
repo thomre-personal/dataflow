@@ -50,7 +50,7 @@
   {#each choices as name (name)}
     <button type="button" role="option" tabindex="-1" id={id + '-' + name} aria-selected={name === active}
       onmousedown={(event) => event.preventDefault()} onclick={() => pick(name)}>
-      <code>{formulaFunctions[name]}</code>
+      <code>{formulaFunctions[name].signature}</code>
     </button>
   {/each}
 </div>

@@ -15,13 +15,15 @@
   import type { CanvasPosition, FitCanvas } from './components/CanvasControls.svelte';
   import Modal from './components/Modal.svelte';
   import TableEditor from './components/TableEditor.svelte';
+  import type { CellAddress } from './components/TableEditor.svelte';
+  import CellInspector from './components/CellInspector.svelte';
   import ResultGrid from './components/ResultGrid.svelte';
   import MiniChart from './components/MiniChart.svelte';
   import Settings from './components/Settings.svelte';
-  import { absolutePosition, addLink, canConnect, canGroup, columnLetter, createBlock, createWorkspace, kinds, related, sqlAlias, starterWorkspace, tableInputs } from './lib/workspace';
+  import { absolutePosition, addLink, canConnect, canGroup, columnLetter, createBlock, createWorkspace, kinds, related, rowNumber, sqlAlias, starterWorkspace, tableInputs } from './lib/workspace';
   import type { Block, BlockKind, ChartBlock, GroupBlock, Library, Link, NumberFormat, Position, Result, SqlBlock, Workspace } from './lib/workspace';
   import { importGrid, parseDelimited } from './lib/clipboard';
-  import { bindTableFormulas } from './lib/formulas';
+  import { bindTableFormulas, cellFormulaText, isFormulaEntry } from './lib/formulas';
   import { describeCellIssue, invalidTableCells, tableData } from './lib/table-data';
   import { chartSeries, countLabel, tablePreview, tableResult } from './lib/format';
   import { loadLibrary, saveLibrary } from './lib/storage';
@@ -57,6 +59,26 @@
   let ready = $state(false);
   let selectedId = $state('monthly-totals');
   let selected = $derived(workspace.blocks.find((block) => block.id === selectedId));
+  let activeCell = $state<(CellAddress & { tableId: string })>();
+  let inspectorScroll = $state<HTMLDivElement>();
+  let selectedTableCell = $derived.by(() => {
+    if (selected?.kind !== 'table' || activeCell?.tableId !== selected.id) return;
+    const { rowId, columnId } = activeCell;
+    const row = selected.rows.findIndex(({ id }) => id === rowId);
+    const column = selected.columns.findIndex(({ id }) => id === columnId);
+    if (row < 0 || column < 0) return;
+    const letter = columnLetter(column);
+    const name = selected.columns[column].name;
+    const text = cellFormulaText(selected.rows[row], selected.columns, column, tableInputs(workspace, selected.id));
+    return {
+      address: letter + rowNumber(selected, row),
+      column: name === letter ? undefined : name,
+      formula: isFormulaEntry(text) ? text : '',
+    };
+  });
+  $effect(() => {
+    if (activeCell && inspectorScroll) inspectorScroll.scrollTop = 0;
+  });
   let inputLinks = $derived(workspace.links.filter((link) => link.target === selectedId));
   let outputLinks = $derived(workspace.links.filter((link) => link.source === selectedId));
   let panel = $state(true);
@@ -160,6 +182,7 @@
     if (!after.has(focused)) focused = '';
     if (entry.selectedId !== selectedId) {
       selectedId = entry.selectedId;
+      activeCell = undefined;
       showQueryTab('sql');
     }
     initializeQueries(next);
@@ -409,6 +432,8 @@
             hotkeys: preferences.hotkeys,
             error: message,
             paste: () => { select(block.id); openPaste(block.id); },
+            activeCell: activeCell?.tableId === block.id ? activeCell : undefined,
+            selectCell: (cell: CellAddress) => select(block.id, cell),
           } : undefined,
         },
       };
@@ -426,12 +451,13 @@
     activeTab = tab;
   }
 
-  function select(id: string) {
+  function select(id: string, cell?: CellAddress) {
     if (flowEdges.some((edge) => edge.selected)) {
       flowEdges = flowEdges.map((edge) => edge.selected ? { ...edge, selected: false } : edge);
     }
     if (id !== selectedId) showQueryTab('sql');
     selectedId = id;
+    activeCell = cell ? { tableId: id, ...cell } : undefined;
     panel = true;
   }
 
@@ -675,7 +701,10 @@
         item.parentId === block.id ? { ...item, parentId: block.parentId, position: { x: item.position.x + block.position.x, y: item.position.y + block.position.y } } : item),
       links: workspace.links.filter((link) => link.source !== block.id && link.target !== block.id),
     });
-    if (selectedId === block.id) selectedId = '';
+    if (selectedId === block.id) {
+      selectedId = '';
+      activeCell = undefined;
+    }
     if (focused === block.id) focused = '';
     modal = null;
   }
@@ -685,6 +714,7 @@
     workspaceMenu = false;
     focused = '';
     filter = '';
+    activeCell = undefined;
     selectedId = workspace.blocks[0]?.id ?? '';
     showQueryTab('sql');
     persist();
@@ -927,8 +957,11 @@
             onconnectend={finishConnection}
             isValidConnection={({ source, target, sourceHandle }) =>
               (sourceHandle !== 'quick-create' || blocksById.get(target)?.kind === 'table') && canConnect(workspace, source, target)}
-            onnodeclick={({ node }) => select(node.id)}
-            onselectionchange={({ edges }) => { if (edges.length) selectedId = ''; }}
+            onnodeclick={({ node, event }) => {
+              if (!(event.target instanceof Element && event.target.matches('[data-table-cell]'))) select(node.id);
+            }}
+            onpaneclick={() => activeCell = undefined}
+            onselectionchange={({ edges }) => { if (edges.length) { selectedId = ''; activeCell = undefined; } }}
             onnodedrag={({ targetNode, event }) => { groupDrop.target = targetNode ? groupForDrag(targetNode, event)?.id ?? '' : ''; }}
             onnodedragstop={({ targetNode, event }) => { if (targetNode) moveDraggedBlock(targetNode, event); }}
             proOptions={{ hideAttribution: true }}
@@ -954,7 +987,7 @@
       <aside class="inspector" aria-label="Block inspector">
         <div class="inspector-top"><span class="section-kicker">INSPECTOR</span><button class="icon-button small" aria-label="Close inspector" onclick={() => panel = false}><PanelRightClose size={17} /></button></div>
         <div class="inspector-title"><span class="kind-icon {block.kind}"><Icon size={19} /></span><div><span>{kinds[block.kind].label}</span><h2>{block.title}</h2></div></div>
-        <div class="inspector-scroll">
+        <div class="inspector-scroll" bind:this={inspectorScroll}>
           {#if block.kind === 'sql'}
             <div class="tabs" aria-label="Query views"><button class:active={activeTab === 'sql'} onclick={() => showQueryTab('sql')}>SQL</button><button class:active={activeTab === 'data'} onclick={() => showQueryTab('data')}>Data</button></div>
             <div class="inspector-body">
@@ -974,6 +1007,9 @@
             </div>
           {:else if block.kind === 'table'}
             {@const issue = tableProblem(block)}
+            {#if selectedTableCell && block.expanded !== false && !block.inlineLocked}
+              <CellInspector {...selectedTableCell} clear={() => activeCell = undefined} />
+            {/if}
             <div class="inspector-body">
               <div class="result-summary"><span>{countLabel(block.rows.length, 'row')} <span class="separator">·</span> {countLabel(block.columns.length, 'column')}</span></div>
               <ResultGrid result={tablePreview(block, 5, workspace)} limit={5} />
@@ -1099,7 +1135,19 @@
 {:else if modal === 'table' && selected?.kind === 'table'}
   {@const table = selected}
   {#snippet content()}
-    <TableEditor block={table} {workspace} hotkeys={preferences.hotkeys} change={(patch) => patchBlock(table.id, patch)} paste={() => openPaste(table.id)} error={message} />
+    <div class="table-dialog-layout">
+      <div class="table-dialog-editor">
+        <TableEditor block={table} {workspace} hotkeys={preferences.hotkeys} change={(patch) => patchBlock(table.id, patch)}
+          paste={() => openPaste(table.id)} error={message} activeCell={activeCell} selectCell={(cell) => select(table.id, cell)} />
+      </div>
+      <aside class="table-dialog-inspector" aria-label="Cell inspector">
+        {#if selectedTableCell}
+          <CellInspector {...selectedTableCell} clear={() => activeCell = undefined} />
+        {:else}
+          <p class="helper-text">Select a cell to see its functions.</p>
+        {/if}
+      </aside>
+    </div>
   {/snippet}
   {#snippet footer()}<button class="button primary" onclick={closeModal}>Done</button>{/snippet}
   <Modal title={table.title} subtitle="Table" wide close={closeModal} children={content} {footer} />

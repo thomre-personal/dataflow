@@ -1,3 +1,7 @@
+<script module lang="ts">
+  export type CellAddress = { rowId: string; columnId: string };
+</script>
+
 <script lang="ts">
   import { CircleAlert, ClipboardPlus, Plus, Trash2 } from 'lucide-svelte';
   import { tick } from 'svelte';
@@ -11,13 +15,15 @@
   import type { ColumnType, Formula, TableBlock, TableStyle, Workspace } from '../lib/workspace';
   import FormulaSuggestions from './FormulaSuggestions.svelte';
 
-  let { block, workspace, hotkeys, change, paste, error, inline = false }: {
+  let { block, workspace, hotkeys, change, paste, error, activeCell, selectCell, inline = false }: {
     block: TableBlock;
     workspace: Workspace;
     hotkeys: Hotkeys;
     change: (patch: Partial<TableBlock>) => void;
     paste: () => void;
     error: (message: string) => void;
+    activeCell?: CellAddress;
+    selectCell: (cell: CellAddress) => void;
     inline?: boolean;
   } = $props();
 
@@ -245,6 +251,8 @@
           {@const showMenu = editing?.id === id && suggestions.length > 0}
           <td class:invalid-cell={Boolean(issue)} class:title-column={columnIndex < titleColumns} class:formula-cell={isFormula}><input
             {id}
+            data-table-cell=""
+            class:active-cell={activeCell?.rowId === row.id && activeCell.columnId === column.id}
             class:numeric={data.columns[columnIndex].type === 'decimal'}
             value={editing?.id === id ? cellDraft : data.display(rowIndex, columnIndex)}
             title={isFormula ? cellFormulaText(row, block.columns, columnIndex, inputs) : undefined}
@@ -264,6 +272,7 @@
                 event.currentTarget.value = cellDraft;
                 event.currentTarget.select();
               }
+              selectCell({ rowId: row.id, columnId: column.id });
             }}
             onblur={() => { if (editing?.id === id) editing = undefined; }}
             oninput={(event) => {
