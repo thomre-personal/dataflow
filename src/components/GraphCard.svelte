@@ -1,0 +1,75 @@
+<script module lang="ts">
+  import type { Block, Result } from '../lib/workspace';
+  export type CardData = Record<string, unknown> & {
+    block: Block;
+    result?: Result;
+    dark: boolean;
+    dataState?: 'ready' | 'stale' | 'running' | 'error';
+    focusSide?: 'input' | 'output';
+    open: () => void;
+  };
+</script>
+
+<script lang="ts">
+  import { Handle, Position } from '@xyflow/svelte';
+  import type { Node, NodeProps } from '@xyflow/svelte';
+  import { Braces, ChartColumnIncreasing, Folder, Table2 } from 'lucide-svelte';
+  import { countLabel, chartSeries } from '../lib/format';
+  import MiniChart from './MiniChart.svelte';
+  import ResultGrid from './ResultGrid.svelte';
+
+  let { data, selected }: NodeProps<Node<CardData>> = $props();
+  const icons = { table: Table2, sql: Braces, chart: ChartColumnIncreasing, group: Folder };
+  const labels = { table: 'Table', sql: 'SQL query', chart: 'Chart', group: 'Group' };
+  let block = $derived(data.block);
+  let Icon = $derived(icons[block.kind]);
+  let series = $derived(block.kind === 'chart' ? chartSeries(block, data.result) : undefined);
+  let codeLines = $derived(block.kind === 'sql' ? block.sql.trim().split('\n').slice(0, 6) : []);
+  const sqlKeyword = /^(?:SELECT|FROM|WHERE|JOIN|AS|GROUP|BY|ORDER|LIMIT|SUM|WITH|AND|DESC|ASC|VALUES)$/i;
+</script>
+
+{#if block.kind === 'group'}
+  <div class="group-card" class:selected>
+    <div class="group-title"><Folder size={15} /><span>{block.title}</span></div>
+  </div>
+{:else}
+  <div class="graph-card {block.kind}" class:selected class:related={Boolean(data.focusSide)}>
+    {#if block.kind === 'sql' || block.kind === 'chart'}
+      <Handle type="target" position={Position.Left} isConnectable={true} aria-label="Input port" />
+    {/if}
+    {#if block.kind === 'table' || block.kind === 'sql'}
+      <Handle type="source" position={Position.Right} isConnectable={true} aria-label="Output port" />
+    {/if}
+    <header class="node-heading">
+      <span class="kind-icon {block.kind}"><Icon size={17} strokeWidth={1.85} /></span>
+      <div><p>{labels[block.kind]}</p><h3>{block.title}</h3></div>
+      {#if data.focusSide}<span class="node-relationship">{data.focusSide}</span>{/if}
+    </header>
+
+    {#if block.kind === 'table'}
+      <div class="node-preview node-table">
+        <ResultGrid compact limit={4} result={{
+          columns: block.columns,
+          rows: block.rows.slice(0, 4).map((row) => row.cells.map((cell) => cell || null)),
+        }} />
+      </div>
+      <footer class="node-footer"><span>{countLabel(block.rows.length, 'row')} <span class="separator">·</span> {countLabel(block.columns.length, 'column')}</span><button class="nodrag" onclick={data.open}>Open table</button></footer>
+    {:else if block.kind === 'sql'}
+      <div class="node-preview node-code" aria-hidden="true">
+        {#each codeLines as line, index}
+          <div><span class="line-number">{index + 1}</span><code>{#each line.split(/(\b\w+\b)/) as token}<span class:keyword={sqlKeyword.test(token)}>{token}</span>{/each}</code></div>
+        {/each}
+        {#if !codeLines.length}<div><span class="line-number">1</span><code class="muted-text">-- Write a query</code></div>{/if}
+      </div>
+      <footer class="node-footer">
+        <span class="node-state {data.dataState ?? ''}"><i></i>{data.dataState === 'ready' ? countLabel(data.result?.rows.length ?? 0, 'result row') : data.dataState === 'running' ? 'Running…' : data.dataState === 'stale' ? 'Needs run' : data.dataState === 'error' ? 'Query error' : 'SQL'}</span>
+        <button class="nodrag" onclick={data.open}>Open query</button>
+      </footer>
+    {:else}
+      <div class="node-preview node-chart">{#if series}
+        <MiniChart {series} type={block.chart} dark={data.dark} compact />
+      {:else}<div class="node-placeholder"><ChartColumnIncreasing size={24} /><span>{data.dataState === 'running' ? 'Loading data…' : 'Connect a data source'}</span></div>{/if}</div>
+      <footer class="node-footer"><span>{block.chart === 'bar' ? 'Bar chart' : 'Line chart'}{#if data.dataState === 'stale' || data.dataState === 'error'} <span class="inline-warning">· Previous data</span>{:else if series?.truncated} <span class="separator">·</span> First 100{/if}</span><button class="nodrag" onclick={data.open}>Open chart</button></footer>
+    {/if}
+  </div>
+{/if}
