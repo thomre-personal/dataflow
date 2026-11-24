@@ -15,6 +15,35 @@
   let zoom = $derived(Math.round(store.viewport.zoom * 100));
 
   onMount(() => connect((options) => store.fitView(options), screenToFlowPosition));
+
+  $effect(() => {
+    const canvas = store.domNode;
+    if (!canvas) return;
+
+    const wheelOverTable = (event: WheelEvent) => {
+      const { deltaMode, deltaX, deltaY } = event;
+      if (event.defaultPrevented || event.ctrlKey || event.shiftKey || !deltaY || Math.abs(deltaX) > Math.abs(deltaY)) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const table = target.closest('.nowheel');
+      if (!table) return;
+
+      for (let element: Element | null = target; element; element = element.parentElement) {
+        const maxScroll = element.scrollHeight - element.clientHeight;
+        const canScroll = deltaY > 0 ? element.scrollTop < maxScroll - 1 : element.scrollTop > 1;
+        if (maxScroll > 1 && canScroll && /^(auto|scroll)$/.test(getComputedStyle(element).overflowY)) return;
+        if (element === table) break;
+      }
+
+      event.preventDefault();
+      const pixels = deltaMode === WheelEvent.DOM_DELTA_LINE ? 20
+        : deltaMode === WheelEvent.DOM_DELTA_PAGE ? canvas.clientHeight : 1;
+      void store.panBy({ x: 0, y: -deltaY * pixels });
+    };
+
+    canvas.addEventListener('wheel', wheelOverTable, { capture: true, passive: false });
+    return () => canvas.removeEventListener('wheel', wheelOverTable, true);
+  });
 </script>
 
 <div class="canvas-hud">

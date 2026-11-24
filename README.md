@@ -23,6 +23,8 @@ Open [DataFlow on your computer](http://127.0.0.1:5173/). Use that same address 
 
 Tables and charts start expanded on the canvas. Drag any edge or corner to resize one, or use the collapse button for a smaller preview. Edit expanded tables directly on the canvas. Choose **Lock** for a read-only view and **Unlock** to edit again. Drag a **+** output onto an empty part of the canvas to configure a connected query or chart. When the source is a table, you can also create a connected table and reference the source in formulas.
 
+Scroll over the canvas to zoom. Over an expanded table or SQL result, the wheel scrolls the rows while there is room to scroll in that direction. It pans the canvas up or down when the table fits or reaches its edge.
+
 Click a block name to rename it directly on the canvas. Press **Enter** to save or **Esc** to cancel. In a SQL block, choose **SQL** or **Results** to switch between the code preview and the scrollable result table. The workspace saves this choice for each SQL block. Use **Run** to execute the query and **Open query** to edit it. **Open chart** opens the chart preview and settings in a dialog. To remove a selected block, press **Delete** or choose **Delete block** at the bottom of the inspector.
 
 Click a connection line and press **Delete** to disconnect two blocks. You can also disconnect inputs in the inspector. Table formulas that depend on a removed connection show a validation error. **Undo** restores the connection.

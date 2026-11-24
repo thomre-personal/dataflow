@@ -158,6 +158,58 @@ async function clickConnection(page: Page, connection: Locator) {
   await page.mouse.click(point.x, point.y);
 }
 
+test('pans the canvas when a table cannot scroll and keeps native scrolling when it can', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New workspace', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Workspace name' }).fill('Table scrolling');
+  await page.getByRole('button', { name: 'Create workspace' }).click();
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Untitled table', exact: true });
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+  await waitForCanvasFit(page);
+  const card = canvasBlock(page, 'Untitled table');
+  const viewport = () => page.locator('.svelte-flow__viewport').evaluate((element) => {
+    const transform = new DOMMatrixReadOnly(getComputedStyle(element).transform);
+    return { x: transform.m41, y: transform.m42, zoom: transform.m11 };
+  });
+
+  await card.getByRole('button', { name: 'Lock inline editing', exact: true }).click();
+  const full = card.getByRole('region', { name: 'Full table data', exact: true });
+  await expect.poll(() => full.evaluate((element) => element.scrollHeight - element.clientHeight)).toBe(0);
+  await full.hover();
+  const start = await viewport();
+  await page.mouse.wheel(0, 70);
+  await expect.poll(async () => (await viewport()).y).toBeCloseTo(start.y - 70);
+  expect(await viewport()).toMatchObject({ x: start.x, zoom: start.zoom });
+  await full.hover();
+  await page.mouse.wheel(0, -70);
+  await expect.poll(async () => (await viewport()).y).toBeCloseTo(start.y);
+
+  await card.getByRole('button', { name: 'Unlock inline editing', exact: true }).click();
+  await card.getByRole('button', { name: 'Open table', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Paste range', exact: true }).click();
+  const paste = page.getByRole('dialog', { name: 'Paste data', exact: true });
+  await paste.getByRole('textbox', { name: 'Cell range' }).fill('A\tB\n' + Array.from({ length: 30 }, (_, index) => index + '\tValue').join('\n'));
+  await paste.getByRole('button', { name: 'Replace table data', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+  const editor = card.getByRole('group', { name: 'Edit Untitled table', exact: true });
+  await editor.hover();
+  const beforeScroll = await viewport();
+  await page.mouse.wheel(0, 100);
+  await expect.poll(() => editor.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  expect(await viewport()).toEqual(beforeScroll);
+
+  await editor.evaluate((element) => element.scrollTop = element.scrollHeight);
+  await editor.hover();
+  await page.mouse.wheel(0, 70);
+  await expect.poll(async () => (await viewport()).y).toBeCloseTo(beforeScroll.y - 70);
+  expect(await viewport()).toMatchObject({ zoom: beforeScroll.zoom });
+
+  await page.getByRole('region', { name: 'Canvas drop area', exact: true }).hover({ position: { x: 24, y: 32 } });
+  await page.mouse.wheel(0, -70);
+  await expect.poll(async () => (await viewport()).zoom).toBeGreaterThan(beforeScroll.zoom);
+});
+
 test('resizes an expanded table, scrolls to its last row and restores the size', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New workspace', exact: true }).click();
