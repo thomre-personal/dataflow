@@ -25,6 +25,8 @@ Tables and charts start expanded on the canvas. Drag any edge or corner to resiz
 
 Click a block name to rename it directly on the canvas. Press **Enter** to save or **Esc** to cancel. **Open query** opens the SQL editor in a dialog. **Open chart** opens the chart preview and settings in a dialog. To remove a selected block, press **Delete** or choose **Delete block** at the bottom of the inspector.
 
+Click a connection line and press **Delete** to disconnect two blocks. You can also disconnect inputs in the inspector. Table formulas that depend on a removed connection show a validation error. **Undo** restores the connection.
+
 Drag a block type from the canvas toolbar to place it. A dropped table is ready to edit on the canvas. A dropped query or chart opens its dialog.
 
 Drag a block by its header into an open group. Drag it outside the group to move it out. Groups can contain other groups. Resize a group at its edges or corners, or collapse it to hide its contents while keeping connections to other blocks visible.

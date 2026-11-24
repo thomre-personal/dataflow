@@ -163,7 +163,11 @@ code { font-family: var(--mono); }
 .canvas-stage { position: relative; min-height: 0; background: var(--canvas); overflow: hidden; }
 .canvas-block-tool { cursor: grab; }
 .canvas-block-tool:active { cursor: grabbing; }
-.svelte-flow { --xy-background-color: transparent; --xy-minimap-background-color: var(--surface); --xy-minimap-mask-stroke-color: var(--divider); }
+.svelte-flow { --xy-background-color: transparent; --xy-minimap-background-color: var(--surface); --xy-minimap-mask-stroke-color: var(--divider);
+  --xy-edge-stroke: #889cb6; --xy-edge-stroke-selected: var(--accent); }
+:root[data-theme="dark"] .svelte-flow { --xy-edge-stroke: #7185a1; }
+.svelte-flow .svelte-flow__edge-path { stroke-width: 1.8px; }
+.svelte-flow .svelte-flow__edge.selected .svelte-flow__edge-path { stroke-width: 3px; }
 .svelte-flow .svelte-flow__minimap { border: 1px solid var(--border); border-radius: 9px; box-shadow: var(--shadow); overflow: hidden; margin: 15px; }
 .svelte-flow .svelte-flow__handle { width: 11px; height: 11px; background: var(--surface); border: 2px solid var(--accent-line); border-radius: 50%; z-index: 2; }
 .svelte-flow .svelte-flow__handle:hover, .svelte-flow .svelte-flow__handle.connectingfrom { background: var(--accent); }

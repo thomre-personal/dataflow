@@ -7,7 +7,7 @@
     PanelRightClose, PanelRightOpen, Pencil, Play, Plus, Redo2, Search, Settings as SettingsIcon, Table2, Trash2, Undo2, Unplug,
     Workflow, X,
   } from 'lucide-svelte';
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import GraphCard from './components/GraphCard.svelte';
   import type { CardData } from './components/GraphCard.svelte';
   import BlockSearch from './components/BlockSearch.svelte';
@@ -388,10 +388,11 @@
         },
       };
     });
+    const selectedEdges = untrack(() => new Set(flowEdges.filter((edge) => edge.selected).map((edge) => edge.id)));
     flowEdges = visibleLinks.map((link) => ({
-      ...link, type: 'smoothstep',
+      ...link, type: 'smoothstep', selected: selectedEdges.has(link.id),
+      ariaLabel: 'Connection from ' + (blocksById.get(link.source)?.title ?? 'source') + ' to ' + (blocksById.get(link.target)?.title ?? 'target'),
       markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: dark ? '#7185a1' : '#889cb6' },
-      style: 'stroke-width: 1.8px; stroke: ' + (dark ? '#7185a1' : '#889cb6'),
     }));
   });
 
@@ -401,6 +402,9 @@
   }
 
   function select(id: string) {
+    if (flowEdges.some((edge) => edge.selected)) {
+      flowEdges = flowEdges.map((edge) => edge.selected ? { ...edge, selected: false } : edge);
+    }
     if (id !== selectedId) showQueryTab('sql');
     selectedId = id;
     panel = true;
@@ -759,9 +763,15 @@
       event.preventDefault();
       stepHistory(shortcut === hotkeys.undo ? 'undo' : 'redo');
     }
-    if (shortcut === hotkeys.deleteBlock && !event.repeat && selected) {
-      event.preventDefault();
-      removeBlock(selected, preferences.confirmHotkeyDelete);
+    if (shortcut === hotkeys.deleteBlock && !event.repeat) {
+      const edge = flowEdges.find((edge) => edge.selected);
+      if (edge) {
+        event.preventDefault();
+        disconnect(edge.id);
+      } else if (selected) {
+        event.preventDefault();
+        removeBlock(selected, preferences.confirmHotkeyDelete);
+      }
     }
   }
 
@@ -893,6 +903,7 @@
             isValidConnection={({ source, target, sourceHandle }) =>
               (sourceHandle !== 'quick-create' || blocksById.get(target)?.kind === 'table') && canConnect(workspace, source, target)}
             onnodeclick={({ node }) => select(node.id)}
+            onselectionchange={({ edges }) => { if (edges.length) selectedId = ''; }}
             onnodedrag={({ targetNode, event }) => { groupDrop.target = targetNode ? groupForDrag(targetNode, event)?.id ?? '' : ''; }}
             onnodedragstop={({ targetNode, event }) => { if (targetNode) moveDraggedBlock(targetNode, event); }}
             proOptions={{ hideAttribution: true }}

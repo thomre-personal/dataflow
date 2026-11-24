@@ -125,6 +125,19 @@ async function dragBlock(page: Page, header: Locator, x: number, y: number) {
   await page.mouse.up();
 }
 
+async function clickConnection(page: Page, connection: Locator) {
+  const point = await connection.locator('.svelte-flow__edge-interaction').evaluate((element: SVGPathElement) => {
+    const transform = element.getScreenCTM()!;
+    const length = element.getTotalLength();
+    for (const fraction of [.5, .4, .6, .3, .7, .2, .8]) {
+      const { x, y } = element.getPointAtLength(length * fraction).matrixTransform(transform);
+      if (document.elementFromPoint(x, y)?.closest('.svelte-flow__edge') === element.parentElement) return { x, y };
+    }
+    throw new Error('No visible point on the connection line.');
+  });
+  await page.mouse.click(point.x, point.y);
+}
+
 test('resizes an expanded table, scrolls to its last row and restores the size', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New workspace', exact: true }).click();
@@ -400,7 +413,7 @@ test('saves appearance and shortcut preferences and can delete without a hotkey 
   await settings.getByRole('combobox', { name: 'Appearance' }).selectOption('dark');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await settings.getByRole('checkbox', { name: 'Confirm block deletion by shortcut' }).uncheck();
-  const shortcut = settings.getByRole('button', { name: 'Change shortcut for Delete selected block' });
+  const shortcut = settings.getByRole('button', { name: 'Change shortcut for Delete selection' });
   await shortcut.click();
   await shortcut.press('Shift+Delete');
   await expect(shortcut).toContainText('Delete');
@@ -544,7 +557,17 @@ test('requires an input for a cross-table formula and recalculates it for downst
   const summary = canvasBlock(page, 'Untitled table');
   const output = summary.getByRole('textbox', { name: 'A row 1', exact: true });
   await expect(output).toHaveValue('104.775');
-  await inspector.getByRole('button', { name: 'Disconnect Transactions' }).click();
+  const edge = page.getByRole('group', { name: 'Connection from Transactions to Untitled table', exact: true });
+  await clickConnection(page, edge);
+  await expect(edge).toHaveClass(/\bselected\b/);
+  await page.keyboard.press('Delete');
+  await expect(edge).toHaveCount(0);
+  await expect(output).toHaveValue('#ERROR');
+  await expect(output).toHaveAttribute('aria-invalid', 'true');
+  await expect(summary.getByRole('status')).toContainText('Reconnect the referenced table');
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(output).toHaveValue('104.775');
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
   await expect(output).toHaveValue('#ERROR');
   const source = canvasBlock(page, 'Transactions');
   const sourcePort = source.getByRole('button', { name: 'Output port', exact: true });
@@ -554,6 +577,7 @@ test('requires an input for a cross-table formula and recalculates it for downst
   await page.mouse.move(targetPort.x + targetPort.width / 2, targetPort.y + targetPort.height / 2, { steps: 14 });
   await page.mouse.up();
   await expect(output).toHaveValue('104.775');
+  await expect(output).not.toHaveAttribute('aria-invalid', 'true');
 
   await source.getByRole('button', { name: 'Open table', exact: true }).click();
   const transactions = page.getByRole('dialog', { name: 'Transactions' });
