@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { bindTableFormulas, cellFormulaText } from '../src/lib/formulas.ts';
+import { bindTableFormulas, cellFormulaText, parseFormula } from '../src/lib/formulas.ts';
 import { tableResult } from '../src/lib/format.ts';
 import { invalidTableCells, tableData } from '../src/lib/table-data.ts';
-import { createBlock } from '../src/lib/workspace.ts';
+import { addLink, canConnect, createBlock, createWorkspace, tableInputs } from '../src/lib/workspace.ts';
 
 test('evaluates aggregates for text, numbers, and dates with footer rows excluded', () => {
   const table = createBlock('table', { x: 0, y: 0 });
@@ -97,4 +97,35 @@ test('allows text summaries in typed footers and still reports broken formulas',
   assert.equal(data.display(1, 0), 'Summe: 2.50');
   assert.deepEqual(data.cell(1, 0), { value: 'Summe: 2.50' });
   assert.deepEqual(tableResult(summary).rows, [['2.50']]);
+});
+
+test('aggregates linked table columns using stable IDs and the source data and number format', () => {
+  const transactions = createBlock('table', { x: 0, y: 0 });
+  const summary = createBlock('table', { x: 0, y: 0 });
+  assert.ok(transactions.kind === 'table' && summary.kind === 'table');
+  transactions.title = 'Transactions';
+  transactions.columns[0] = { ...transactions.columns[0], name: 'Amount', type: 'decimal' };
+  transactions.columns[1] = { ...transactions.columns[1], name: 'Category', type: 'text' };
+  transactions.numberFormat = 'decimal-comma';
+  transactions.footerRows = 1;
+  transactions.rows = [['2,00', 'Home'], ['10,00', 'Other'], ['4,00', 'Home'], ['999,00', 'Home']]
+    .map((cells, index) => ({ id: String(index), cells }));
+  summary.rows[0].cells = ['=MEDIAN(Transactions::Amount)', '=SUMIF(Transactions::Category, "Home", Transactions::Amount)'];
+  const workspace = { ...createWorkspace('Budget'), blocks: [transactions, summary] };
+  assert.match(tableData(summary, workspace).cell(0, 0).message ?? '', /Connect Transactions/);
+
+  const connected = addLink(workspace, transactions.id, summary.id);
+  assert.equal(canConnect(connected, summary.id, transactions.id), false);
+  const bound = bindTableFormulas(summary, tableInputs(connected, summary.id));
+  assert.deepEqual(tableResult(bound, connected).rows[0], ['4.00', '6.00']);
+  assert.match(tableData(bound, workspace).cell(0, 0).message ?? '', /Reconnect/);
+
+  transactions.title = 'Ledger, 2026';
+  transactions.columns[0].name = 'Paid';
+  transactions.rows[2].cells[0] = '8,00';
+  const inputs = tableInputs(connected, summary.id);
+  const displayed = cellFormulaText(bound.rows[0], bound.columns, 0, inputs);
+  assert.equal(displayed, '=MEDIAN([Ledger, 2026]::Paid)');
+  assert.equal(parseFormula(displayed, bound.columns, 0, inputs).formula?.name, 'MEDIAN');
+  assert.deepEqual(tableResult(bound, connected).rows[0], ['8.00', '10.00']);
 });

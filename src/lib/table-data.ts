@@ -1,11 +1,18 @@
 import { inferType, parseDate, parseDecimal, validateCell } from './clipboard.ts';
 import { isFormulaEntry, parseFormula, readFormula } from './formulas.ts';
-import { dataRowCount, rowNumber } from './workspace.ts';
-import type { Formula, OrderedFunction, TableBlock } from './workspace.ts';
+import { dataRowCount, rowNumber, tableInputs } from './workspace.ts';
+import type { Column, Formula, OrderedFunction, TableBlock, TableInput, ValueType, Workspace } from './workspace.ts';
 
 type CellIssue = { row: number; column: number; message: string };
 type CellValue = { value: string; calculated?: 'number' | 'date' | 'text'; forcedText?: boolean; message?: string };
 type Decimal = { units: bigint; scale: number };
+type AggregateFormula = Exclude<Formula, { name: 'CONCAT' }>;
+type TableEvaluation = {
+  columns: (Column & { type: ValueType })[];
+  cell: (row: number, column: number) => ReturnType<typeof validateCell>;
+  display: (row: number, column: number) => string;
+  calculate: (formula: AggregateFormula) => CellValue;
+};
 
 function decimal(value: string): Decimal {
   return { units: BigInt(value.replace('.', '')), scale: value.split('.')[1]?.length ?? 0 };
@@ -51,7 +58,19 @@ function matchesCriterion(cell: CellValue, number: Decimal | null, criterion: st
   return operator === '<=' ? comparison <= 0 : comparison >= 0;
 }
 
-export function tableData(table: TableBlock) {
+export function tableData(table: TableBlock, workspace?: Workspace) {
+  const tables = new Map<string, TableEvaluation>();
+  function evaluate(block: TableBlock): TableEvaluation {
+    const cached = tables.get(block.id);
+    if (cached) return cached;
+    const result = createTableData(block, tableInputs(workspace, block.id), evaluate);
+    tables.set(block.id, result);
+    return result;
+  }
+  return evaluate(table);
+}
+
+function createTableData(table: TableBlock, inputs: TableInput[], evaluate: (table: TableBlock) => TableEvaluation): TableEvaluation {
   const rowCount = dataRowCount(table);
   const indices = new Map(table.columns.map((column, index) => [column.id, index]));
   const results = new Map<string, CellValue>();
@@ -64,9 +83,9 @@ export function tableData(table: TableBlock) {
     const value = item.cells[column] ?? '';
     if (value.startsWith("'")) return { value: value.slice(1), forcedText: true };
     const formula = readFormula(item, table.columns[column].id);
-    if (formula) return formula.name === 'CONCAT' ? readConcat(formula, row, column) : calculate(formula);
+    if (formula) return formula.name === 'CONCAT' ? readConcat(formula, row, column) : calculateAggregate(formula);
     if (!isFormulaEntry(value)) return { value };
-    const { message } = parseFormula(value, table.columns, column);
+    const { message } = parseFormula(value, table.columns, column, inputs);
     return { value, message: message ?? 'Re-enter the formula to link its columns.' };
   }
 
@@ -92,7 +111,7 @@ export function tableData(table: TableBlock) {
       let cell: CellValue;
       if ('expression' in part) {
         const expression = part.expression;
-        cell = expression.name === 'CONCAT' ? concat(expression, row) : calculate(expression);
+        cell = expression.name === 'CONCAT' ? concat(expression, row) : calculateAggregate(expression);
       } else {
         const index = indices.get(part.columnId);
         if (index === undefined) return { value: '', message: 'The referenced column was deleted.' };
@@ -102,6 +121,16 @@ export function tableData(table: TableBlock) {
       value += textForDisplay(cell);
     }
     return { value, calculated: 'text' };
+  }
+
+  function calculateAggregate(formula: AggregateFormula): CellValue {
+    const sourceId = 'source' in formula ? formula.source?.tableId : undefined;
+    const conditionId = 'condition' in formula ? formula.condition.tableId : undefined;
+    const tableId = sourceId ?? conditionId;
+    if (!tableId) return calculate(formula);
+    const input = inputs.find(({ table }) => table.id === tableId);
+    if (!input) return { value: '', message: 'Reconnect the referenced table as an input.' };
+    return evaluate(input.table).calculate(formula);
   }
 
   function numeric(cell: CellValue, column: number) {
@@ -117,7 +146,7 @@ export function tableData(table: TableBlock) {
     return !cell.forcedText && (!cell.calculated || cell.calculated === 'date') && (type === 'auto' || type === 'date') ? parseDate(cell.value) : null;
   }
 
-  function calculate(formula: Exclude<Formula, { name: 'CONCAT' }>): CellValue {
+  function calculate(formula: AggregateFormula): CellValue {
     const conditionId = 'condition' in formula ? formula.condition.columnId : undefined;
     const sourceId = formula.name === 'COUNTIF' ? undefined : formula.source?.columnId ?? conditionId;
     const criterion = 'criterion' in formula ? formula.criterion : '';
@@ -227,25 +256,28 @@ export function tableData(table: TableBlock) {
     return cell.calculated === 'number' && table.numberFormat === 'decimal-comma' ? cell.value.replace('.', ',') : cell.value;
   }
 
-  const columns = table.columns.map((column, index) => {
-    if (column.type !== 'auto') return { ...column, type: column.type };
-    const cells = Array.from({ length: rowCount }, (_, row) => read(row, index));
-    const type = cells.some((cell) => (cell.forcedText || cell.calculated === 'text') && cell.value) ? 'text'
-      : inferType(cells.map((cell) => cell.message ? '' : textForDisplay(cell)), table.numberFormat);
-    return { ...column, type };
-  });
+  let resolvedColumns: TableEvaluation['columns'] | undefined;
+  function columns(): TableEvaluation['columns'] {
+    return resolvedColumns ??= table.columns.map((column, index) => {
+      if (column.type !== 'auto') return { ...column, type: column.type };
+      const cells = Array.from({ length: rowCount }, (_, row) => read(row, index));
+      const type = cells.some((cell) => (cell.forcedText || cell.calculated === 'text') && cell.value) ? 'text'
+        : inferType(cells.map((cell) => cell.message ? '' : textForDisplay(cell)), table.numberFormat);
+      return { ...column, type };
+    });
+  }
 
   function cell(row: number, column: number) {
     const value = read(row, column);
     if (value.message) return { message: value.message };
-    const type = row < rowCount ? columns[column].type : 'text';
+    const type = row < rowCount ? columns()[column].type : 'text';
     if ((value.forcedText || value.calculated === 'text') && value.value && type !== 'text') {
       return { message: 'This is text. Use Auto or Text for this column.' };
     }
     return validateCell(value.value, type, value.calculated === 'number' ? 'decimal-point' : table.numberFormat);
   }
 
-  return { columns, cell, display: (row: number, column: number) => textForDisplay(read(row, column)) };
+  return { get columns() { return columns(); }, calculate, cell, display: (row, column) => textForDisplay(read(row, column)) };
 }
 
 export function* invalidTableCells(table: TableBlock, data = tableData(table)): Generator<CellIssue, void> {

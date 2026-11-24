@@ -170,7 +170,7 @@ code { font-family: var(--mono); }
 .svelte-flow .svelte-flow__handle-left { left: -6px; }
 .svelte-flow .svelte-flow__handle-right { right: -6px; }
 .svelte-flow .svelte-flow__handle.quick-exit { display: grid; place-items: center; right: -10px; top: calc(50% - 34px); width: 24px; height: 24px; background: var(--accent-soft); color: var(--accent); opacity: 0; pointer-events: none; box-shadow: var(--shadow); cursor: crosshair; z-index: 3; }
-.quick-exit::before { content: ''; position: absolute; inset: -10px; }
+.quick-exit::before { content: ''; position: absolute; inset: -13px -24px -13px -10px; pointer-events: auto; }
 .svelte-flow .svelte-flow__node:has(.quick-exit:hover, .quick-exit.connectingfrom) { z-index: 2000 !important; }
 .svelte-flow__node:hover .quick-exit, .graph-card:focus-within .quick-exit, .svelte-flow .svelte-flow__handle.quick-exit.connectingfrom { opacity: 1; pointer-events: auto; }
 .svelte-flow .svelte-flow__handle.quick-exit:hover, .svelte-flow .svelte-flow__handle.quick-exit.connectingfrom { color: var(--surface); background: var(--accent); }

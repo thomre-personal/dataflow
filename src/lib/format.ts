@@ -1,12 +1,12 @@
 import { describeCellIssue, tableData } from './table-data.ts';
 import { dataRowCount } from './workspace.ts';
-import type { ChartBlock, Result, TableBlock } from './workspace.ts';
+import type { ChartBlock, Result, TableBlock, Workspace } from './workspace.ts';
 
 export const countLabel = (value: number, singular: string, plural = singular + 's') =>
   value.toLocaleString('en') + ' ' + (value === 1 ? singular : plural);
 
-export function tableResult(table: TableBlock): Result {
-  const data = tableData(table);
+export function tableResult(table: TableBlock, workspace?: Workspace): Result {
+  const data = tableData(table, workspace);
   return {
     columns: data.columns.map(({ name, type }) => ({ name, type })),
     rows: table.rows.slice(0, dataRowCount(table)).map((_, rowIndex) => data.columns.map((_, index) => {
@@ -17,8 +17,8 @@ export function tableResult(table: TableBlock): Result {
   };
 }
 
-export function tablePreview(table: TableBlock, limit: number): Result {
-  const data = tableData(table);
+export function tablePreview(table: TableBlock, limit: number, workspace?: Workspace): Result {
+  const data = tableData(table, workspace);
   return {
     columns: data.columns,
     rows: table.rows.slice(0, limit).map((_, row) => data.columns.map((_, column) => data.display(row, column) || null)),

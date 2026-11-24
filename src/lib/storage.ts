@@ -1,4 +1,5 @@
 import type { Library } from './workspace';
+import { tableInputs } from './workspace';
 import { bindTableFormulas } from './formulas';
 
 const storeName = 'workspaces';
@@ -26,7 +27,7 @@ export async function loadLibrary(): Promise<Library | undefined> {
     ...library,
     workspaces: library.workspaces.map((workspace) => ({
       ...workspace,
-      blocks: workspace.blocks.map((block) => block.kind === 'table' ? bindTableFormulas(block) : block),
+      blocks: workspace.blocks.map((block) => block.kind === 'table' ? bindTableFormulas(block, tableInputs(workspace, block.id)) : block),
     })),
   };
 }

@@ -18,7 +18,7 @@
   import ResultGrid from './components/ResultGrid.svelte';
   import MiniChart from './components/MiniChart.svelte';
   import Settings from './components/Settings.svelte';
-  import { absolutePosition, addLink, canConnect, canGroup, columnLetter, createBlock, createWorkspace, kinds, related, sqlAlias, starterWorkspace } from './lib/workspace';
+  import { absolutePosition, addLink, canConnect, canGroup, columnLetter, createBlock, createWorkspace, kinds, related, sqlAlias, starterWorkspace, tableInputs } from './lib/workspace';
   import type { Block, BlockKind, ChartBlock, GroupBlock, Library, Link, NumberFormat, Position, Result, SqlBlock, Workspace } from './lib/workspace';
   import { importGrid, parseDelimited } from './lib/clipboard';
   import { bindTableFormulas } from './lib/formulas';
@@ -238,7 +238,7 @@
     const link = workspace.links.find((item) => item.target === block.id);
     const source = workspace.blocks.find((item) => item.id === link?.source);
     if (source?.kind === 'table') {
-      try { return { result: tableResult(source), state: 'ready' }; }
+      try { return { result: tableResult(source, workspace), state: 'ready' }; }
       catch (error) { return { state: 'error', error: error instanceof Error ? error.message : String(error) }; }
     }
     if (source?.kind === 'sql') return runtime[source.id] ?? {};
@@ -247,7 +247,7 @@
 
   function tableProblem(block: Block) {
     if (block.kind !== 'table') return undefined;
-    const issue = invalidTableCells(block).next().value;
+    const issue = invalidTableCells(block, tableData(block, workspace)).next().value;
     return issue ? describeCellIssue(block, issue) : undefined;
   }
 
@@ -377,6 +377,7 @@
             hasOutput: visibleLinks.some((link) => link.source === block.id),
           } : undefined,
           edit: block.kind === 'table' ? {
+            workspace,
             toggleLock: () => patchBlock(block.id, { inlineLocked: !block.inlineLocked }),
             patch: (patch: Partial<Block>) => patchBlock(block.id, patch),
             hotkeys: preferences.hotkeys,
@@ -547,6 +548,11 @@
   function connect(source: string, target: string) {
     const next = addLink(workspace, source, target);
     if (next === workspace) return;
+    const targetBlock = next.blocks.find((block) => block.id === target);
+    if (targetBlock?.kind === 'table') {
+      const bound = bindTableFormulas(targetBlock, tableInputs(next, target));
+      if (bound !== targetBlock) next.blocks = next.blocks.map((block) => block.id === target ? bound : block);
+    }
     invalidate([target, ...related(workspace, target, 'outputs')]);
     replaceWorkspace(next);
   }
@@ -679,7 +685,7 @@
       const legacyDefaultColumn = target?.kind === 'table' && target.columns.length === 1
         && target.columns[0].name === 'Column 1' && target.columns[0].type === 'text';
       const existing = target?.kind === 'table' && (hasValues || (!defaultColumns && !legacyDefaultColumn)) ? target.columns : undefined;
-      const data = bindTableFormulas(importGrid(parseDelimited(pasteText), pasteHeader, pasteNumberFormat, existing));
+      const data = bindTableFormulas(importGrid(parseDelimited(pasteText), pasteHeader, pasteNumberFormat, existing), tableInputs(workspace, pasteTarget));
       if (target?.kind === 'table') {
         if (hasValues && !confirm('Replace the existing data in “' + target.title + '”?')) return;
         patchBlock(target.id, {
@@ -751,7 +757,7 @@
   let selectedChart = $derived(selected?.kind === 'chart' ? chartInput(selected) : {});
   let selectedSeries = $derived(selected?.kind === 'chart' ? chartSeries(selected, selectedChart.result) : undefined);
   let quickInput = $derived(workspace.blocks.find((block) => block.id === quickSource));
-  let quickColumns = $derived(quickInput?.kind === 'table' ? tableData(quickInput).columns : quickInput?.kind === 'sql' ? runtime[quickInput.id]?.result?.columns ?? [] : []);
+  let quickColumns = $derived(quickInput?.kind === 'table' ? tableData(quickInput, workspace).columns : quickInput?.kind === 'sql' ? runtime[quickInput.id]?.result?.columns ?? [] : []);
   let candidates = $derived(selected ? workspace.blocks.filter((block) => canConnect(workspace, block.id, selected!.id)) : []);
   let sqlEditorWorkspace = $derived({ ...workspace, links: sqlDraftLinks });
   let sqlCandidates = $derived(modal === 'sql' ? workspace.blocks.filter((block) =>
@@ -913,7 +919,7 @@
             {@const issue = tableProblem(block)}
             <div class="inspector-body">
               <div class="result-summary"><span>{countLabel(block.rows.length, 'row')} <span class="separator">·</span> {countLabel(block.columns.length, 'column')}</span></div>
-              <ResultGrid result={tablePreview(block, 5)} limit={5} />
+              <ResultGrid result={tablePreview(block, 5, workspace)} limit={5} />
               {#if issue}<p class="inline-error"><CircleAlert size={15} />{issue}</p>{/if}
               <button class="button primary full-width" onclick={() => modal = 'table'}><Table2 size={15} /> Edit table</button>
             </div>
@@ -930,18 +936,17 @@
 
           {#if block.kind !== 'group'}
             <section class="inspector-section" aria-label="Block connections">
-              {#if block.kind !== 'table'}
-                <div class="section-title"><ArrowDownLeft size={15} /><h3>Inputs</h3><span>{inputLinks.length}</span></div>
-                {#each inputLinks as link (link.id)}
-                  {@const input = workspace.blocks.find((item) => item.id === link.source)}
-                  <div class="connection-row"><button class="connection-link" onclick={() => focusBlock(link.source)}><Link2 size={14} /><span>{input?.title ?? 'Source'}</span></button><button class="icon-button small" aria-label={'Disconnect ' + (input?.title ?? 'source')} onclick={() => disconnect(link.id)}><Unplug size={13} /></button></div>
-                  {#if block.kind === 'sql'}<code class="connection-alias">{link.alias}</code>{/if}
-                {/each}
-                {#if candidates.length}<select aria-label="Connect input" class="inline-select" value="" onchange={(event) => { const id = event.currentTarget.value; if (id) connect(id, block.id); event.currentTarget.value = ''; }}><option value="">Connect input…</option>{#each candidates as item}<option value={item.id}>{item.title}</option>{/each}</select>
-                {:else if inputLinks.length === 0}<p class="helper-text">Add a table or query to connect it.</p>{/if}
-              {/if}
+              <div class="section-title"><ArrowDownLeft size={15} /><h3>Inputs</h3><span>{inputLinks.length}</span></div>
+              {#each inputLinks as link (link.id)}
+                {@const input = workspace.blocks.find((item) => item.id === link.source)}
+                <div class="connection-row"><button class="connection-link" onclick={() => focusBlock(link.source)}><Link2 size={14} /><span>{input?.title ?? 'Source'}</span></button><button class="icon-button small" aria-label={'Disconnect ' + (input?.title ?? 'source')} onclick={() => disconnect(link.id)}><Unplug size={13} /></button></div>
+                {#if block.kind === 'sql'}<code class="connection-alias">{link.alias}</code>
+                {:else if block.kind === 'table'}<code class="connection-alias">{link.alias}::…</code>{/if}
+              {/each}
+              {#if candidates.length}<select aria-label="Connect input" class="inline-select" value="" onchange={(event) => { const id = event.currentTarget.value; if (id) connect(id, block.id); event.currentTarget.value = ''; }}><option value="">Connect input…</option>{#each candidates as item}<option value={item.id}>{item.title}</option>{/each}</select>
+              {:else if inputLinks.length === 0}<p class="helper-text">{block.kind === 'table' ? 'Connect a table to reference its columns.' : 'Add a table or query to connect it.'}</p>{/if}
               {#if block.kind !== 'chart'}
-                <div class="section-title" class:spaced={block.kind === 'sql'}><ArrowUpRight size={15} /><h3>Outputs</h3><span>{outputLinks.length}</span></div>
+                <div class="section-title spaced"><ArrowUpRight size={15} /><h3>Outputs</h3><span>{outputLinks.length}</span></div>
                 {#each outputLinks as link (link.id)}
                   <button class="connection-row connection-link" onclick={() => focusBlock(link.target)}><Link2 size={14} /><span>{workspace.blocks.find((item) => item.id === link.target)?.title ?? 'Target'}</span></button>
                 {/each}
@@ -1037,7 +1042,7 @@
 {:else if modal === 'table' && selected?.kind === 'table'}
   {@const table = selected}
   {#snippet content()}
-    <TableEditor block={table} hotkeys={preferences.hotkeys} change={(patch) => patchBlock(table.id, patch)} paste={() => openPaste(table.id)} error={message} />
+    <TableEditor block={table} {workspace} hotkeys={preferences.hotkeys} change={(patch) => patchBlock(table.id, patch)} paste={() => openPaste(table.id)} error={message} />
   {/snippet}
   {#snippet footer()}<button class="button primary" onclick={closeModal}>Done</button>{/snippet}
   <Modal title={table.title} subtitle="Table" wide close={closeModal} children={content} {footer} />

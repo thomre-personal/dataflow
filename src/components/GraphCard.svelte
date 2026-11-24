@@ -1,6 +1,6 @@
 <script module lang="ts">
   import type { ResizeParams } from '@xyflow/svelte';
-  import type { Block, Result, TableBlock } from '../lib/workspace';
+  import type { Block, Result, TableBlock, Workspace } from '../lib/workspace';
   import type { Hotkeys } from '../lib/preferences';
   export type CardData = Record<string, unknown> & {
     block: Block;
@@ -16,6 +16,7 @@
     canResize?: (bounds: ResizeParams) => boolean;
     group?: { count: number; drop: { target: string }; hasInput: boolean; hasOutput: boolean };
     edit?: {
+      workspace: Workspace;
       toggleLock: () => void;
       patch: (patch: Partial<TableBlock>) => void;
       hotkeys: Hotkeys;
@@ -76,7 +77,7 @@
   </div>
 {:else}
   <div class="graph-card {block.kind}" class:expanded class:selected class:related={Boolean(data.focusSide)}>
-    {#if block.kind === 'sql' || block.kind === 'chart'}
+    {#if block.kind === 'table' || block.kind === 'sql' || block.kind === 'chart'}
       <Handle type="target" position={Position.Left} isConnectable={true} aria-label="Input port" />
     {/if}
     {#if block.kind === 'table' || block.kind === 'sql'}
@@ -96,14 +97,14 @@
     {#if block.kind === 'table'}
       {#if expanded && !block.inlineLocked && data.edit}
         <div class="node-preview node-inline nodrag nopan nowheel" role="group" aria-label={'Edit ' + block.title}>
-          <TableEditor {block} hotkeys={data.edit.hotkeys} change={data.edit.patch} paste={data.edit.paste} error={data.edit.error} inline />
+          <TableEditor {block} workspace={data.edit.workspace} hotkeys={data.edit.hotkeys} change={data.edit.patch} paste={data.edit.paste} error={data.edit.error} inline />
         </div>
       {:else}
         <div class="node-preview node-table">
           {#if expanded}
-            <ResultGrid full result={tablePreview(block, block.rows.length)} />
+            <ResultGrid full result={tablePreview(block, block.rows.length, data.edit?.workspace)} />
           {:else}
-            <ResultGrid compact limit={4} result={tablePreview(block, 4)} />
+            <ResultGrid compact limit={4} result={tablePreview(block, 4, data.edit?.workspace)} />
           {/if}
         </div>
       {/if}

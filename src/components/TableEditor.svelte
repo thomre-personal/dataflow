@@ -1,18 +1,19 @@
 <script lang="ts">
   import { CircleAlert, ClipboardPlus, Plus, Trash2 } from 'lucide-svelte';
   import { tick } from 'svelte';
-  import { columnLetter, dataRowCount, newId, rowNumber } from '../lib/workspace';
+  import { columnLetter, dataRowCount, newId, rowNumber, tableInputs } from '../lib/workspace';
   import { countLabel } from '../lib/format';
   import { MAX_COLUMNS, MAX_ROWS, parseDelimited } from '../lib/clipboard';
   import { bindCellFormula, cellFormulaText, isFormulaEntry, suggestFunctions } from '../lib/formulas';
   import { describeCellIssue, invalidTableCells, tableData } from '../lib/table-data';
   import { eventHotkey, hotkeyLabel } from '../lib/preferences';
   import type { Hotkeys } from '../lib/preferences';
-  import type { ColumnType, Formula, TableBlock, TableStyle } from '../lib/workspace';
+  import type { ColumnType, Formula, TableBlock, TableStyle, Workspace } from '../lib/workspace';
   import FormulaSuggestions from './FormulaSuggestions.svelte';
 
-  let { block, hotkeys, change, paste, error, inline = false }: {
+  let { block, workspace, hotkeys, change, paste, error, inline = false }: {
     block: TableBlock;
+    workspace: Workspace;
     hotkeys: Hotkeys;
     change: (patch: Partial<TableBlock>) => void;
     paste: () => void;
@@ -23,7 +24,8 @@
   const types: [ColumnType, string][] = [['auto', 'Auto'], ['text', 'Text'], ['decimal', 'Number'], ['date', 'Date'], ['boolean', 'Boolean']];
   const styles: [TableStyle, string][] = [['plain', 'Plain'], ['banded', 'Banded'], ['emphasis', 'Emphasis'], ['grid', 'Grid']];
   let limit = $state(60);
-  let data = $derived(tableData(block));
+  let data = $derived(tableData(block, workspace));
+  let inputs = $derived(tableInputs(workspace, block.id));
   let dataRows = $derived(dataRowCount(block));
   let titleColumns = $derived(block.titleColumns ?? 0);
   let footerRows = $derived(block.footerRows ?? 0);
@@ -50,7 +52,7 @@
     const rows = block.rows.map((row, i) => {
       if (i !== rowIndex) return row;
       const formulas = { ...row.formulas };
-      bindCellFormula(formulas, block.columns, colIndex, value);
+      bindCellFormula(formulas, block.columns, colIndex, value, inputs);
       return { ...row, formulas, cells: row.cells.map((cell, j) => j === colIndex ? value : cell) };
     });
     change({ rows });
@@ -76,7 +78,7 @@
         const formulas = { ...existing?.formulas };
         const cells = Array.from({ length: width }, (_, columnIndex) => {
           const pasted = grid[rowIndex - firstRow]?.[columnIndex - firstColumn];
-          if (pasted !== undefined) bindCellFormula(formulas, columns, columnIndex, pasted);
+          if (pasted !== undefined) bindCellFormula(formulas, columns, columnIndex, pasted, inputs);
           return pasted ?? existing?.cells[columnIndex] ?? '';
         });
         return {
@@ -85,7 +87,7 @@
         };
       });
       change({ columns, rows, footerRows: intoFooter ? footerRows + addedRows : block.footerRows });
-      if (editing) cellDraft = cellFormulaText(rows[firstRow], columns, firstColumn);
+      if (editing) cellDraft = cellFormulaText(rows[firstRow], columns, firstColumn, inputs);
     } catch (problem) {
       error(problem instanceof Error ? problem.message : String(problem));
     }
@@ -245,7 +247,7 @@
             {id}
             class:numeric={data.columns[columnIndex].type === 'decimal'}
             value={editing?.id === id ? cellDraft : data.display(rowIndex, columnIndex)}
-            title={isFormula ? cellFormulaText(row, block.columns, columnIndex) : undefined}
+            title={isFormula ? cellFormulaText(row, block.columns, columnIndex, inputs) : undefined}
             aria-label={column.name + ' row ' + rowNumber(block, rowIndex)}
             aria-invalid={issue ? true : undefined}
             aria-describedby={issue ? id + '-error' : undefined}
@@ -255,7 +257,7 @@
             autocomplete="off"
             onfocus={(event) => {
               editing = { id, input: event.currentTarget, row: rowIndex, column: columnIndex };
-              cellDraft = cellFormulaText(row, block.columns, columnIndex);
+              cellDraft = cellFormulaText(row, block.columns, columnIndex, inputs);
               hideSuggestions = false;
               activeSuggestion = 0;
               if (event.currentTarget.value !== cellDraft) {

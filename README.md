@@ -54,6 +54,8 @@ Type `=` to see formula suggestions. Use the arrow keys and **Return** to choose
 
 Column totals, averages, counts, and date aggregates use data rows and skip footer rows. Direct column references in `CONCAT` use the row that contains the formula. You can also pass a function result to `CONCAT`. For example, `=CONCAT("DISTINCT:", COUNT(DISTINCT(Category)))` displays `DISTINCT:3` when there are three unique nonempty categories.
 
+To aggregate a column in another table, connect that table to the one containing the formula. Drag from its output port to the destination table’s input port, or choose it under **Connect input** in the inspector. Then enter a formula such as `=MEDIAN(Transactions::Amount)`. A formula can use the source table’s name or the input alias shown in the inspector. The result updates as the source data changes. For `SUMIF`, the condition and sum columns must come from the same table.
+
 Date, number, and Boolean columns validate their data rows as you edit or paste. Empty cells are allowed. DataFlow shows invalid values so you can correct them before running a query or plotting the table.
 
 The app saves drafts and canvas positions in IndexedDB. DuckDB runs in a local browser worker. A separate browser profile or address has separate storage. Clearing that storage deletes its local workspaces.

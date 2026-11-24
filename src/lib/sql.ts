@@ -64,9 +64,9 @@ function columnType(sqlType: string): ValueType {
   return 'text';
 }
 
-async function createSource(connection: duckdb.AsyncDuckDBConnection, name: string, table: TableBlock) {
+async function createSource(connection: duckdb.AsyncDuckDBConnection, name: string, table: TableBlock, workspace: Workspace) {
   const names = new Set<string>();
-  const result = tableResult(table);
+  const result = tableResult(table, workspace);
   const columns = result.columns.map((column) => {
     const name = column.name.trim();
     const key = name.toLowerCase();
@@ -121,7 +121,7 @@ async function execute(db: duckdb.AsyncDuckDB, workspace: Workspace, blockId: st
       if (existing) return existing;
       const name = '_dataflow_' + block.id.replace(/[^a-z0-9]/gi, '_');
       if (block.kind === 'table') {
-        await createSource(connection, name, block);
+        await createSource(connection, name, block, workspace);
       } else if (block.kind === 'sql') {
         const links = workspace.links.filter((link) => link.target === block.id);
         const inputs = [];

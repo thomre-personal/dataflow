@@ -6,7 +6,7 @@ export type TableStyle = 'plain' | 'banded' | 'emphasis' | 'grid';
 export type Position = { x: number; y: number };
 
 export type Column = { id: string; name: string; type: ColumnType };
-export type FormulaColumn = { columnId: string; reference: 'implicit' | 'name' | 'letter' };
+export type FormulaColumn = { columnId: string; reference: 'implicit' | 'name' | 'letter'; tableId?: string };
 export type OrderedFunction = 'MIN' | 'MAX' | 'MEDIAN';
 export type Formula =
   | { name: 'SUM' | 'AVERAGE' | 'AVG' | OrderedFunction; source: FormulaColumn }
@@ -43,6 +43,7 @@ export type Workspace = {
   links: Link[];
 };
 export type Library = { activeId: string; workspaces: Workspace[] };
+export type TableInput = { table: TableBlock; alias: string };
 export type Result = {
   columns: { name: string; type: ValueType }[];
   rows: (string | null)[][];
@@ -52,6 +53,14 @@ export type Result = {
 
 export function dataRowCount(table: TableBlock) {
   return Math.max(0, table.rows.length - (table.footerRows ?? 0));
+}
+
+export function tableInputs(workspace: Workspace | undefined, tableId: string): TableInput[] {
+  return workspace?.links.flatMap((link) => {
+    if (link.target !== tableId) return [];
+    const table = workspace.blocks.find((block) => block.id === link.source);
+    return table?.kind === 'table' ? [{ table, alias: link.alias }] : [];
+  }) ?? [];
 }
 
 export function columnLetter(index: number): string {
@@ -124,7 +133,7 @@ export function canConnect(workspace: Workspace, source: string, target: string)
   const to = workspace.blocks.find((block) => block.id === target);
   return Boolean(from && to && source !== target
     && (from.kind === 'table' || from.kind === 'sql')
-    && (to.kind === 'sql' || to.kind === 'chart')
+    && (to.kind === 'sql' || to.kind === 'chart' || (from.kind === 'table' && to.kind === 'table'))
     && !workspace.links.some((link) => link.source === source && link.target === target)
     && !related(workspace, target, 'outputs').has(source));
 }

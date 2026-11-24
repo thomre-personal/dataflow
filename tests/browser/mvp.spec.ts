@@ -107,10 +107,10 @@ function cardSize(node: Locator) {
   return node.locator('.graph-card').evaluate((element: HTMLElement) => ({ width: element.offsetWidth, height: element.offsetHeight }));
 }
 
-async function dragResize(page: Page, handle: Locator, dx: number, dy: number) {
+async function dragResize(page: Page, handle: Locator, dx: number, dy: number, verticalAnchor = .5) {
   const bounds = (await handle.boundingBox())!;
   const x = bounds.x + bounds.width / 2;
-  const y = bounds.y + bounds.height / 2;
+  const y = bounds.y + bounds.height * verticalAnchor;
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.move(x + dx, y + dy, { steps: 10 });
@@ -139,7 +139,7 @@ test('resizes an expanded table, scrolls to its last row and restores the size',
   await table.getByRole('button', { name: 'Lock inline editing', exact: true }).click();
   await expect(table.getByRole('textbox', { name: 'Item row 1', exact: true })).toHaveCount(0);
   const initial = await cardSize(table);
-  await dragResize(page, table.locator('.block-resize-edge.left'), -45, 0);
+  await dragResize(page, table.locator('.block-resize-edge.left'), -45, 0, .3);
   await expect.poll(async () => (await cardSize(table)).width).toBeGreaterThan(initial.width);
   await dragResize(page, table.locator('.block-resize-corner.top.right'), 30, -75);
   await expect.poll(async () => (await cardSize(table)).height).toBeGreaterThan(initial.height);
@@ -283,6 +283,14 @@ test('places blocks from the toolbar, edits a table inline, and edits SQL and ch
   await page.getByRole('button', { name: 'Add table', exact: true }).dragTo(dropArea, { targetPosition: { x: 35, y: 60 } });
   const table = canvasBlock(page, 'Untitled table');
   const inlineTable = table.getByRole('group', { name: 'Edit Untitled table' });
+  const connector = table.locator('.quick-exit');
+  await table.locator('.node-heading').hover({ trial: true });
+  const exit = (await connector.boundingBox())!;
+  const nearby = { x: exit.x + exit.width * 1.5, y: exit.y + exit.height * .5 };
+  await page.mouse.move(nearby.x + 80, nearby.y);
+  await expect(connector).toHaveCSS('opacity', '0');
+  await page.mouse.move(nearby.x, nearby.y, { steps: 8 });
+  await expect(connector).toHaveCSS('opacity', '1');
   await expect(inlineTable.getByRole('textbox', { name: /^[AB] row [12]$/ })).toHaveCount(4);
   await expect(inlineTable.getByRole('table').locator('tbody tr')).toHaveCount(2);
   await inlineTable.getByRole('textbox', { name: 'A row 1', exact: true }).fill('2');
@@ -517,4 +525,46 @@ test('pastes a range over a blank two-by-two table and infers the pasted column 
   await expect(table.getByRole('combobox', { name: 'A type' })).toHaveValue('date');
   await expect(table.getByRole('combobox', { name: 'B type' })).toHaveValue('decimal');
   await expect(table.getByRole('table').locator('tbody tr')).toHaveCount(1);
+});
+
+test('requires an input for a cross-table formula and recalculates it for downstream SQL', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Open table', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Untitled table' });
+  const formula = '=MEDIAN(Transactions::Amount)';
+  const cell = dialog.getByRole('textbox', { name: 'A row 1', exact: true });
+  await cell.fill(formula);
+  await cell.press('Enter');
+  await expect(dialog.getByRole('status')).toContainText('Connect Transactions as an input');
+  await dialog.getByRole('button', { name: 'Done' }).click();
+
+  const inspector = page.getByRole('complementary', { name: 'Block inspector' });
+  await inspector.getByRole('combobox', { name: 'Connect input' }).selectOption({ label: 'Transactions' });
+  const summary = canvasBlock(page, 'Untitled table');
+  const output = summary.getByRole('textbox', { name: 'A row 1', exact: true });
+  await expect(output).toHaveValue('104.775');
+  await inspector.getByRole('button', { name: 'Disconnect Transactions' }).click();
+  await expect(output).toHaveValue('#ERROR');
+  const source = canvasBlock(page, 'Transactions');
+  const sourcePort = source.getByRole('button', { name: 'Output port', exact: true });
+  await sourcePort.hover();
+  const targetPort = (await summary.getByRole('button', { name: 'Input port', exact: true }).boundingBox())!;
+  await page.mouse.down();
+  await page.mouse.move(targetPort.x + targetPort.width / 2, targetPort.y + targetPort.height / 2, { steps: 14 });
+  await page.mouse.up();
+  await expect(output).toHaveValue('104.775');
+
+  await source.getByRole('button', { name: 'Open table', exact: true }).click();
+  const transactions = page.getByRole('dialog', { name: 'Transactions' });
+  await transactions.getByRole('textbox', { name: 'Amount row 1', exact: true }).fill('80');
+  await transactions.getByRole('button', { name: 'Done' }).click();
+  await expect(output).toHaveValue('84.975');
+
+  await page.getByRole('button', { name: 'Add SQL query', exact: true }).click();
+  const query = page.getByRole('dialog', { name: 'Edit SQL' });
+  await query.getByRole('combobox', { name: 'Connect input' }).selectOption({ label: 'Untitled table' });
+  await query.getByRole('textbox', { name: 'SQL code' }).fill('SELECT "A" FROM untitled_table WHERE "A" IS NOT NULL;');
+  await query.getByRole('button', { name: 'Save and run' }).click();
+  await expect(inspector.getByRole('cell', { name: '84.975', exact: true })).toBeVisible();
 });
