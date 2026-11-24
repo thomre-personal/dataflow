@@ -118,6 +118,21 @@ async function dragResize(page: Page, handle: Locator, dx: number, dy: number, v
   await page.mouse.up();
 }
 
+async function waitForCanvasFit(page: Page) {
+  await page.locator('.svelte-flow__viewport').evaluate((viewport) => new Promise<void>((resolve) => {
+    let previous = '';
+    let stableFrames = 0;
+    function frame() {
+      const transform = getComputedStyle(viewport).transform;
+      stableFrames = previous === transform ? stableFrames + 1 : 0;
+      previous = transform;
+      if (stableFrames >= 4) resolve();
+      else requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }));
+}
+
 async function dragBlock(page: Page, header: Locator, x: number, y: number) {
   const bounds = (await header.boundingBox())!;
   await page.mouse.move(bounds.x + 16, bounds.y + 18);
@@ -216,7 +231,10 @@ test('resizes columns and rows independently and fits their contents on double-c
   await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
   await page.reload();
   await expect.poll(() => rows(card.getByRole('table'))).toEqual(enlargedRows);
-  await dragResize(page, card.getByRole('button', { name: 'Resize row 1', exact: true }), 0, 35);
+  await waitForCanvasFit(page);
+  const canvasRow = card.getByRole('button', { name: 'Resize row 1', exact: true });
+  await canvasRow.hover();
+  await dragResize(page, canvasRow, 0, 35);
   await expect.poll(async () => (await rows(card.getByRole('table')))[0]).toBeGreaterThan(enlargedRows[0]);
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect.poll(() => rows(card.getByRole('table'))).toEqual(enlargedRows);
@@ -830,6 +848,82 @@ test('formats cells and pastes a copied style into a range without changing its 
   await expect(styled).toHaveCSS('font-size', '25px');
 });
 
+test('drags, copies and clears rectangular cell ranges in both table editors', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New workspace', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Workspace name' }).fill('Drag selection');
+  await page.getByRole('button', { name: 'Create workspace' }).click();
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Untitled table' });
+  await dialog.getByRole('button', { name: 'Row', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Column', exact: true }).click();
+  const cell = (editor: Locator, name: string) => editor.getByRole('textbox', { name, exact: true });
+  const anchor = cell(dialog, 'B row 2');
+  await anchor.fill('One');
+  await dialog.getByRole('button', { name: 'Bold', exact: true }).click();
+  const formula = '=CONCAT("T", "wo")';
+  for (const [name, value] of [['A row 1', 'Keep'], ['C row 2', formula], ['B row 3', 'Three'], ['C row 3', 'Four']]) {
+    await cell(dialog, name).fill(value);
+  }
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+
+  const moveTo = async (target: Locator) => {
+    const bounds = (await target.boundingBox())!;
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  };
+  await anchor.click();
+  await moveTo(anchor);
+  await page.mouse.down();
+  await moveTo(cell(dialog, 'A row 1'));
+  await expect(dialog.getByText('A1:B2', { exact: true })).toBeVisible();
+  await moveTo(cell(dialog, 'C row 3'));
+  await page.mouse.up();
+  await expect(dialog.getByText('B2:C3', { exact: true })).toBeVisible();
+  await expect(dialog.locator('td.range-cell')).toHaveCount(4);
+  await expect(anchor.locator('xpath=ancestor::td')).toBeFocused();
+  await page.keyboard.press('ControlOrMeta+c');
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('One\t"=CONCAT(""T"", ""wo"")"\nThree\tFour');
+  await page.keyboard.press('Delete');
+  for (const name of ['B row 2', 'C row 2', 'B row 3', 'C row 3']) {
+    await expect(cell(dialog, name)).toHaveValue('');
+  }
+  await expect(cell(dialog, 'A row 1')).toHaveValue('Keep');
+  await expect(anchor).toHaveCSS('font-weight', '700');
+  await expect(dialog.locator('td.range-cell')).toHaveCount(4);
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(anchor).toHaveValue('One');
+  await expect(cell(dialog, 'C row 2')).toHaveValue('Two');
+  await expect(cell(dialog, 'C row 3')).toHaveValue('Four');
+
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+  await page.getByRole('button', { name: 'Fit canvas', exact: true }).click();
+  await waitForCanvasFit(page);
+  const card = canvasBlock(page, 'Untitled table');
+  const canvasAnchor = cell(card, 'B row 2');
+  const inspector = page.getByRole('complementary', { name: 'Block inspector' });
+  await cell(card, 'A row 1').hover();
+  await canvasAnchor.hover();
+  await moveTo(canvasAnchor);
+  await page.mouse.down();
+  await expect(inspector.getByText('B2', { exact: true })).toBeVisible();
+  await moveTo(cell(card, 'A row 1'));
+  await page.mouse.up();
+  await expect(inspector.getByText('A1:B2', { exact: true })).toBeVisible();
+  await expect(card.locator('td.range-cell')).toHaveCount(4);
+  await expect(canvasAnchor.locator('xpath=ancestor::td')).toBeFocused();
+  await page.keyboard.press('Backspace');
+  await expect(canvasAnchor).toHaveValue('');
+  await expect(cell(card, 'A row 1')).toHaveValue('');
+  const outsideRange = cell(card, 'C row 2');
+  await expect(outsideRange).toHaveValue('Two');
+  await outsideRange.click();
+  await expect(outsideRange).not.toBeFocused();
+  await page.keyboard.press('Delete');
+  await expect(outsideRange).toHaveValue('');
+  await expect(cell(card, 'B row 3')).toHaveValue('Three');
+  await expect(card).toBeVisible();
+});
+
 test('selects complete cells before editing and keeps a confirmed color on its original cell', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New workspace', exact: true }).click();
@@ -910,18 +1004,7 @@ test('wraps unbroken text and grows or fits the canvas table at its edges', asyn
   const width = (await cardSize(table)).width;
   const right = table.locator('.block-resize-edge.right');
   await page.getByRole('button', { name: 'Fit canvas', exact: true }).click();
-  await page.locator('.svelte-flow__viewport').evaluate((viewport) => new Promise<void>((resolve) => {
-    let previous = '';
-    let stableFrames = 0;
-    function frame() {
-      const transform = getComputedStyle(viewport).transform;
-      stableFrames = previous === transform ? stableFrames + 1 : 0;
-      previous = transform;
-      if (stableFrames >= 4) resolve();
-      else requestAnimationFrame(frame);
-    }
-    requestAnimationFrame(frame);
-  }));
+  await waitForCanvasFit(page);
   await right.hover({ position: { x: 4, y: 35 } });
   await dragResize(page, right, 90, 0, .12);
   await expect.poll(async () => (await cardSize(table)).width).toBeGreaterThan(width);

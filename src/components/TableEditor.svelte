@@ -47,6 +47,7 @@
   const rowIndexWidth = 35;
   const rowActionsWidth = 30;
   let table = $state<HTMLTableElement>();
+  let cellDrag: { pointer: number; end: HTMLTableCellElement; editOnRelease: boolean } | undefined;
   type Resize = { id: string; pointer: number; start: number; scale: number; initial: number; size: number; min: number; widths?: Record<string, number> };
   let resizing = $state<Resize>();
   let columnWidths = $derived(resizing?.widths && resizing.size !== resizing.initial
@@ -193,6 +194,28 @@
     change({ rows });
   }
 
+  function clearSelectedCells() {
+    const selection = bounds;
+    if (!selection) return;
+    let changed = false;
+    const rows = block.rows.map((row, index) => {
+      if (index < selection.top || index > selection.bottom) return row;
+      const formulas = { ...row.formulas };
+      let cells: string[] | undefined;
+      for (let column = selection.left; column <= selection.right; column++) {
+        const id = block.columns[column].id;
+        if (row.cells[column] === '' && !formulas[id]) continue;
+        cells ??= [...row.cells];
+        cells[column] = '';
+        delete formulas[id];
+      }
+      if (!cells) return row;
+      changed = true;
+      return { ...row, cells, formulas };
+    });
+    if (changed) change({ rows });
+  }
+
   function copyCells(event: ClipboardEvent) {
     const selection = bounds;
     if (event.target !== event.currentTarget || !selection || !event.clipboardData) return;
@@ -329,7 +352,7 @@
   }
 
   function cellPointer(event: PointerEvent & { currentTarget: HTMLTableCellElement }, address: CellAddress) {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || cellDrag) return;
     const cell = event.currentTarget;
     if (event.shiftKey && activeCell) {
       event.preventDefault();
@@ -337,19 +360,52 @@
       selectCell(address, true);
       return;
     }
-    if (activeCell?.rowId !== address.rowId || activeCell.columnId !== address.columnId || activeCell.end) {
-      event.preventDefault();
-      if (document.activeElement === cell) selectCell(address);
-      else cell.focus({ preventScroll: true });
-    } else if (!(event.target instanceof HTMLTextAreaElement)) {
-      cell.querySelector('textarea')?.focus({ preventScroll: true });
+    if (editing && event.target === editing.input) return;
+
+    const isAnchor = activeCell?.rowId === address.rowId && activeCell.columnId === address.columnId;
+    event.preventDefault();
+    cell.setPointerCapture(event.pointerId);
+    cellDrag = { pointer: event.pointerId, end: cell, editOnRelease: isAnchor && !activeCell?.end };
+    if (!cellDrag.editOnRelease && (isAnchor || document.activeElement === cell)) selectCell(address);
+    cell.focus({ preventScroll: true });
+  }
+
+  function extendCellDrag(event: PointerEvent) {
+    const drag = cellDrag;
+    if (drag?.pointer !== event.pointerId) return;
+    // Pointer capture keeps events on the starting cell, so find the cell under the pointer.
+    const cell = document.elementFromPoint(event.clientX, event.clientY)
+      ?.closest<HTMLTableCellElement>('td[data-table-cell]');
+    if (!cell || cell.closest('table') !== table) return;
+    if (cell !== drag.end && cell.parentElement instanceof HTMLTableRowElement) {
+      const row = block.rows[cell.parentElement.sectionRowIndex];
+      const column = block.columns[cell.cellIndex - 1];
+      if (row && column) {
+        drag.end = cell;
+        drag.editOnRelease = false;
+        selectCell({ rowId: row.id, columnId: column.id }, true);
+      }
     }
+    return cell;
+  }
+
+  function endCellDrag(event: PointerEvent) {
+    const drag = cellDrag;
+    if (drag?.pointer !== event.pointerId) return;
+    if (event.type === 'pointerup' && extendCellDrag(event) && drag.editOnRelease) {
+      drag.end.querySelector('textarea')?.focus({ preventScroll: true });
+    }
+    cellDrag = undefined;
   }
 
   function selectionKeyboard(event: KeyboardEvent & { currentTarget: HTMLTableCellElement }, row: number, column: number) {
     if (event.target !== event.currentTarget || event.isComposing) return;
     const plain = !event.altKey && !event.ctrlKey && !event.metaKey;
-    if (plain && (event.key === 'Enter' || event.key === 'F2' || event.key.length === 1)) {
+    if (plain && !event.shiftKey && (event.key === 'Delete' || event.key === 'Backspace')) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) clearSelectedCells();
+    } else if (plain && (event.key === 'Enter' || event.key === 'F2' || event.key.length === 1)) {
       const input = event.currentTarget.querySelector('textarea');
       if (!input) return;
       event.preventDefault();
@@ -439,7 +495,8 @@
   </div>
 {/if}
 <div class="editor-grid" data-table-style={block.style}>
-  <table bind:this={table} style:min-width={gridWidth + 'px'} style:width={columnWidths ? gridWidth + 'px' : undefined}>
+  <table bind:this={table} style:min-width={gridWidth + 'px'} style:width={columnWidths ? gridWidth + 'px' : undefined}
+    onpointermove={extendCellDrag} onpointerup={endCellDrag} onlostpointercapture={endCellDrag}>
     <colgroup>
       <col style:width={rowIndexWidth + 'px'} />
       {#each block.columns as column (column.id)}
