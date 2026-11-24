@@ -283,9 +283,10 @@ test('places blocks from the toolbar, edits a table inline, and edits SQL and ch
   await page.getByRole('button', { name: 'Add table', exact: true }).dragTo(dropArea, { targetPosition: { x: 35, y: 60 } });
   const table = canvasBlock(page, 'Untitled table');
   const inlineTable = table.getByRole('group', { name: 'Edit Untitled table' });
+  await expect(inlineTable.getByRole('textbox', { name: /^[AB] row [12]$/ })).toHaveCount(4);
+  await expect(inlineTable.getByRole('table').locator('tbody tr')).toHaveCount(2);
   await inlineTable.getByRole('textbox', { name: 'A row 1', exact: true }).fill('2');
   await expect(inlineTable.getByRole('combobox', { name: 'A type' })).toHaveValue('auto');
-  await inlineTable.getByRole('button', { name: 'Row', exact: true }).click();
   await inlineTable.getByRole('textbox', { name: 'A row 2', exact: true }).fill('99');
   await inlineTable.getByRole('spinbutton', { name: 'Title columns' }).fill('1');
   await inlineTable.getByRole('spinbutton', { name: 'Title columns' }).press('Tab');
@@ -316,6 +317,7 @@ test('places blocks from the toolbar, edits a table inline, and edits SQL and ch
   const chartDialog = page.getByRole('dialog', { name: 'Untitled chart' });
   await chartDialog.getByRole('combobox', { name: 'Source' }).selectOption({ label: 'Untitled table' });
   await chartDialog.getByRole('combobox', { name: 'Chart type' }).selectOption('line');
+  await chartDialog.getByRole('combobox', { name: 'X axis' }).selectOption('B');
   await chartDialog.getByRole('button', { name: 'Done', exact: true }).click();
   await expect(chart.getByRole('img', { name: 'A chart' })).toBeVisible();
   await expect(chart.getByText('Line chart', { exact: true })).toBeVisible();
@@ -422,8 +424,6 @@ test('calculates table sums, keeps formula references after rename, and handles 
   await name.fill('Amount');
   await name.press('Tab');
   await table.getByRole('combobox', { name: 'Amount type' }).selectOption('decimal');
-  await table.getByRole('button', { name: 'Column', exact: true }).click();
-  await table.getByRole('button', { name: 'Row', exact: true }).click();
   await table.getByRole('button', { name: 'Row', exact: true }).click();
   const footerCount = table.getByRole('spinbutton', { name: 'Footer rows' });
   await footerCount.fill('1');
@@ -464,7 +464,6 @@ test('suggests formulas in both table editors and uses Return to accept suggesti
   await page.getByRole('button', { name: 'Create workspace' }).click();
   await page.getByRole('button', { name: 'Add table', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Untitled table' });
-  await dialog.getByRole('button', { name: 'Column', exact: true }).click();
   const first = dialog.getByRole('textbox', { name: 'A row 1', exact: true });
   await first.fill("'=");
   await expect(page.getByRole('listbox', { name: 'Formula suggestions' })).toHaveCount(0);
@@ -503,4 +502,19 @@ test('suggests formulas in both table editors and uses Return to accept suggesti
   await inline.fill('=CONCAT("DISTINCT:", COUNT(DISTINCT(Category)))');
   await inline.press('Enter');
   await expect(inline).toHaveValue('DISTINCT:1');
+});
+
+test('pastes a range over a blank two-by-two table and infers the pasted column types', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const table = page.getByRole('dialog', { name: 'Untitled table' });
+  await expect(table.getByRole('textbox', { name: /^[AB] row [12]$/ })).toHaveCount(4);
+  await expect(table.getByRole('combobox', { name: 'B type' })).toHaveValue('auto');
+  await table.getByRole('button', { name: 'Paste range' }).click();
+  const paste = page.getByRole('dialog', { name: 'Paste data' });
+  await paste.getByRole('textbox', { name: 'Cell range' }).fill('A\tB\n2026-01-01\t42');
+  await paste.getByRole('button', { name: 'Replace table data' }).click();
+  await expect(table.getByRole('combobox', { name: 'A type' })).toHaveValue('date');
+  await expect(table.getByRole('combobox', { name: 'B type' })).toHaveValue('decimal');
+  await expect(table.getByRole('table').locator('tbody tr')).toHaveCount(1);
 });

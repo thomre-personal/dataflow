@@ -18,7 +18,7 @@
   import ResultGrid from './components/ResultGrid.svelte';
   import MiniChart from './components/MiniChart.svelte';
   import Settings from './components/Settings.svelte';
-  import { absolutePosition, addLink, canConnect, canGroup, createBlock, createWorkspace, kinds, related, sqlAlias, starterWorkspace } from './lib/workspace';
+  import { absolutePosition, addLink, canConnect, canGroup, columnLetter, createBlock, createWorkspace, kinds, related, sqlAlias, starterWorkspace } from './lib/workspace';
   import type { Block, BlockKind, ChartBlock, GroupBlock, Library, Link, NumberFormat, Position, Result, SqlBlock, Workspace } from './lib/workspace';
   import { importGrid, parseDelimited } from './lib/clipboard';
   import { bindTableFormulas } from './lib/formulas';
@@ -674,9 +674,11 @@
     try {
       const target = workspace.blocks.find((item) => item.id === pasteTarget);
       const hasValues = target?.kind === 'table' && target.rows.some((row) => row.cells.some((cell) => cell.trim()));
-      const defaultColumn = target?.kind === 'table' && target.columns.length === 1
-        && ((target.columns[0].name === 'A' && target.columns[0].type === 'auto') || (target.columns[0].name === 'Column 1' && target.columns[0].type === 'text'));
-      const existing = target?.kind === 'table' && (hasValues || !defaultColumn) ? target.columns : undefined;
+      const defaultColumns = target?.kind === 'table' && target.columns.length <= 2
+        && target.columns.every((column, index) => column.name === columnLetter(index) && column.type === 'auto');
+      const legacyDefaultColumn = target?.kind === 'table' && target.columns.length === 1
+        && target.columns[0].name === 'Column 1' && target.columns[0].type === 'text';
+      const existing = target?.kind === 'table' && (hasValues || (!defaultColumns && !legacyDefaultColumn)) ? target.columns : undefined;
       const data = bindTableFormulas(importGrid(parseDelimited(pasteText), pasteHeader, pasteNumberFormat, existing));
       if (target?.kind === 'table') {
         if (hasValues && !confirm('Replace the existing data in “' + target.title + '”?')) return;

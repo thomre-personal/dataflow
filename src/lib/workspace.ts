@@ -82,8 +82,11 @@ export function createWorkspace(title: string): Workspace {
 export function createBlock(kind: BlockKind, position: Position): Block {
   const base = { id: newId(), position, title: 'Untitled ' + (kind === 'sql' ? 'SQL query' : kinds[kind].label.toLowerCase()) };
   switch (kind) {
-    case 'table':
-      return { ...base, kind, columns: [{ id: newId(), name: 'A', type: 'auto' }], rows: [{ id: newId(), cells: [''] }], numberFormat: 'auto', style: 'banded' };
+    case 'table': {
+      const columns: Column[] = ['A', 'B'].map((name) => ({ id: newId(), name, type: 'auto' }));
+      const rows = Array.from({ length: 2 }, () => ({ id: newId(), cells: columns.map(() => '') }));
+      return { ...base, kind, columns, rows, numberFormat: 'auto', style: 'banded' };
+    }
     case 'sql':
       return { ...base, kind, sql: 'SELECT 42 AS value;' };
     case 'chart':
