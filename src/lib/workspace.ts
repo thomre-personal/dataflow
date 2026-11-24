@@ -7,17 +7,19 @@ export type Position = { x: number; y: number };
 export type Column = { id: string; name: string; type: ColumnType };
 export type Row = { id: string; cells: string[] };
 type BlockBase = { id: string; title: string; position: Position; parentId?: string };
+type ExpandableBlock = { expanded?: boolean; expandedSize?: { width: number; height: number } };
 
-export type TableBlock = BlockBase & {
+export type TableBlock = BlockBase & ExpandableBlock & {
   kind: 'table';
   columns: Column[];
   rows: Row[];
   numberFormat: NumberFormat;
   style: TableStyle;
-  expanded?: boolean;
+  titleColumns?: number;
+  footerRows?: number;
 };
 export type SqlBlock = BlockBase & { kind: 'sql'; sql: string };
-export type ChartBlock = BlockBase & { kind: 'chart'; chart: 'bar' | 'line'; x: string; y: string };
+export type ChartBlock = BlockBase & ExpandableBlock & { kind: 'chart'; chart: 'bar' | 'line'; x: string; y: string };
 export type GroupBlock = BlockBase & { kind: 'group' };
 export type Block = TableBlock | SqlBlock | ChartBlock | GroupBlock;
 export type Link = { id: string; source: string; target: string; alias: string };
@@ -29,7 +31,16 @@ export type Workspace = {
   links: Link[];
 };
 export type Library = { activeId: string; workspaces: Workspace[] };
-export type Result = { columns: { name: string; type: ColumnType }[]; rows: (string | null)[][] };
+export type Result = {
+  columns: { name: string; type: ColumnType }[];
+  rows: (string | null)[][];
+  titleColumns?: number;
+  footerRows?: number;
+};
+
+export function dataRowCount(table: TableBlock) {
+  return Math.max(0, table.rows.length - (table.footerRows ?? 0));
+}
 
 export const kinds = {
   table: { label: 'Table', plural: 'Tables' },

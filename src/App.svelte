@@ -1,17 +1,18 @@
 <script lang="ts">
   import { Background, BackgroundVariant, MarkerType, MiniMap, SvelteFlow } from '@xyflow/svelte';
-  import type { Connection, Edge, Node, OnConnectEnd } from '@xyflow/svelte';
+  import type { Connection, Edge, Node, OnConnectEnd, ResizeParams } from '@xyflow/svelte';
   import {
-    ArrowDownLeft, ArrowRight, ArrowUpRight, Braces, ChartColumnIncreasing, Check,
+    ArrowDownLeft, ArrowUpRight, Braces, ChartColumnIncreasing, Check,
     ChevronDown, CircleAlert, ClipboardPlus, CloudOff, Focus, Folder, Layers3, Link2, Maximize,
-    Moon, PanelRightClose, PanelRightOpen, Play, Plus, Search, Sun, Table2, Trash2, Unplug,
+    Moon, PanelRightClose, PanelRightOpen, Play, Plus, Redo2, Search, Sun, Table2, Trash2, Undo2, Unplug,
     Workflow, X,
   } from 'lucide-svelte';
   import { onMount, tick } from 'svelte';
   import GraphCard from './components/GraphCard.svelte';
   import type { CardData } from './components/GraphCard.svelte';
+  import BlockSearch from './components/BlockSearch.svelte';
   import CanvasControls from './components/CanvasControls.svelte';
-  import type { FitCanvas } from './components/CanvasControls.svelte';
+  import type { CanvasPosition, FitCanvas } from './components/CanvasControls.svelte';
   import Modal from './components/Modal.svelte';
   import TableEditor from './components/TableEditor.svelte';
   import ResultGrid from './components/ResultGrid.svelte';
@@ -24,15 +25,21 @@
 
   const icons = { table: Table2, sql: Braces, chart: ChartColumnIncreasing, group: Folder };
   const blockKinds: BlockKind[] = ['table', 'sql', 'chart', 'group'];
+  const blockDragType = 'application/x-dataflow-block';
   const addLabel = (kind: BlockKind) => 'Add ' + (kind === 'sql' ? 'SQL query' : kinds[kind].label.toLowerCase());
   const fitOptions = { padding: '5%' as const, maxZoom: 1.12 };
   const nodeTypes = { block: GraphCard };
   let requestFit: FitCanvas | undefined;
+  let canvasPosition: CanvasPosition | undefined;
   const sample = starterWorkspace();
+  type HistoryEntry = { workspace: Workspace; selectedId: string };
+  let histories = $state<Record<string, { undo: HistoryEntry[]; redo: HistoryEntry[] }>>({});
   let library = $state<Library>({ activeId: sample.id, workspaces: [sample] });
   let workspace = $derived(library.workspaces.find((item) => item.id === library.activeId) ?? library.workspaces[0]);
+  let history = $derived(histories[workspace.id]);
   let ready = $state(false);
   let selectedId = $state('monthly-totals');
+  let inlineEditor = $state('');
   let selected = $derived(workspace.blocks.find((block) => block.id === selectedId));
   let inputLinks = $derived(workspace.links.filter((link) => link.target === selectedId));
   let outputLinks = $derived(workspace.links.filter((link) => link.source === selectedId));
@@ -41,7 +48,7 @@
   let focused = $state('');
   let workspaceMenu = $state(false);
   let activeTab = $state<'sql' | 'data'>('sql');
-  let modal = $state<'paste' | 'table' | 'search' | 'chart' | 'workspace' | 'quick-create' | 'configure' | null>(null);
+  let modal = $state<'paste' | 'table' | 'chart' | 'workspace' | 'quick-create' | 'configure' | null>(null);
   let quickSource = $state('');
   let quickPosition = $state<Position>({ x: 0, y: 0 });
   let quickPointer = $state<Position>({ x: 0, y: 0 });
@@ -53,8 +60,11 @@
   let pasteHeader = $state(true);
   let pasteNumberFormat = $state<NumberFormat>('auto');
   let pasteTarget = $state('');
+  let pasteFromTableDialog = $state(false);
   let pasteError = $state('');
-  let search = $state('');
+  let blockSearch = $state<BlockSearch>();
+  let queryEditor = $state<HTMLTextAreaElement>();
+  let queryViewRevision = 0;
   let saveState = $state<'saving' | 'saved' | 'error'>('saved');
   let notice = $state('');
   let theme = $state<'light' | 'dark' | 'system'>('system');
@@ -87,9 +97,54 @@
     });
   }
 
-  function replaceWorkspace(next: Workspace) {
+  function saveWorkspace(next: Workspace) {
     library = { ...library, workspaces: library.workspaces.map((item) => item.id === next.id ? next : item) };
     persist();
+  }
+
+  function replaceWorkspace(next: Workspace) {
+    if (!history) histories[workspace.id] = { undo: [], redo: [] };
+    const currentHistory = histories[workspace.id];
+    currentHistory.undo.push({ workspace, selectedId });
+    currentHistory.redo.length = 0;
+    saveWorkspace(next);
+  }
+
+  function stepHistory(direction: 'undo' | 'redo') {
+    if (!history) return;
+    const entry = history[direction].pop();
+    if (!entry) return;
+    const next = entry.workspace;
+    history[direction === 'undo' ? 'redo' : 'undo'].push({ workspace, selectedId });
+
+    const before = new Map(workspace.blocks.map((block) => [block.id, block]));
+    const after = new Map(next.blocks.map((block) => [block.id, block]));
+    const nextLinks = new Set(next.links.map((link) => link.id));
+    const currentLinks = new Set(workspace.links.map((link) => link.id));
+    const affected = new Set([
+      ...workspace.links.filter((link) => !nextLinks.has(link.id)).map((link) => link.target),
+      ...next.links.filter((link) => !currentLinks.has(link.id)).map((link) => link.target),
+    ]);
+    for (const [id, previous] of before) {
+      const block = after.get(id);
+      if (!block || (block.kind === 'sql' && previous.kind === 'sql' && block.sql !== previous.sql)
+        || (block.kind === 'table' && previous.kind === 'table'
+          && (block.rows !== previous.rows || block.columns !== previous.columns || block.numberFormat !== previous.numberFormat
+            || block.footerRows !== previous.footerRows))) affected.add(id);
+    }
+    for (const id of [...affected]) {
+      for (const downstream of related(next, id, 'outputs')) affected.add(downstream);
+    }
+    invalidate(affected);
+
+    saveWorkspace(next);
+    if (!after.has(focused)) focused = '';
+    if (!after.has(inlineEditor)) inlineEditor = '';
+    if (entry.selectedId !== selectedId) {
+      selectedId = entry.selectedId;
+      showQueryTab('sql');
+    }
+    initializeQueries(next);
   }
 
   function invalidate(ids: Iterable<string>) {
@@ -100,9 +155,17 @@
   }
 
   function patchBlock(id: string, patch: Partial<Block>) {
-    const dataChange = 'sql' in patch || 'rows' in patch || 'columns' in patch || 'numberFormat' in patch;
+    if (!workspace.blocks.some((block) => block.id === id)) return;
+    const dataChange = 'sql' in patch || 'rows' in patch || 'columns' in patch || 'numberFormat' in patch || 'footerRows' in patch;
     if (dataChange) invalidate([id, ...related(workspace, id, 'outputs')]);
     replaceWorkspace({ ...workspace, blocks: workspace.blocks.map((block) => block.id === id ? { ...block, ...patch } as Block : block) });
+  }
+
+  function renameBlock(id: string, value: string) {
+    const block = workspace.blocks.find((item) => item.id === id);
+    const title = value.trim();
+    if (block && title && title !== block.title) patchBlock(id, { title });
+    return title || block?.title || '';
   }
 
   async function runSQL(block: SqlBlock, showResult = true) {
@@ -110,13 +173,14 @@
     const stamp = (stamps.get(block.id) ?? 0) + 1;
     stamps.set(block.id, stamp);
     const source = $state.snapshot(workspace) as Workspace;
+    const viewRevision = queryViewRevision;
     runtime[block.id] = { state: 'running', result: runtime[block.id]?.result };
     try {
       const { runQuery } = await import('./lib/sql');
       const result = await runQuery(source, block.id);
       if (stamps.get(block.id) !== stamp) return;
       runtime[block.id] = { state: 'ready', result };
-      if (showResult && selectedId === block.id && library.activeId === source.id) activeTab = 'data';
+      if (showResult && viewRevision === queryViewRevision && selectedId === block.id && library.activeId === source.id) activeTab = 'data';
     } catch (error) {
       if (stamps.get(block.id) !== stamp) return;
       runtime[block.id] = { state: 'error', result: runtime[block.id]?.result, error: error instanceof Error ? error.message : String(error) };
@@ -184,7 +248,11 @@
   }
 
   function nodeSize(block: Block): { width: number; height: number } {
-    if (block.kind === 'table' && block.expanded) return { width: 320, height: 132 + Math.max(1, Math.min(block.rows.length, 13)) * 28 };
+    if ((block.kind === 'table' || block.kind === 'chart') && block.expanded) {
+      if (block.expandedSize) return block.expandedSize;
+      if (block.kind === 'chart') return { width: 420, height: 320 };
+      return { width: 320, height: 132 + Math.max(2, Math.min(block.rows.length, 13)) * 28 };
+    }
     if (block.kind !== 'group') return { width: 260, height: 228 };
     const children = workspace.blocks.filter((item) => item.parentId === block.id);
     return children.reduce((size, child) => {
@@ -193,14 +261,36 @@
     }, { width: 330, height: 280 });
   }
 
+  function resizeBlock(id: string, { x, y, width, height }: ResizeParams) {
+    const expandedSize = { width, height };
+    patchBlock(id, focused ? { expandedSize } : { expandedSize, position: { x, y } });
+  }
+
+  function toggleInline(block: Block) {
+    if (inlineEditor === block.id) {
+      inlineEditor = '';
+      return;
+    }
+    if ((block.kind === 'table' || block.kind === 'chart') && !block.expanded) patchBlock(block.id, { expanded: true });
+    inlineEditor = block.id;
+  }
+
   $effect(() => {
     const inputs = focused ? related(workspace, focused, 'inputs') : new Set<string>();
     const outputs = focused ? related(workspace, focused, 'outputs') : new Set<string>();
     const focusPositions = new Map<string, { x: number; y: number }>();
     if (focused) {
+      const center = workspace.blocks.find((block) => block.id === focused);
       focusPositions.set(focused, { x: 0, y: 0 });
-      for (const [x, side] of [[-350, inputs], [350, outputs]] as const) {
-        [...side].forEach((id, index) => focusPositions.set(id, { x, y: (index - (side.size - 1) / 2) * 260 }));
+      const centerSize = center ? nodeSize(center) : { width: 260, height: 228 };
+      for (const [direction, ids] of [['input', inputs], ['output', outputs]] as const) {
+        const side = workspace.blocks.filter((block) => ids.has(block.id)).map((block) => ({ id: block.id, ...nodeSize(block) }));
+        const height = side.reduce((sum, block) => sum + block.height + 32, -32);
+        let y = (centerSize.height - height) / 2;
+        for (const block of side) {
+          focusPositions.set(block.id, { x: direction === 'input' ? -90 - block.width : centerSize.width + 90, y });
+          y += block.height + 32;
+        }
       }
     }
     const depth = (block: Block) => {
@@ -217,6 +307,7 @@
     flowNodes = workspace.blocks.filter((block) => !focused || focusPositions.has(block.id)).sort((a, b) => depth(a) - depth(b)).map((block) => {
       const result = block.kind === 'chart' ? chartInput(block) : runtime[block.id] ?? {};
       const size = nodeSize(block);
+      const expandable = block.kind === 'table' || block.kind === 'chart';
       return {
         id: block.id, type: 'block', position: focusPositions.get(block.id) ?? { ...block.position }, parentId: focused ? undefined : block.parentId,
         selected: block.id === selectedId,
@@ -229,7 +320,20 @@
           issue: block.kind === 'table' ? tableProblem(block) : result.error,
           focusSide: inputs.has(block.id) ? 'input' : outputs.has(block.id) ? 'output' : undefined,
           open: () => openBlock(block.id),
-          toggleTable: block.kind === 'table' ? () => patchBlock(block.id, { expanded: !block.expanded }) : undefined,
+          rename: (title: string) => renameBlock(block.id, title),
+          toggleExpanded: expandable ? () => patchBlock(block.id, { expanded: !block.expanded }) : undefined,
+          resize: expandable ? (bounds: ResizeParams) => resizeBlock(block.id, bounds) : undefined,
+          edit: block.kind === 'group' ? undefined : {
+            active: inlineEditor === block.id && (!expandable || Boolean(block.expanded)),
+            toggle: () => toggleInline(block),
+            patch: (patch: Partial<Block>) => patchBlock(block.id, patch),
+            error: message,
+            paste: () => { select(block.id); openPaste(block.id); },
+            run: block.kind === 'sql' ? () => void runSQL(block, false) : undefined,
+            inputs: block.kind === 'table' ? [] : workspace.blocks.filter((item) => canConnect(workspace, item.id, block.id)),
+            aliases: block.kind === 'sql' ? workspace.links.filter((link) => link.target === block.id).map((link) => link.alias) : [],
+            connect: (source: string) => connect(source, block.id),
+          },
         },
       };
     });
@@ -240,17 +344,27 @@
     }));
   });
 
+  function showQueryTab(tab: 'sql' | 'data') {
+    queryViewRevision++;
+    activeTab = tab;
+  }
+
   function select(id: string) {
-    if (id !== selectedId) activeTab = 'sql';
+    if (id !== selectedId) showQueryTab('sql');
     selectedId = id;
     panel = true;
   }
 
-  function openBlock(id: string) {
+  async function openBlock(id: string) {
     select(id);
     const block = workspace.blocks.find((candidate) => candidate.id === id);
     if (block?.kind === 'table') modal = 'table';
     if (block?.kind === 'chart') modal = 'chart';
+    if (block?.kind === 'sql') {
+      showQueryTab('sql');
+      await tick();
+      if (selectedId === id) queryEditor?.focus();
+    }
   }
 
   async function focusBlock(id: string) {
@@ -267,15 +381,42 @@
     await requestFit?.({ ...fitOptions, duration: 240 });
   }
 
-  function add(kind: BlockKind) {
+  function add(kind: BlockKind, dropPosition?: Position) {
     if (!ready) return;
     focused = '';
     const count = workspace.blocks.filter((block) => block.kind !== 'group').length;
-    const block = createBlock(kind, { x: 44 + (count % 3) * 332, y: Math.floor(count / 3) * 280 + 166 });
+    const block = createBlock(kind, dropPosition ?? { x: 44 + (count % 3) * 332, y: Math.floor(count / 3) * 280 + 166 });
+    if (dropPosition && (block.kind === 'table' || block.kind === 'chart')) {
+      block.expanded = true;
+      if (block.kind === 'table') block.expandedSize = { width: 440, height: 300 };
+    }
     replaceWorkspace({ ...workspace, blocks: [...workspace.blocks, block] });
     select(block.id);
-    if (kind === 'table') modal = 'table';
-    void fitCanvas();
+    if (dropPosition) {
+      inlineEditor = block.id;
+    } else {
+      if (kind === 'table') modal = 'table';
+      void fitCanvas();
+    }
+  }
+
+  function startBlockDrag(event: DragEvent, kind: BlockKind) {
+    if (!event.dataTransfer) return;
+    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.setData(blockDragType, kind);
+  }
+
+  function allowBlockDrop(event: DragEvent) {
+    if (!event.dataTransfer?.types.includes(blockDragType)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  }
+
+  function dropBlock(event: DragEvent) {
+    const kind = blockKinds.find((item) => item === event.dataTransfer?.getData(blockDragType));
+    if (!kind || !canvasPosition) return;
+    event.preventDefault();
+    add(kind, canvasPosition({ x: event.clientX, y: event.clientY }));
   }
 
   function connect(source: string, target: string) {
@@ -354,8 +495,9 @@
         item.parentId === block.id ? { ...item, parentId: block.parentId, position: { x: item.position.x + block.position.x, y: item.position.y + block.position.y } } : item),
       links: workspace.links.filter((link) => link.source !== block.id && link.target !== block.id),
     });
-    selectedId = '';
+    if (selectedId === block.id) selectedId = '';
     if (focused === block.id) focused = '';
+    if (inlineEditor === block.id) inlineEditor = '';
     modal = null;
   }
 
@@ -363,9 +505,10 @@
     library = { ...library, activeId: id };
     workspaceMenu = false;
     focused = '';
+    inlineEditor = '';
     filter = '';
     selectedId = workspace.blocks[0]?.id ?? '';
-    activeTab = 'sql';
+    showQueryTab('sql');
     persist();
     initializeQueries(workspace);
     void fitCanvas();
@@ -392,6 +535,7 @@
   }
 
   function openPaste(id = '') {
+    pasteFromTableDialog = modal === 'table';
     pasteText = '';
     pasteError = '';
     pasteHeader = true;
@@ -410,8 +554,12 @@
       const data = importGrid(parseDelimited(pasteText), pasteHeader, pasteNumberFormat, existing);
       if (target?.kind === 'table') {
         if (hasValues && !confirm('Replace the existing data in “' + target.title + '”?')) return;
-        patchBlock(target.id, { ...data, numberFormat: pasteNumberFormat });
-        modal = 'table';
+        patchBlock(target.id, {
+          ...data, numberFormat: pasteNumberFormat,
+          titleColumns: Math.min(target.titleColumns ?? 0, data.columns.length),
+          footerRows: Math.min(target.footerRows ?? 0, data.rows.length),
+        });
+        modal = pasteFromTableDialog ? 'table' : null;
       } else {
         const count = workspace.blocks.filter((block) => block.kind !== 'group').length;
         const block: Block = {
@@ -430,20 +578,30 @@
   }
 
   function closeModal() {
-    modal = modal === 'paste' && pasteTarget ? 'table' : null;
+    modal = modal === 'paste' && pasteFromTableDialog ? 'table' : null;
     draftBlock = undefined;
   }
-  function openSearch() { search = ''; modal = 'search'; }
   function keyboard(event: KeyboardEvent) {
     if (event.key === 'Escape' && modal === 'quick-create') closeModal();
+    if (event.defaultPrevented || event.isComposing || modal) return;
     const withModifier = event.metaKey || event.ctrlKey;
-    if (withModifier && event.key.toLowerCase() === 'k') {
+    const key = event.key.toLowerCase();
+    if (withModifier && key === 'k') {
       event.preventDefault();
-      openSearch();
+      blockSearch?.focus();
     }
-    if (withModifier && event.key === 'Enter' && selected?.kind === 'sql' && !modal) {
+    if (withModifier && event.key === 'Enter' && selected?.kind === 'sql') {
       event.preventDefault();
       void runSQL(selected);
+    }
+    if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]')) return;
+    if (withModifier && !event.altKey && (key === 'z' || (key === 'y' && event.ctrlKey))) {
+      event.preventDefault();
+      stepHistory(key === 'y' || event.shiftKey ? 'redo' : 'undo');
+    }
+    if (event.key === 'Delete' && !withModifier && !event.altKey && !event.repeat && selected) {
+      event.preventDefault();
+      removeBlock(selected);
     }
   }
 
@@ -451,7 +609,6 @@
   let selectedSeries = $derived(selected?.kind === 'chart' ? chartSeries(selected, selectedChart.result) : undefined);
   let quickInput = $derived(workspace.blocks.find((block) => block.id === quickSource));
   let quickColumns = $derived(quickInput?.kind === 'table' ? quickInput.columns : quickInput?.kind === 'sql' ? runtime[quickInput.id]?.result?.columns ?? [] : []);
-  let searchResults = $derived(workspace.blocks.filter((block) => (block.title + ' ' + kinds[block.kind].label).toLowerCase().includes(search.trim().toLowerCase())));
   let candidates = $derived(selected ? workspace.blocks.filter((block) => canConnect(workspace, block.id, selected!.id)) : []);
 </script>
 
@@ -459,26 +616,34 @@
 
 <div class="app-shell">
   <header class="app-header">
-    <div class="header-brand"><div class="brand-mark"><Workflow size={21} strokeWidth={2} /></div><span>DataFlow</span></div>
-    <div class="header-divider"></div>
-    <div class="workspace-switch">
-      <button class="workspace-trigger" aria-label="Workspaces" aria-expanded={workspaceMenu} onclick={() => workspaceMenu = !workspaceMenu}>
-        <span>{workspace.title}</span><ChevronDown size={14} />
-      </button>
-      {#if workspaceMenu}
-        <div class="workspace-menu">
-          <p>WORKSPACES</p>
-          {#each library.workspaces as item (item.id)}
-            <button class:current={library.activeId === item.id} onclick={() => switchWorkspace(item.id)}><Layers3 size={15} /><span>{item.title}</span>{#if library.activeId === item.id}<Check size={14} />{/if}</button>
-          {/each}
-          <button onclick={() => workspaceDialog(true)}><Layers3 size={15} /> Rename workspace</button>
-          <button class="new-workspace" onclick={() => workspaceDialog()}><Plus size={15} /> New workspace</button>
-        </div>
-      {/if}
+    <div class="header-left">
+      <div class="header-brand"><div class="brand-mark"><Workflow size={21} strokeWidth={2} /></div><span>DataFlow</span></div>
+      <div class="history-actions" role="group" aria-label="Workspace history">
+        <button class="icon-button" type="button" aria-label="Undo" title="Undo (⌘ Z)" disabled={!history?.undo.length} onclick={() => stepHistory('undo')}><Undo2 size={18} /></button>
+        <button class="icon-button" type="button" aria-label="Redo" title="Redo (⌘ ⇧ Z)" disabled={!history?.redo.length} onclick={() => stepHistory('redo')}><Redo2 size={18} /></button>
+      </div>
+      <div class="header-divider"></div>
+      <div class="workspace-switch">
+        <button class="workspace-trigger" aria-label="Workspaces" aria-expanded={workspaceMenu} onclick={() => workspaceMenu = !workspaceMenu}>
+          <span>{workspace.title}</span><ChevronDown size={14} />
+        </button>
+        {#if workspaceMenu}
+          <div class="workspace-menu">
+            <p>WORKSPACES</p>
+            {#each library.workspaces as item (item.id)}
+              <button class:current={library.activeId === item.id} onclick={() => switchWorkspace(item.id)}><Layers3 size={15} /><span>{item.title}</span>{#if library.activeId === item.id}<Check size={14} />{/if}</button>
+            {/each}
+            <button onclick={() => workspaceDialog(true)}><Layers3 size={15} /> Rename workspace</button>
+            <button class="new-workspace" onclick={() => workspaceDialog()}><Plus size={15} /> New workspace</button>
+          </div>
+        {/if}
+      </div>
     </div>
+    {#key workspace.id}
+      <BlockSearch bind:this={blockSearch} blocks={workspace.blocks} {icons} onPick={focusBlock} />
+    {/key}
     <div class="header-right">
       <span class="save-state" title="Stored in this browser">{#if saveState === 'error'}<CircleAlert size={15} /> Could not save{:else if saveState === 'saving'}<span class="save-dot"></span> Saving…{:else}<CloudOff size={15} /> Saved locally{/if}</span>
-      <button class="header-search" onclick={openSearch} aria-label="Find a block"><Search size={16} /><span>Find a block</span><kbd>⌘ K</kbd></button>
       <button class="icon-button theme-toggle" aria-label={dark ? 'Use light mode' : 'Use dark mode'} title={dark ? 'Use light mode' : 'Use dark mode'} onclick={() => theme = dark ? 'light' : 'dark'}>{#if dark}<Sun size={18} />{:else}<Moon size={18} />{/if}</button>
     </div>
   </header>
@@ -514,14 +679,15 @@
         <div class="canvas-actions">
           {#each blockKinds as kind}
             {@const Icon = icons[kind]}
-            <button class="button ghost compact-button" aria-label={addLabel(kind)} title={addLabel(kind)} onclick={() => add(kind)}><Icon size={16} /><span>{kind === 'sql' ? 'SQL' : kinds[kind].label}</span></button>
+            <button class="button ghost compact-button canvas-block-tool" draggable="true" ondragstart={(event) => startBlockDrag(event, kind)}
+              aria-label={addLabel(kind)} title={addLabel(kind) + ' · Click or drag onto the canvas'} onclick={() => add(kind)}><Icon size={16} /><span>{kind === 'sql' ? 'SQL' : kinds[kind].label}</span></button>
           {/each}
           <span class="action-divider"></span>
           <button class="button primary compact-button" aria-label="Paste data" onclick={() => openPaste()}><ClipboardPlus size={15} /><span>Paste data</span></button>
           {#if selected && !panel}<button class="icon-button" aria-label="Open inspector" onclick={() => panel = true}><PanelRightOpen size={18} /></button>{/if}
         </div>
       </div>
-      <div class="canvas-stage">
+      <div class="canvas-stage" role="region" aria-label="Canvas drop area" ondragover={allowBlockDrop} ondrop={dropBlock}>
         {#if ready}
           <SvelteFlow
             bind:nodes={flowNodes}
@@ -547,7 +713,7 @@
               const kind = (node.data as CardData).block.kind;
               return kind === 'sql' ? '#a697f0' : kind === 'chart' ? '#69beaf' : kind === 'group' ? '#9da9ba' : '#94aff9';
             }} height={88} width={144} maskColor={dark ? '#111827a0' : '#edf2f8af'} pannable zoomable />
-            <CanvasControls connect={(fit) => { requestFit = fit; void fitCanvas(); }} fit={() => void fitCanvas()} />
+            <CanvasControls connect={(fit, position) => { requestFit = fit; canvasPosition = position; void fitCanvas(); }} fit={() => void fitCanvas()} />
           </SvelteFlow>
           {#if workspace.blocks.length === 0}
             <div class="empty-canvas"><div class="empty-icon"><Layers3 size={27} /></div><h2>This canvas is empty</h2><p>Paste a range from Numbers or Excel, or add a table to get started.</p><button class="button primary" onclick={() => openPaste()}><ClipboardPlus size={16} /> Paste data</button></div>
@@ -565,11 +731,11 @@
         <div class="inspector-title"><span class="kind-icon {block.kind}"><Icon size={19} /></span><div><span>{kinds[block.kind].label}</span><h2>{block.title}</h2></div></div>
         <div class="inspector-scroll">
           {#if block.kind === 'sql'}
-            <div class="tabs" aria-label="Query views"><button class:active={activeTab === 'sql'} onclick={() => activeTab = 'sql'}>SQL</button><button class:active={activeTab === 'data'} onclick={() => activeTab = 'data'}>Data</button></div>
+            <div class="tabs" aria-label="Query views"><button class:active={activeTab === 'sql'} onclick={() => showQueryTab('sql')}>SQL</button><button class:active={activeTab === 'data'} onclick={() => showQueryTab('data')}>Data</button></div>
             <div class="inspector-body">
               {#if activeTab === 'sql'}
                 <label class="control-label" for="sql-editor">Query</label>
-                <textarea id="sql-editor" class="sql-editor" spellcheck="false" value={block.sql} oninput={(event) => patchBlock(block.id, { sql: event.currentTarget.value })}></textarea>
+                <textarea bind:this={queryEditor} id="sql-editor" class="sql-editor" spellcheck="false" value={block.sql} oninput={(event) => patchBlock(block.id, { sql: event.currentTarget.value })}></textarea>
               {:else if runtime[block.id]?.result}
                 {@const result = runtime[block.id].result!}
                 <div class="result-summary"><span>{countLabel(result.rows.length, 'row')}</span>{#if runtime[block.id].state !== 'ready'}<span class="inline-warning">Previous result</span>{/if}</div>
@@ -628,11 +794,11 @@
           {/if}
 
           <section class="inspector-section block-settings" aria-label="Block settings">
-            <label class="field">Name<input value={block.title} onchange={(event) => patchBlock(block.id, { title: event.currentTarget.value.trim() || block.title })} /></label>
+            <label class="field">Name<input value={block.title} onchange={(event) => { event.currentTarget.value = renameBlock(block.id, event.currentTarget.value); }} /></label>
             {#if workspace.blocks.some((item) => canGroup(block, item, workspace.blocks))}
               <label class="field">Group<select value={block.parentId ?? ''} onchange={(event) => moveToGroup(block, event.currentTarget.value)}><option value="">None</option>{#each workspace.blocks.filter((item) => canGroup(block, item, workspace.blocks)) as item}<option value={item.id}>{item.title}</option>{/each}</select></label>
             {/if}
-            <div class="inspector-buttons"><button class="button ghost" onclick={() => focusBlock(block.id)}><Focus size={15} /> Focus</button><button class="icon-button" aria-label={'Delete ' + block.title} onclick={() => removeBlock(block)}><Trash2 size={15} /></button></div>
+            <div class="inspector-buttons"><button class="button ghost" onclick={() => focusBlock(block.id)}><Focus size={15} /> Focus</button><button class="button ghost delete-block" onclick={() => removeBlock(block)}><Trash2 size={15} /> Delete block</button></div>
           </section>
         </div>
       </aside>
@@ -670,17 +836,6 @@
     <button class="button primary" onclick={createConnectedBlock} disabled={!draft.title.trim() || (draft.kind === 'sql' && !draft.sql.trim())}>{draft.kind === 'sql' ? 'Create SQL query' : 'Create chart'}</button>
   {/snippet}
   <Modal title={draft.kind === 'sql' ? 'Configure SQL query' : 'Configure chart'} subtitle={'Input: ' + (quickInput?.title ?? '')} close={closeModal} children={content} {footer} />
-{:else if modal === 'search'}
-  {#snippet content()}
-    <label class="search-field"><Search size={19} /><input aria-label="Search by block name" placeholder="Search by block name…" bind:value={search} onkeydown={(event) => { if (event.key === 'Enter' && searchResults[0]) focusBlock(searchResults[0].id); }} /></label>
-    <div class="search-results">
-      {#each searchResults as block (block.id)}
-        {@const Icon = icons[block.kind]}
-        <button onclick={() => focusBlock(block.id)}><span class="kind-icon {block.kind}"><Icon size={16} /></span><span>{block.title}<small>{kinds[block.kind].label}</small></span><ArrowRight size={16} /></button>
-      {:else}<p class="inspector-empty">No matching blocks.</p>{/each}
-    </div>
-  {/snippet}
-  <Modal title="Find a block" close={closeModal} children={content} />
 {:else if modal === 'workspace'}
   {#snippet content()}
     <label class="field">Workspace name<input maxlength="100" bind:value={workspaceTitle} placeholder="e.g. Home budget" onkeydown={(event) => { if (event.key === 'Enter') saveWorkspaceName(); }} /></label>

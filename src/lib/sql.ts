@@ -4,6 +4,7 @@ import workerUrl from '@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js?url
 import wasmEh from '@duckdb/duckdb-wasm/dist/duckdb-eh.wasm?url';
 import workerEhUrl from '@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js?url';
 import { describeCellIssue, validateCell, MAX_ROWS } from './clipboard';
+import { dataRowCount } from './workspace';
 import type { Block, ColumnType, Result, TableBlock, Workspace } from './workspace';
 
 const bundles: duckdb.DuckDBBundles = {
@@ -74,7 +75,7 @@ async function createSource(connection: duckdb.AsyncDuckDBConnection, name: stri
   });
   const scales = columns.map(() => 0);
   const integralWidths = columns.map(() => 0);
-  const values = table.rows.map((row, rowIndex) => '(' + columns.map((column, index) => {
+  const values = table.rows.slice(0, dataRowCount(table)).map((row, rowIndex) => '(' + columns.map((column, index) => {
     const cell = validateCell(row.cells[index] ?? '', column.type, table.numberFormat);
     if (cell.message !== undefined) throw new Error(describeCellIssue(table, { row: rowIndex, column: index, message: cell.message }));
     const value = cell.value;

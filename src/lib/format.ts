@@ -1,4 +1,5 @@
 import { describeCellIssue, validateCell } from './clipboard';
+import { dataRowCount } from './workspace';
 import type { ChartBlock, Result, TableBlock } from './workspace';
 
 export const countLabel = (value: number, singular: string, plural = singular + 's') =>
@@ -7,7 +8,7 @@ export const countLabel = (value: number, singular: string, plural = singular + 
 export function tableResult(table: TableBlock): Result {
   return {
     columns: table.columns.map(({ name, type }) => ({ name, type })),
-    rows: table.rows.map((row, rowIndex) => table.columns.map((column, index) => {
+    rows: table.rows.slice(0, dataRowCount(table)).map((row, rowIndex) => table.columns.map((column, index) => {
       const cell = validateCell(row.cells[index] ?? '', column.type, table.numberFormat);
       if (cell.message !== undefined) throw new Error(describeCellIssue(table, { row: rowIndex, column: index, message: cell.message }));
       return cell.value;
@@ -19,6 +20,8 @@ export function tablePreview(table: TableBlock, limit: number): Result {
   return {
     columns: table.columns,
     rows: table.rows.slice(0, limit).map((row) => row.cells.map((cell) => cell || null)),
+    titleColumns: table.titleColumns,
+    footerRows: Math.max(0, Math.min(limit, table.rows.length) - dataRowCount(table)),
   };
 }
 

@@ -1,6 +1,7 @@
 <script module lang="ts">
-  import type { useSvelteFlow } from '@xyflow/svelte';
+  import { useSvelteFlow } from '@xyflow/svelte';
   export type FitCanvas = ReturnType<typeof useSvelteFlow>['fitView'];
+  export type CanvasPosition = ReturnType<typeof useSvelteFlow>['screenToFlowPosition'];
 </script>
 
 <script lang="ts">
@@ -8,11 +9,12 @@
   import { Maximize, Minus, Plus } from 'lucide-svelte';
   import { onMount } from 'svelte';
 
-  let { connect, fit }: { connect: (fit: FitCanvas) => void; fit: () => void } = $props();
+  let { connect, fit }: { connect: (fit: FitCanvas, position: CanvasPosition) => void; fit: () => void } = $props();
   const store = useSvelteFlowStore();
+  const { screenToFlowPosition } = useSvelteFlow();
   let zoom = $derived(Math.round(store.viewport.zoom * 100));
 
-  onMount(() => connect((options) => store.fitView(options)));
+  onMount(() => connect((options) => store.fitView(options), screenToFlowPosition));
 </script>
 
 <div class="canvas-hud">

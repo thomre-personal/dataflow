@@ -19,11 +19,19 @@ Open [DataFlow on your computer](http://127.0.0.1:5173/). Use that same address 
 2. Copy cells in Numbers or Excel. Choose **Paste data** and paste the range. Select the number format if automatic detection does not match the source.
 3. Add a **SQL** block and connect the table. The inspector shows the table name to use in SQL. Run the query and inspect the result in **Data**.
 4. Add a **Chart** block and connect it to the query. Choose bar or line and set the axes as needed.
-5. Use the block list or **Find a block** to navigate the canvas. Drag from an output port to an input port to connect blocks. Use the inspector to assign a block to a group.
+5. Type in **Find a block** at the top and choose a match to see its inputs and outputs. **Cmd+K** or **Ctrl+K** focuses the search. Drag from an output port to an input port to connect blocks. Use the inspector to assign a block to a group.
 
-Use the expand button on a table block to scroll through all its rows and columns on the canvas. When you hover over a table or SQL query, drag its **+** output onto an empty part of the canvas to configure a connected query or chart.
+Use the expand button on a table or chart to show it at a larger size on the canvas. Drag any edge or corner to resize it. Tables scroll to show all rows and columns. When you hover over a table or SQL query, drag its **+** output onto an empty part of the canvas to configure a connected query or chart.
+
+Click a block name to rename it directly on the canvas. Press **Enter** to save or **Esc** to cancel. **Open query** takes you to the SQL editor in the inspector. To remove a selected block, press **Delete** or choose **Delete block** at the bottom of the inspector.
+
+Drag a block type from the canvas toolbar to place it and start editing on the canvas. Use **Edit inline** to edit an existing table, query, or chart on its card.
+
+Use **Undo** and **Redo** in the top bar to step through workspace changes during the current browser session. DataFlow saves the workspace after each step.
 
 In the table editor, select a cell and press **Option+↑** or **Option+↓** to insert a row above or below. Press **Option+←** or **Option+→** to insert a column to the left or right. Use **Alt** on a non-Mac keyboard.
+
+Set **Title columns** to highlight columns on the left. Set **Footer rows** to keep summary rows at the bottom. SQL queries and charts include title columns and skip footer rows.
 
 Date, number, and Boolean columns validate their cells as you edit or paste. Empty cells are allowed. DataFlow shows invalid values so you can correct them before running a query or plotting the table.
 
