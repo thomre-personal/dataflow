@@ -31,20 +31,25 @@ export function tableResult(table: TableBlock, workspace?: Workspace): Result {
 
 export function tablePreview(table: TableBlock, limit: number, workspace?: Workspace): Result {
   const data = tableData(table, workspace);
-  const rows = table.rows.slice(0, limit);
-  const cellStyles = table.cellStyles && Object.fromEntries(rows.flatMap(({ id }, row) => {
+  const dataRows = dataRowCount(table);
+  const footerRows = table.rows.length - dataRows;
+  const rows = [
+    ...table.rows.slice(0, Math.min(dataRows, Math.max(0, limit - footerRows))).map((row, index) => ({ row, index })),
+    ...table.rows.slice(dataRows).map((row, offset) => ({ row, index: dataRows + offset })),
+  ];
+  const cellStyles = table.cellStyles && Object.fromEntries(rows.flatMap(({ row: { id } }, index) => {
     const styles = table.cellStyles?.[id];
     if (!styles) return [];
-    return [[row, Object.fromEntries(table.columns.flatMap(({ id }, column) => styles[id] ? [[column, styles[id]]] : []))]];
+    return [[index, Object.fromEntries(table.columns.flatMap(({ id }, column) => styles[id] ? [[column, styles[id]]] : []))]];
   }));
   return {
     columns: data.columns,
-    rows: rows.map((_, row) => data.columns.map((_, column) => data.display(row, column) || null)),
+    rows: rows.map(({ index }) => data.columns.map((_, column) => data.display(index, column) || null)),
     tableStyle: table.style,
     titleColumns: table.titleColumns,
-    footerRows: Math.max(0, Math.min(limit, table.rows.length) - dataRowCount(table)),
+    footerRows,
     columnWidths: table.columnWidths && table.columns.map(({ id }) => table.columnWidths?.[id] ?? defaultTableColumnWidth),
-    rowHeights: (table.rowHeights || cellStyles) && rows.map(({ id }, row) => Math.max(defaultPreviewRowHeight,
+    rowHeights: (table.rowHeights || cellStyles) && rows.map(({ row: { id } }, row) => Math.max(defaultPreviewRowHeight,
       table.rowHeights?.[id] ?? 0, ...Object.values(cellStyles?.[row] ?? {}).map((style) => cellFontLineHeight(style.fontSize ?? 0) + 1))),
     cellStyles,
   };

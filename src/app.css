@@ -234,6 +234,7 @@ code { font-family: var(--mono); }
 .node-relationship { font-size: 9px; font-weight: 600; color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 2px 4px; }
 .node-preview { min-width: 0; min-height: 0; overflow: hidden; }
 .node-table { padding: 8px; }
+.node-table .compact:has(tfoot) { max-height: 100%; }
 .node-code { padding: 9px 8px; font: 10px/19px var(--mono); background: var(--raised); color: var(--code); }
 .node-code > div { display: flex; align-items: center; gap: 8px; white-space: pre; }
 .node-code code { overflow: hidden; text-overflow: ellipsis; }
@@ -251,6 +252,7 @@ code { font-family: var(--mono); }
 .node-inline { padding: 8px; overflow: auto; overscroll-behavior: contain; }
 .table-editor-content { display: flow-root; }
 .node-inline .editor-grid { max-height: none; overflow: auto hidden; margin-bottom: 7px; }
+.node-inline .editor-grid:has(tfoot) { overflow: visible; }
 .table-grow { position: absolute; z-index: 4; top: 64px; right: -29px; display: grid; place-items: center;
   width: 25px; height: 25px; border: 1px solid var(--border); border-radius: 50%; color: var(--accent); background: var(--surface);
   box-shadow: var(--shadow); cursor: ew-resize; touch-action: none; }
@@ -389,6 +391,7 @@ code { font-family: var(--mono); }
 .full-grid table { min-width: 100%; }
 .full-grid table.sized-preview { min-width: 0; table-layout: fixed; }
 .full-grid thead { position: sticky; top: 0; z-index: 1; }
+.editor-grid tfoot, .result-grid tfoot { position: sticky; bottom: 0; z-index: 1; overflow-anchor: none; }
 .full-grid td, .full-grid th { height: 28px; padding: 0 8px; line-height: max(27px, var(--cell-line-height, 0px)); max-width: none; min-width: 82px; }
 .full-grid .grid-spacer td { padding: 0; border: 0; }
 .result-grid .title-column, .editor-grid .title-column { background: var(--accent-soft); color: var(--text); font-weight: 650; }
@@ -450,7 +453,7 @@ dialog::backdrop { background: #151f386d; backdrop-filter: blur(2px); }
 .editor-grid table { table-layout: fixed; }
 .editor-grid th, .editor-grid td { border-bottom: 1px solid var(--divider); }
 .editor-grid th { font-weight: 600; color: var(--muted); background: var(--raised); }
-.editor-grid thead th, .editor-grid tbody th { position: relative; }
+.editor-grid th { position: relative; }
 .table-header-select { width: 100%; user-select: none; }
 .table-header-select:focus-visible { outline-offset: -2px; }
 .table-header-select:hover { background: color-mix(in srgb, var(--accent-soft), transparent 35%); }

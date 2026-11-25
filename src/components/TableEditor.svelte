@@ -100,11 +100,11 @@
     return rowIndexWidth + rowActionsWidth + block.columns.reduce((sum, { id }) => sum + (widths?.[id] ?? defaultTableColumnWidth), 0);
   }
 
-  function growingCardWidth({ card, size, initial }: Resize) {
-    if (card && size > initial) {
-      const required = Math.ceil(card.requiredWidth + size - initial);
-      if (required > card.width) return required;
-    }
+  function resizedCardWidth({ card, size, initial }: Resize) {
+    if (!card || size === initial) return;
+    const required = Math.max(260, Math.ceil(card.requiredWidth + size - initial));
+    const width = size > initial ? Math.max(card.width, required) : Math.min(card.width, required);
+    if (width !== card.width) return width;
   }
 
   function rowHeight(id: string) {
@@ -144,14 +144,14 @@
     if (resizing?.pointer !== event.pointerId) return;
     const position = resizing.widths ? event.clientX : event.clientY;
     resizing.size = Math.max(resizing.min, resizing.initial + Math.round((position - resizing.start) / resizing.scale));
-    if (resizing.card) previewWidth?.(growingCardWidth(resizing));
+    if (resizing.card) previewWidth?.(resizedCardWidth(resizing));
   }
 
   function endResize(event: PointerEvent, save = false) {
     if (resizing?.pointer !== event.pointerId) return;
     if (save) moveResize(event);
     const { id, initial, size, widths, card } = resizing;
-    const width = growingCardWidth(resizing);
+    const width = resizedCardWidth(resizing);
     if (card) previewWidth?.(undefined);
     resizing = undefined;
     if (!save || size === initial) return;
@@ -165,16 +165,17 @@
     }
   }
 
-  function resizeColumns(widths: Record<string, number>) {
-    resizeGrid({ columnWidths: widths }, columnGridWidth(widths));
+  function resizeColumns(widths: Record<string, number>, narrowing: boolean) {
+    resizeGrid({ columnWidths: widths }, columnGridWidth(widths), 0, narrowing);
   }
 
-  function resizeGrid(patch: Partial<TableBlock>, width?: number, rowDelta = 0) {
+  function resizeGrid(patch: Partial<TableBlock>, width?: number, rowDelta = 0, narrowing = false) {
     const card = inline ? table?.closest<HTMLElement>('.graph-card.table') : undefined;
     const needed = card && tableCardContentSize(card, width, rowDelta);
     if (card && needed) {
       const next = {
-        width: width === undefined ? card.offsetWidth : Math.max(card.offsetWidth, needed.width),
+        width: width === undefined ? card.offsetWidth
+          : narrowing ? Math.min(card.offsetWidth, needed.width) : Math.max(card.offsetWidth, needed.width),
         height: width === undefined ? Math.max(card.offsetHeight, needed.height) : card.offsetHeight,
       };
       if (next.width !== card.offsetWidth || next.height !== card.offsetHeight) patch.expandedSize = next;
@@ -183,7 +184,7 @@
   }
 
   export function revealRows() {
-    if (block.rows.length > limit) limit += 100;
+    if (dataRows > limit) limit += 100;
   }
 
   export function startHandleResize(axis: 'row' | 'column') {
@@ -239,7 +240,7 @@
     const dataEnd = originalDataRows + Math.min(0, offset);
     const rows = [...original.rows.slice(0, dataEnd), ...gesture.rows.slice(0, Math.max(0, offset)), ...original.rows.slice(originalDataRows)];
     const removed = new Set(original.rows.slice(dataEnd, originalDataRows).map(({ id }) => id));
-    const visibleCount = Math.min(limit, original.rows.length + offset) - Math.min(limit, original.rows.length);
+    const visibleCount = Math.min(limit, originalDataRows + offset) - Math.min(limit, originalDataRows);
     const removedSizes = rowSizes.slice(dataEnd, originalDataRows);
     const removedHeight = removedSizes.reduce((sum, height) => sum + height, 0);
     const visibleDelta = offset > 0 ? visibleCount * defaultAddedRowHeight : -removedHeight;
@@ -302,7 +303,7 @@
     const padding = (style: CSSStyleDeclaration) => parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
     let width = Math.max(defaultTableColumnWidth, context.measureText(name.textContent ?? '').width
       + padding(heading) + header.offsetWidth - name.offsetWidth);
-    const sample = table?.tBodies[0]?.rows[0]?.cells[index + 1]?.querySelector('textarea');
+    const sample = table?.querySelector<HTMLTableRowElement>('tbody tr, tfoot tr')?.cells[index + 1]?.querySelector('textarea');
     if (sample && table) {
       const style = getComputedStyle(sample);
       const space = padding(style) + 2;
@@ -321,7 +322,7 @@
     const widths = renderedColumnWidths();
     const size = Math.ceil(width);
     if (size !== block.columnWidths?.[id] && Math.abs(size - widths[id]) >= 1) {
-      resizeColumns({ ...widths, [id]: size });
+      resizeColumns({ ...widths, [id]: size }, size < widths[id]);
     }
   }
 
@@ -330,7 +331,7 @@
   }
 
   async function focusCell(rowIndex: number, rowId: string, columnId: string) {
-    limit = Math.max(limit, rowIndex + 1);
+    if (rowIndex < dataRows) limit = Math.max(limit, rowIndex + 1);
     await tick();
     document.getElementById(cellId(rowId, columnId))?.focus();
   }
@@ -545,7 +546,7 @@
       ?.closest<HTMLTableCellElement>('td[data-table-cell]');
     if (!cell || cell.closest('table') !== table) return;
     if (cell !== drag.end && cell.parentElement instanceof HTMLTableRowElement) {
-      const row = block.rows[cell.parentElement.sectionRowIndex];
+      const row = block.rows[Number(cell.parentElement.dataset.rowIndex)];
       const column = block.columns[cell.cellIndex - 1];
       if (row && column) {
         drag.end = cell;
@@ -717,9 +718,10 @@
       {/each}
       <th scope="col"><span class="sr-only">Actions</span></th>
     </tr></thead>
-    <tbody>{#each block.rows.slice(0, limit) as row, rowIndex (row.id)}
+    {#snippet tableRow(row: Row, rowIndex: number)}
       {@const height = rowHeight(row.id)}
-      <tr class:footer-row={rowIndex >= dataRows} style:height={height === undefined ? undefined : height + 'px'}>
+      <tr data-row-index={rowIndex} aria-rowindex={rowIndex + 2}
+        class:footer-row={rowIndex >= dataRows} style:height={height === undefined ? undefined : height + 'px'}>
         <th scope="row" class="row-index">
           <button type="button" class="table-header-select row-select nokey" data-table-selection=""
             aria-label={'Select row ' + rowNumber(block, rowIndex)} aria-pressed={activeCell?.axis === 'row' && activeCell.rowId === row.id} disabled={locked}
@@ -796,7 +798,19 @@
           footerRows: rowIndex >= dataRows ? footerRows - 1 : block.footerRows,
         })}><Trash2 size={13} /></button></td>
       </tr>
-    {/each}</tbody>
+    {/snippet}
+    <tbody>
+      {#each block.rows.slice(0, Math.min(dataRows, limit)) as row, rowIndex (row.id)}
+        {@render tableRow(row, rowIndex)}
+      {/each}
+    </tbody>
+    {#if footerRows}
+      <tfoot>
+        {#each block.rows.slice(dataRows) as row, offset (row.id)}
+          {@render tableRow(row, dataRows + offset)}
+        {/each}
+      </tfoot>
+    {/if}
   </table>
   {#if !block.rows.length}<p class="grid-empty">Add a row or paste a range to begin.</p>{/if}
 </div>
@@ -828,10 +842,10 @@
   <Modal className="column-settings-dialog" title="Column settings" subtitle={'Column ' + columnLetter(settingsColumnIndex)}
     close={closeColumnSettings} children={settingsFields} footer={settingsFooter} />
 {/if}
-{#if !inline || block.rows.length > limit}
+{#if !inline || dataRows > limit}
   <div class="table-count">
     {#if !inline}<span>{countLabel(block.rows.length, 'row')} · {countLabel(block.columns.length, 'column')}</span>{/if}
-    {#if block.rows.length > limit}<button class="text-button" onclick={revealRows}>Show more</button>{/if}
+    {#if dataRows > limit}<button class="text-button" onclick={revealRows}>Show more</button>{/if}
   </div>
 {/if}
 </div>
