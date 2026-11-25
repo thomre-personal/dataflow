@@ -344,6 +344,7 @@ test('resizes an expanded table, scrolls to its last row and restores the size',
   await expect(dialog.locator('tfoot')).toBeInViewport({ ratio: .95 });
   await dialog.getByRole('button', { name: 'Done', exact: true }).click();
   const table = canvasBlock(page, 'Pasted data');
+  await page.addStyleTag({ content: '.node-inline::-webkit-scrollbar { width: 0; height: 14px; }' });
   const footer = table.locator('tfoot');
   await expect(table.getByRole('textbox', { name: 'Item row 1', exact: true })).toBeVisible();
   await expect(footer.getByRole('textbox', { name: 'Item row 73', exact: true })).toHaveValue('Total');
@@ -351,12 +352,13 @@ test('resizes an expanded table, scrolls to its last row and restores the size',
   await table.getByRole('button', { name: 'Lock inline editing', exact: true }).click();
   await expect(table.getByRole('textbox', { name: 'Item row 1', exact: true })).toHaveCount(0);
   const full = page.getByRole('region', { name: 'Full table data' });
-  const footerGap = () => full.evaluate((element: HTMLElement) => {
+  const footerCoversScrollEdge = () => full.evaluate((element: HTMLElement) => {
     const bounds = element.getBoundingClientRect();
     const scale = bounds.height / element.offsetHeight;
-    const viewportBottom = bounds.top + element.clientHeight * scale;
-    const footerBottom = element.querySelector('tfoot')!.getBoundingClientRect().bottom;
-    return Math.abs(viewportBottom - footerBottom);
+    const viewportBottom = bounds.top + (element.clientTop + element.clientHeight) * scale;
+    const footer = element.querySelector('tfoot')!;
+    const edge = document.elementFromPoint(bounds.left + bounds.width / 2, viewportBottom - .25);
+    return footer.getBoundingClientRect().bottom > viewportBottom && Boolean(edge && footer.contains(edge));
   });
   const initial = await cardSize(table);
   const left = table.locator('.block-resize-edge.left');
@@ -364,7 +366,7 @@ test('resizes an expanded table, scrolls to its last row and restores the size',
   await expect.poll(async () => (await cardSize(table)).width).toBeLessThan(initial.width);
   await full.evaluate((element) => { element.scrollTop = 400; element.scrollLeft = 15; });
   await expect.poll(() => full.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
-  await expect.poll(footerGap).toBeLessThanOrEqual(1);
+  await expect.poll(footerCoversScrollEdge).toBe(true);
   await dragResize(page, left, -95, 0, .3);
   await expect.poll(async () => Math.abs((await cardSize(table)).width - initial.width)).toBeLessThanOrEqual(2);
   await dragResize(page, table.locator('.block-resize-corner.top.right'), 30, -75);
@@ -376,7 +378,10 @@ test('resizes an expanded table, scrolls to its last row and restores the size',
   await expect(footer).toBeInViewport({ ratio: .95 });
   await full.evaluate((element) => { element.scrollTop = 400; });
   await expect(footer).toBeInViewport({ ratio: .95 });
-  await expect.poll(footerGap).toBeLessThanOrEqual(1);
+  await expect.poll(footerCoversScrollEdge).toBe(true);
+  await page.getByRole('button', { name: 'Zoom out', exact: true }).click();
+  await waitForCanvasFit(page);
+  await expect.poll(footerCoversScrollEdge).toBe(true);
   await full.evaluate((element) => { element.scrollTop = element.scrollHeight; });
   await expect(full.getByRole('cell', { name: 'Item 72', exact: true })).toBeAttached();
   await full.evaluate((element) => { element.scrollTop = element.scrollHeight; });
