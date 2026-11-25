@@ -670,8 +670,10 @@
 
 {#snippet tools()}
 <div class="table-tools">
-  <button class="button ghost" title={hotkeyLabel(hotkeys.rowAbove) + ' inserts above, ' + hotkeyLabel(hotkeys.rowBelow) + ' inserts below'} onclick={() => insertRow(dataRows)}><Plus size={15} /> Row</button>
-  <button class="button ghost" title={hotkeyLabel(hotkeys.columnLeft) + ' inserts left, ' + hotkeyLabel(hotkeys.columnRight) + ' inserts right'} onclick={() => insertColumn(block.columns.length)}><Plus size={15} /> Column</button>
+  <button class="button ghost" title={hotkeyLabel(hotkeys.rowAbove) + ' inserts above, ' + hotkeyLabel(hotkeys.rowBelow) + ' inserts below'}
+    onclick={(event) => { event.currentTarget.focus({ preventScroll: true }); insertRow(dataRows); }}><Plus size={15} /> Row</button>
+  <button class="button ghost" title={hotkeyLabel(hotkeys.columnLeft) + ' inserts left, ' + hotkeyLabel(hotkeys.columnRight) + ' inserts right'}
+    onclick={(event) => { event.currentTarget.focus({ preventScroll: true }); insertColumn(block.columns.length); }}><Plus size={15} /> Column</button>
 </div>
 {/snippet}
 <div class="table-editor-content">

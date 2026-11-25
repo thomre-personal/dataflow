@@ -73,11 +73,13 @@
   let growth: { axis: GrowthAxis; pointer: number; start: number; step: number } | undefined;
   let skipGrowthClick = false;
   let movedResize = false;
+  let tableResizeLimit = $state<{ width: number; height: number }>();
   const sqlKeyword = /^(?:SELECT|FROM|WHERE|JOIN|AS|GROUP|BY|ORDER|LIMIT|SUM|WITH|AND|DESC|ASC|VALUES)$/i;
 
   function startGrowth(event: PointerEvent & { currentTarget: HTMLButtonElement }, axis: GrowthAxis) {
     if (event.button !== 0 || !card) return;
     const scale = card.getBoundingClientRect().width / card.offsetWidth;
+    event.currentTarget.focus({ preventScroll: true });
     event.currentTarget.setPointerCapture(event.pointerId);
     tableEditor?.startHandleResize(axis);
     skipGrowthClick = false;
@@ -100,6 +102,16 @@
     if (event.type === 'pointerup') moveGrowth(event);
     growth = undefined;
     tableEditor?.finishHandleResize();
+  }
+
+  function startResize() {
+    movedResize = false;
+    tableResizeLimit = undefined;
+    if (block.kind !== 'table' || !card) return;
+    const fit = tableCardContentSize(card);
+    if (fit) {
+      tableResizeLimit = { width: Math.max(card.offsetWidth, fit.width), height: Math.max(card.offsetHeight, fit.height) };
+    }
   }
 
   $effect(() => {
@@ -156,10 +168,14 @@
 
 {#if expanded && !data.group?.focusExpanded}
   <NodeResizer minWidth={260} minHeight={block.kind === 'chart' ? 228 : block.kind === 'group' ? 120 : 170}
+    maxWidth={tableResizeLimit?.width} maxHeight={tableResizeLimit?.height}
     lineClass="block-resize-edge" handleClass="block-resize-corner"
     shouldResize={(_event, bounds) => data.canResize?.(bounds) ?? true}
-    onResizeStart={() => movedResize = false} onResize={() => movedResize = true}
-    onResizeEnd={(_event, bounds) => { if (movedResize) data.resize?.(bounds); }} />
+    onResizeStart={startResize} onResize={() => movedResize = true}
+    onResizeEnd={(_event, bounds) => {
+      tableResizeLimit = undefined;
+      if (movedResize) data.resize?.(bounds);
+    }} />
 {/if}
 
 {#if block.kind === 'group'}

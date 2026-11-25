@@ -212,6 +212,7 @@ test('pans the canvas when a table cannot scroll and keeps native scrolling when
 });
 
 test('keeps the table geometry when locking and grows the table from the outside handles', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'platform', { get: () => 'MacIntel' }));
   await page.goto('/');
   await page.getByRole('button', { name: 'New workspace', exact: true }).click();
   await page.getByRole('textbox', { name: 'Workspace name' }).fill('Stable table layout');
@@ -253,13 +254,23 @@ test('keeps the table geometry when locking and grows the table from the outside
   await columnHandle.click();
   await expect(table.getByRole('columnheader', { name: 'C', exact: true })).toBeVisible();
   expect((await cardSize(card)).width).toBeGreaterThan(original.width);
+  await page.keyboard.press('Meta+z');
+  await expect(table.getByRole('columnheader', { name: 'C', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Meta+Shift+z');
+  await expect(table.getByRole('columnheader', { name: 'C', exact: true })).toBeVisible();
 
   await dragResize(page, rowHandle, 0, 86);
   await expect.poll(() => table.locator('tbody tr').count()).toBeGreaterThan(4);
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(table.locator('tbody tr')).toHaveCount(3);
+  const beforeColumns = await cardSize(card);
+  await page.getByRole('combobox', { name: 'Find a block', exact: true }).focus();
   await dragResize(page, columnHandle, 170, 0);
+  await expect(columnHandle).toBeFocused();
   await expect(table.getByRole('columnheader', { name: 'E', exact: true })).toBeVisible();
+  await page.keyboard.press('Meta+z');
+  await expect(table.getByRole('columnheader', { name: 'D', exact: true })).toHaveCount(0);
+  await expect.poll(() => cardSize(card)).toEqual(beforeColumns);
 });
 
 test('drags table handles inward one step at a time and keeps values, formulas and the footer', async ({ page }) => {
@@ -332,8 +343,11 @@ test('resizes an expanded table, scrolls to its last row and restores the size',
   await table.getByRole('button', { name: 'Lock inline editing', exact: true }).click();
   await expect(table.getByRole('textbox', { name: 'Item row 1', exact: true })).toHaveCount(0);
   const initial = await cardSize(table);
-  await dragResize(page, table.locator('.block-resize-edge.left'), -45, 0, .3);
-  await expect.poll(async () => (await cardSize(table)).width).toBeGreaterThan(initial.width);
+  const left = table.locator('.block-resize-edge.left');
+  await dragResize(page, left, 45, 0, .3);
+  await expect.poll(async () => (await cardSize(table)).width).toBeLessThan(initial.width);
+  await dragResize(page, left, -95, 0, .3);
+  await expect.poll(async () => Math.abs((await cardSize(table)).width - initial.width)).toBeLessThanOrEqual(2);
   await dragResize(page, table.locator('.block-resize-corner.top.right'), 30, -75);
   await expect.poll(async () => (await cardSize(table)).height).toBeGreaterThan(initial.height);
   const resized = await cardSize(table);
@@ -1670,7 +1684,7 @@ test('selects complete cells before editing and keeps a confirmed color on its o
   await expect(destinationCell).not.toHaveCSS('background-color', 'rgb(59, 130, 246)');
 });
 
-test('wraps unbroken text and grows or fits the canvas table at its edges', async ({ page }) => {
+test('wraps unbroken text, grows with its columns and rows, and limits outer resizing to the content', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New workspace', exact: true }).click();
   await page.getByRole('textbox', { name: 'Workspace name' }).fill('Table fit');
@@ -1722,10 +1736,7 @@ test('wraps unbroken text and grows or fits the canvas table at its edges', asyn
   await waitForCanvasFit(page);
   await right.hover({ position: { x: 4, y: 35 } });
   await dragResize(page, right, 90, 0, .12);
-  await expect.poll(async () => (await cardSize(table)).width).toBeGreaterThan(width);
-  const edge = (await right.boundingBox())!;
-  await page.mouse.dblclick(edge.x + edge.width / 2, edge.y + edge.height * .12);
-  await expect.poll(async () => (await cardSize(table)).width).toBeLessThan(width + 10);
+  await expect.poll(async () => (await cardSize(table)).width).toBe(width);
 
   const row = table.getByRole('button', { name: 'Resize row 1', exact: true });
   await expect(row).toHaveCSS('height', '13px');
@@ -1734,6 +1745,9 @@ test('wraps unbroken text and grows or fits the canvas table at its edges', asyn
   await dragResize(page, row, 0, 150);
   await expect.poll(async () => (await cardSize(table)).height).toBeGreaterThan(height);
   await expect.poll(() => table.locator('.node-inline').evaluate((element) => element.scrollHeight - element.clientHeight)).toBeLessThanOrEqual(1);
+  const fitted = await cardSize(table);
+  await dragResize(page, table.locator('.block-resize-corner.bottom.right'), 80, 80);
+  await expect.poll(() => cardSize(table)).toEqual(fitted);
 });
 
 test('pastes clipboard data directly into a selected cell and infers column types', async ({ page }) => {
