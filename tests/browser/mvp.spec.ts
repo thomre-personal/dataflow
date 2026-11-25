@@ -1756,6 +1756,38 @@ test('pastes clipboard data directly into a selected cell and infers column type
   await expect(table.getByRole('table').locator('tbody tr')).toHaveCount(2);
 });
 
+test('keeps the chart instance while resizing a column in its source table', async ({ page }) => {
+  await page.goto('/');
+  const chart = canvasBlock(page, 'Spending by month').getByRole('img', { name: 'total chart' }).locator('canvas');
+  await expect(chart).toBeVisible();
+  await waitForCanvasFit(page);
+  await chart.evaluate((canvas: HTMLCanvasElement) => {
+    canvas.dataset.contextAcquisitions = '0';
+    canvas.getContext = new Proxy(canvas.getContext, {
+      apply(target, receiver, args) {
+        canvas.dataset.contextAcquisitions = String(Number(canvas.dataset.contextAcquisitions) + 1);
+        return Reflect.apply(target, receiver, args);
+      },
+    });
+  });
+
+  const table = canvasBlock(page, 'Transactions');
+  const initial = await cardSize(table);
+  const separator = table.getByRole('button', { name: 'Resize column Date', exact: true });
+  await separator.hover();
+  const bounds = (await separator.boundingBox())!;
+  const x = bounds.x + bounds.width / 2;
+  const y = bounds.y + bounds.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 70, y, { steps: 8 });
+  await expect.poll(async () => (await cardSize(table)).width).toBeGreaterThan(initial.width);
+  await expect(chart).toHaveAttribute('data-context-acquisitions', '0');
+  await page.mouse.up();
+  await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
+  await expect(chart).toHaveAttribute('data-context-acquisitions', '0');
+});
+
 test('requires an input for a cross-table formula and recalculates it for downstream SQL', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Open table', exact: true }).waitFor();

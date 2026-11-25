@@ -57,7 +57,9 @@
   let acceptsConnection = $derived(block.kind === 'table' && data.edit && connectionSource
     && canConnect(data.edit.workspace, connectionSource, block.id));
   let Icon = $derived(icons[block.kind]);
-  let series = $derived(block.kind === 'chart' ? chartSeries(block, data.result) : undefined);
+  let chartResult = $derived(data.result);
+  let dark = $derived(data.dark);
+  let series = $derived(block.kind === 'chart' ? chartSeries(block, chartResult) : undefined);
   let codeLines = $derived(block.kind === 'sql' ? block.sql.trim().split('\n').slice(0, 6) : []);
   let showQueryResults = $derived(block.kind === 'sql' && block.preview === 'results');
   let card = $state<HTMLDivElement>();
@@ -289,7 +291,7 @@
       <footer class="node-footer"><button class="nodrag" onclick={(event) => { event.stopPropagation(); data.open(); }}>Configure switch</button></footer>
     {:else}
       <div class="node-preview node-chart">{#if series}
-        <MiniChart {series} type={block.chart} dark={data.dark} compact={!expanded} />
+        <MiniChart {series} type={block.chart} {dark} compact={!expanded} />
       {:else}<div class="node-placeholder" title={data.issue}><ChartColumnIncreasing size={24} /><span>{data.dataState === 'running' ? 'Loading data…' : data.issue ? 'Fix source data' : 'Connect a data source'}</span></div>{/if}</div>
       <footer class="node-footer"><span>{block.chart === 'bar' ? 'Bar chart' : 'Line chart'}{#if series && (data.dataState === 'stale' || data.dataState === 'error')} <span class="inline-warning">· Previous data</span>{:else if series?.truncated} <span class="separator">·</span> First 100{/if}</span><button class="nodrag" onclick={data.open}>Open chart</button></footer>
     {/if}
