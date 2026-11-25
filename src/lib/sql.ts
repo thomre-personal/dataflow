@@ -5,8 +5,10 @@ import wasmEh from '@duckdb/duckdb-wasm/dist/duckdb-eh.wasm?url';
 import workerEhUrl from '@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js?url';
 import { MAX_ROWS } from './clipboard';
 import { configResult, tableResult } from './format';
-import type { Block, Result, ValueType, Workspace } from './workspace';
-import { implicitConfigInputs } from './workspace';
+import type { Block, Result, SqlBlock, ValueType, Workspace } from './workspace';
+import { queryInputs } from './workspace';
+
+type ReportRelations = (block: SqlBlock, names: ReadonlySet<string> | undefined) => void;
 
 const bundles: duckdb.DuckDBBundles = {
   mvp: { mainModule: wasm, mainWorker: workerUrl },
@@ -112,7 +114,7 @@ async function displayResult(connection: duckdb.AsyncDuckDBConnection, name: str
   return { columns, rows: values.toArray().map((row) => names.map((_, index) => row['c' + index] ?? null)) };
 }
 
-async function execute(db: duckdb.AsyncDuckDB, workspace: Workspace, blockId: string): Promise<Result> {
+async function execute(db: duckdb.AsyncDuckDB, workspace: Workspace, blockId: string, reportRelations: ReportRelations): Promise<Result> {
   const connection = await db.connect();
   const tables = new Map<string, string>();
   try {
@@ -126,18 +128,13 @@ async function execute(db: duckdb.AsyncDuckDB, workspace: Workspace, blockId: st
         await createSource(connection, name, block.title, configResult(block));
       } else if (block.kind === 'sql') {
         const sql = selectSql(block.sql);
-        const links = workspace.links.filter((link) => link.target === block.id);
+        // Dynamic table functions can look up relations by name at runtime.
+        const names = /\b(?:query|query_table)\s*\(/i.test(sql) ? undefined
+          : new Set((await connection.getTableNames(sql)).map((table) => table.toLowerCase()));
+        reportRelations(block, names);
         const inputs = [];
-        for (const link of links) {
-          const input = workspace.blocks.find((candidate) => candidate.id === link.source);
-          if (input && input.kind !== 'switch') inputs.push({ name: await materialize(input), alias: link.alias });
-        }
-        const availableConfigs = implicitConfigInputs(workspace, block.id);
-        if (availableConfigs.length) {
-          const tables = new Set((await connection.getTableNames(sql)).map((table) => table.toLowerCase()));
-          for (const { config, alias } of availableConfigs) {
-            if (tables.has(alias)) inputs.push({ name: await materialize(config), alias });
-          }
+        for (const { block: input, alias } of queryInputs(workspace, block.id, names)) {
+          inputs.push({ name: await materialize(input), alias });
         }
         const created: string[] = [];
         try {
@@ -167,7 +164,7 @@ async function execute(db: duckdb.AsyncDuckDB, workspace: Workspace, blockId: st
   }
 }
 
-export function runQuery(workspace: Workspace, blockId: string): Promise<Result> {
+export function runQuery(workspace: Workspace, blockId: string, reportRelations: ReportRelations): Promise<Result> {
   const task = queue.then(async () => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -179,7 +176,7 @@ export function runQuery(workspace: Workspace, blockId: string): Promise<Result>
           reject(new Error('The SQL engine took too long. Try a smaller query and run it again.'));
         }, 15_000);
       });
-      return await Promise.race([database().then((db) => execute(db, workspace, blockId)), timeout]);
+      return await Promise.race([database().then((db) => execute(db, workspace, blockId, reportRelations)), timeout]);
     } catch (error) {
       // A rejected initialization should be retryable.
       if (!worker) engine = undefined;

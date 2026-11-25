@@ -138,6 +138,18 @@ export function implicitConfigInputs(workspace: Workspace, targetId: string): Co
   return inputs;
 }
 
+export function queryInputs(workspace: Workspace, queryId: string, names?: ReadonlySet<string>) {
+  const inputs = workspace.links.flatMap(({ source, target, alias }) => {
+    if (target !== queryId || (names && !names.has(alias.toLowerCase()))) return [];
+    const block = workspace.blocks.find((block) => block.id === source);
+    return block?.kind === 'table' || block?.kind === 'sql' || block?.kind === 'config' ? [{ block, alias }] : [];
+  });
+  for (const { config, alias } of implicitConfigInputs(workspace, queryId)) {
+    if (!names || names.has(alias.toLowerCase())) inputs.push({ block: config, alias });
+  }
+  return inputs;
+}
+
 function availableAlias(base: string, used: ReadonlySet<string>) {
   let alias = base;
   for (let suffix = 2; used.has(alias); suffix++) alias = base + '_' + suffix;

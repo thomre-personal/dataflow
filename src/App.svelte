@@ -27,6 +27,7 @@
   import { absolutePosition, addLink, canConnect, canGroup, columnLetter, createBlock, createWorkspace, dataRowCount, implicitConfigInputs, kinds, newId, related, rowNumber, sqlAlias, starterWorkspace, switchConfigs, tableInputs } from './lib/workspace';
   import type { Block, BlockKind, ChartBlock, ConfigBlock, GroupBlock, Library, Link, NumberFormat, Position, Result, SqlBlock, SwitchBlock, TableBlock, Workspace } from './lib/workspace';
   import { evaluateConfigField, loadConfigPreset } from './lib/config';
+  import { configDependents } from './lib/config-dependencies';
   import { importGrid, parseDelimited } from './lib/clipboard';
   import { bindTableFormulas, bindWorkspaceFormulas, cellFormulaText, isFormulaEntry } from './lib/formulas';
   import { cellSelectionBounds, updateCellStyles } from './lib/cell-style';
@@ -150,6 +151,7 @@
   let runtime = $derived(workspaceResults[workspace.id] ?? {});
   let refreshingInBackground = $state(false);
   const stamps = new Map<string, number>();
+  const queryRelations = new Map<string, { sql: string; names: ReadonlySet<string> | undefined }>();
   const queryKey = (workspaceId: string, blockId: string) => workspaceId + ':' + blockId;
   let saveWork = Promise.resolve();
   let saveSequence = 0;
@@ -179,14 +181,17 @@
     const previous = workspace;
     const beforeGlobals = previous.blocks.filter((block) => block.kind === 'config' && block.global);
     const afterGlobals = next.blocks.filter((block) => block.kind === 'config' && block.global);
-    const globalsChanged = beforeGlobals.length !== afterGlobals.length || afterGlobals.some((block, index) => {
+    const globalBindingsChanged = beforeGlobals.length !== afterGlobals.length || afterGlobals.some((block, index) => {
       const before = beforeGlobals[index];
       return before.kind !== 'config' || block.kind !== 'config' || block.id !== before.id
-        || block.title !== before.title || block.fields !== before.fields;
+        || block.title !== before.title || (block.fields !== before.fields && (
+          block.fields.length !== before.fields.length || block.fields.some((field, position) =>
+            field.id !== before.fields[position].id || field.name !== before.fields[position].name)
+        ));
     });
-    if (globalsChanged) next = bindWorkspaceFormulas(next);
+    if (globalBindingsChanged) next = bindWorkspaceFormulas(next);
     library = { ...library, workspaces: library.workspaces.map((item) => item.id === next.id ? next : item) };
-    invalidateComputed(previous, next, globalsChanged);
+    invalidateComputed(previous, next);
     persist();
     scheduleFileSave(next.id);
   }
@@ -406,37 +411,42 @@
     return stamp;
   }
 
-  function invalidateComputed(previous: Workspace, next: Workspace, globalsChanged: boolean) {
+  function invalidateComputed(previous: Workspace, next: Workspace) {
     const previousLinks = new Set(previous.links.map(({ id }) => id));
     const nextLinks = new Set(next.links.map(({ id }) => id));
+    const isDataLink = (link: Link, current: Workspace) => {
+      const kind = current.blocks.find(({ id }) => id === link.source)?.kind;
+      return kind !== 'config' && kind !== 'switch';
+    };
     const changedInputs = new Set([
-      ...previous.links.filter(({ id }) => !nextLinks.has(id)).map(({ target }) => target),
-      ...next.links.filter(({ id }) => !previousLinks.has(id)).map(({ target }) => target),
+      ...previous.links.filter((link) => !nextLinks.has(link.id) && isDataLink(link, previous)).map(({ target }) => target),
+      ...next.links.filter((link) => !previousLinks.has(link.id) && isDataLink(link, next)).map(({ target }) => target),
     ]);
     const changed = new Set(changedInputs);
-    if (globalsChanged) {
-      for (const block of next.blocks) {
-        if (block.kind === 'sql' || block.kind === 'chart') changed.add(block.id);
-      }
-    }
     const nextBlocks = new Map(next.blocks.map((block) => [block.id, block]));
     workspaceResults[next.id] ??= {};
     const results = workspaceResults[next.id];
     for (const before of previous.blocks) {
       const block = nextBlocks.get(before.id);
       if (!block) {
-        if (before.kind === 'sql') bumpQueryStamp(next.id, before.id);
+        if (before.kind === 'sql') {
+          bumpQueryStamp(next.id, before.id);
+          queryRelations.delete(queryKey(next.id, before.id));
+        }
         delete results[before.id];
       } else if ((block.kind === 'sql' && before.kind === 'sql' && block.sql !== before.sql)
-        || (block.kind === 'config' && before.kind === 'config' && block.fields !== before.fields)
         || (block.kind === 'table' && before.kind === 'table'
           && (block.rows !== before.rows || block.columns !== before.columns || block.numberFormat !== before.numberFormat
-            || block.footerRows !== before.footerRows))) {
+            || block.footerRows !== before.footerRows || block.rowIndexBase !== before.rowIndexBase))) {
         changed.add(block.id);
       }
     }
 
-    for (const id of [...changed, ...related(next, changed, 'outputs')]) {
+    const configChanges = configDependents(previous, next, (block) => {
+      const cached = queryRelations.get(queryKey(next.id, block.id));
+      return cached?.sql === block.sql ? cached.names : undefined;
+    });
+    for (const id of new Set([...changed, ...related(next, changed, 'outputs'), ...configChanges])) {
       const block = nextBlocks.get(id);
       if (block?.kind === 'sql') {
         bumpQueryStamp(next.id, id);
@@ -476,7 +486,9 @@
     try {
       const { runQuery } = await import('./lib/sql');
       if (stamps.get(key) !== stamp) return;
-      const result = await runQuery(source, block.id);
+      const result = await runQuery(source, block.id, (query, names) => {
+        if (stamps.get(key) === stamp) queryRelations.set(queryKey(source.id, query.id), { sql: query.sql, names });
+      });
       if (stamps.get(key) !== stamp) return;
       queries[block.id] = { state: 'ready', result };
       if (showResult && viewRevision === queryViewRevision && selectedId === block.id && library.activeId === source.id) activeTab = 'data';

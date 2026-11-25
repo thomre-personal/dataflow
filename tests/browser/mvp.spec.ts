@@ -676,10 +676,44 @@ test('switches named presets for connected and global configs, including with no
   await expect(formula).toHaveValue('5');
   await table.getByRole('button', { name: 'Done', exact: true }).click();
   const output = canvasBlock(page, 'Untitled table').getByRole('textbox', { name: 'A row 1', exact: true });
+  const query = page.getByRole('dialog', { name: 'Edit SQL' });
+  async function addQuery(title: string, code: string) {
+    await page.getByRole('button', { name: 'Add SQL query', exact: true }).click();
+    await query.getByRole('combobox', { name: 'Connect input' }).selectOption({ label: 'Untitled table' });
+    await query.getByRole('textbox', { name: 'SQL code' }).fill(code);
+    await query.getByRole('button', { name: 'Save and run' }).click();
+    const card = canvasBlock(page, 'Untitled SQL query');
+    await card.getByRole('button', { name: 'Rename Untitled SQL query', exact: true }).click();
+    const name = card.getByRole('textbox', { name: 'Block name', exact: true });
+    await name.fill(title);
+    await name.press('Enter');
+    const renamed = canvasBlock(page, title);
+    await renamed.getByRole('button', { name: 'Results', exact: true }).click();
+    return renamed.getByRole('region', { name: 'Query results' });
+  }
+  const used = await addQuery('Reads tax table', 'SELECT A FROM untitled_table WHERE A IS NOT NULL');
+  await expect(used.getByRole('cell', { name: '5', exact: true })).toBeVisible();
+  const unused = await addQuery('Ignores tax table', 'SELECT 42 AS answer');
+  await expect(unused.getByRole('cell', { name: '42', exact: true })).toBeVisible();
+
+  const settings = page.getByRole('dialog', { name: 'Settings' });
+  const automatic = settings.getByRole('checkbox', { name: 'Automatically refresh computed blocks when inputs change' });
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await automatic.uncheck();
+  await settings.getByRole('button', { name: 'Done' }).click();
   await control.getByRole('button', { name: 'Apply Low', exact: true }).click();
   await expect(output).toHaveValue('4');
+  await expect(used.getByRole('cell', { name: '5', exact: true })).toBeVisible();
+  await expect(canvasBlock(page, 'Reads tax table').getByText('Needs run', { exact: true })).toBeVisible();
+  await expect(canvasBlock(page, 'Ignores tax table').getByText('Needs run', { exact: true })).toHaveCount(0);
+  await expect(canvasBlock(page, 'Monthly totals').getByText('Needs run', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await automatic.check();
+  await settings.getByRole('button', { name: 'Done' }).click();
+  await expect(used.getByRole('cell', { name: '4', exact: true })).toBeVisible();
   await control.getByRole('button', { name: 'Switch to High', exact: true }).click();
   await expect(output).toHaveValue('6');
+  await expect(used.getByRole('cell', { name: '6', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(output).toHaveValue('4');
 });
