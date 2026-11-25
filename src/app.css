@@ -507,6 +507,8 @@ dialog::backdrop { background: #151f386d; backdrop-filter: blur(2px); }
 .table-resize-handle::after { content: ''; position: absolute; background: var(--divider); }
 .table-resize-handle.column-resize::after { inset: 0 0 0 auto; width: 1px; }
 .table-resize-handle.row-resize::after { inset: auto 0 3px; height: 1px; }
+.node-inline tfoot tr:last-child .row-resize,
+.node-inline tfoot tr:last-child .row-resize::after { bottom: 0; }
 .table-resize-handle:is(:hover, :focus-visible, .resizing)::after { background: var(--accent); }
 .editor-grid[data-table-style="banded"] tr:nth-child(even) td { background: var(--raised); }
 .table-validation { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 10px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--error) 32%, var(--divider)); border-radius: 6px; color: var(--error); background: color-mix(in srgb, var(--error) 8%, var(--surface)); font-size: 11px; }

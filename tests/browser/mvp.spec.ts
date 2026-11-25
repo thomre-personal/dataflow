@@ -379,6 +379,26 @@ test('fits short tables with footers and config blocks to their content height',
   expect(await tableHeights()).toHaveLength(1);
 });
 
+test('fits all rows without vertical overflow at the maximum canvas size', async ({ page }) => {
+  await page.goto('/');
+  const table = canvasBlock(page, 'Transactions');
+  await table.getByRole('button', { name: 'Open table', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Transactions', exact: true });
+  const footerRows = dialog.getByRole('spinbutton', { name: 'Footer rows' });
+  await footerRows.fill('1');
+  await footerRows.press('Tab');
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+  await page.getByRole('button', { name: 'Fit canvas', exact: true }).click();
+  await waitForCanvasFit(page);
+  const preview = table.locator('.node-inline');
+  await dragResize(page, table.locator('.block-resize-edge.right'), 180, 0, .2);
+  await dragResize(page, table.locator('.block-resize-edge.bottom'), 0, 220);
+  await expect.poll(() => preview.evaluate((element) => ({
+    horizontal: element.scrollWidth - element.clientWidth,
+    vertical: element.scrollHeight - element.clientHeight,
+  }))).toEqual({ horizontal: 0, vertical: 0 });
+});
+
 test('resizes an expanded table, scrolls to its last row and restores the size', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New workspace', exact: true }).click();
