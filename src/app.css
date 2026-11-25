@@ -249,11 +249,11 @@ code { font-family: var(--mono); }
 .node-footer button:hover { background: var(--accent-soft); }
 .node-actions { display: flex; flex-shrink: 0; align-items: center; gap: 4px; }
 .node-actions button { display: inline-flex; align-items: center; gap: 3px; }
-.node-inline { --table-inset: 8px; padding: var(--table-inset); overflow: auto; overscroll-behavior: contain; }
-.node-inline:has(.editor-grid tfoot) { padding-bottom: 0; border-bottom: var(--table-inset) solid transparent; }
+.node-inline { padding: 8px; overflow: auto; overscroll-behavior: contain; }
+.node-inline:has(.editor-grid tfoot) { padding-bottom: 0; }
 .table-editor-content { display: flow-root; }
 .node-inline .editor-grid { max-height: none; overflow: auto hidden; margin-bottom: 7px; }
-.node-inline .editor-grid:has(tfoot) { overflow: visible; }
+.node-inline .editor-grid:has(tfoot) { overflow: visible; margin-bottom: 0; }
 .table-grow { position: absolute; z-index: 4; top: 64px; right: -29px; display: grid; place-items: center;
   width: 25px; height: 25px; border: 1px solid var(--border); border-radius: 50%; color: var(--accent); background: var(--surface);
   box-shadow: var(--shadow); cursor: ew-resize; touch-action: none; }

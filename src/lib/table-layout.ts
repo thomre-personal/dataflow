@@ -1,3 +1,8 @@
+export function cardContentHeight(card: HTMLElement, preview: HTMLElement, contentHeight: number) {
+  const style = getComputedStyle(preview);
+  return contentHeight + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + card.offsetHeight - preview.clientHeight;
+}
+
 export function tableCardContentSize(card: HTMLElement, gridWidth?: number, rowDelta = 0) {
   const body = card.querySelector<HTMLElement>('.node-preview');
   const grid = body?.querySelector<HTMLElement>('.editor-grid, .result-grid');
@@ -13,11 +18,9 @@ export function tableCardContentSize(card: HTMLElement, gridWidth?: number, rowD
     width = Math.max(minimumWidth, table.offsetWidth, table.scrollWidth);
     table.style.width = currentWidth;
   }
-  const bodyStyle = getComputedStyle(body);
-  const padding = parseFloat(bodyStyle.paddingTop) + parseFloat(bodyStyle.paddingBottom);
   const contentHeight = editor?.offsetHeight ?? table.offsetHeight + grid.offsetHeight - grid.clientHeight;
   return {
     width: Math.max(260, Math.ceil(width + card.offsetWidth - grid.clientWidth)),
-    height: Math.max(170, Math.ceil(contentHeight + rowDelta + padding + card.offsetHeight - body.clientHeight)),
+    height: Math.max(170, cardContentHeight(card, body, contentHeight + rowDelta)),
   };
 }

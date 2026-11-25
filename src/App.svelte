@@ -8,6 +8,7 @@
     Workflow, X,
   } from 'lucide-svelte';
   import { onMount, tick, untrack } from 'svelte';
+  import { SvelteMap } from 'svelte/reactivity';
   import GraphCard from './components/GraphCard.svelte';
   import type { CardData } from './components/GraphCard.svelte';
   import BlockSearch from './components/BlockSearch.svelte';
@@ -147,6 +148,7 @@
   let flowNodes = $state.raw<Node<CardData>[]>([]);
   let flowEdges = $state.raw<Edge[]>([]);
   let tableWidthPreview = $state.raw<{ id: string; width: number }>();
+  const contentHeightLimits = new SvelteMap<string, number>();
   type ComputedState = { state: 'ready' | 'stale' | 'running' | 'error'; result?: Result; error?: string };
   let workspaceResults = $state<Record<string, Record<string, ComputedState>>>({});
   let runtime = $derived(workspaceResults[workspace.id] ?? {});
@@ -599,9 +601,12 @@
   function nodeSize(block: Block, focusScope?: ReadonlySet<string>): { width: number; height: number } {
     if ((block.kind === 'table' || block.kind === 'chart' || block.kind === 'config') && block.expanded !== false) {
       if (block.kind === 'chart') return block.expandedSize ?? { width: 420, height: 320 };
-      if (block.kind === 'config') return block.expandedSize ?? { width: 300, height: 260 };
-      const size = block.expandedSize ?? { width: 320, height: Math.max(280, 132 + Math.min(block.rows.length, 13) * 28) };
-      return tableWidthPreview?.id === block.id ? { ...size, width: tableWidthPreview.width } : size;
+      const size = block.expandedSize ?? (block.kind === 'config' ? { width: 300, height: 260 }
+        : { width: 320, height: Math.max(280, 132 + Math.min(block.rows.length, 13) * 28) });
+      return {
+        width: tableWidthPreview?.id === block.id ? tableWidthPreview.width : size.width,
+        height: Math.min(size.height, contentHeightLimits.get(block.id) ?? size.height),
+      };
     }
     if (block.kind !== 'group') return { width: 260, height: 228 };
     if (block.expanded === false && !focusScope?.has(block.id)) return { width: 260, height: 66 };
@@ -736,6 +741,10 @@
           rename: (title: string) => renameBlock(block.id, title),
           toggleExpanded: expandable ? () => toggleExpanded(block) : undefined,
           resize: expandable ? (bounds: ResizeParams) => resizeBlock(block.id, bounds) : undefined,
+          limitHeight: block.kind === 'table' || block.kind === 'config' ? (height: number | undefined) => {
+            if (height === undefined) contentHeightLimits.delete(block.id);
+            else contentHeightLimits.set(block.id, height);
+          } : undefined,
           canResize: block.kind === 'group' ? (bounds: ResizeParams) => groupCanResize(block, bounds) : undefined,
           config: block.kind === 'config' ? {
             patch: (patch: Partial<typeof block>) => patchBlock(block.id, patch),

@@ -15,6 +15,7 @@
     rename: (title: string) => void;
     toggleExpanded?: () => void;
     resize?: (bounds: ResizeParams) => void;
+    limitHeight?: (height: number | undefined) => void;
     canResize?: (bounds: ResizeParams) => boolean;
     query?: { setPreview: (view: NonNullable<SqlBlock['preview']>) => void; run: () => void };
     config?: { patch: (patch: Partial<ConfigBlock>) => void; confirm: (request: Confirmation) => void };
@@ -34,12 +35,13 @@
 </script>
 
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { Handle, NodeResizer, Position, useConnection } from '@xyflow/svelte';
   import type { Node, NodeProps } from '@xyflow/svelte';
   import { Braces, ChartColumnIncreasing, CircleAlert, Equal, Folder, Lock, LockOpen, Maximize2, Minimize2, Pause, Plus, SlidersHorizontal, Table2, ToggleLeft } from 'lucide-svelte';
   import { countLabel, chartSeries, tablePreview } from '../lib/format';
   import { canConnect, defaultTableColumnWidth } from '../lib/workspace';
-  import { tableCardContentSize } from '../lib/table-layout';
+  import { cardContentHeight, tableCardContentSize } from '../lib/table-layout';
   import MiniChart from './MiniChart.svelte';
   import BlockName from './BlockName.svelte';
   import ResultGrid from './ResultGrid.svelte';
@@ -63,6 +65,9 @@
   let codeLines = $derived(block.kind === 'sql' ? block.sql.trim().split('\n').slice(0, 6) : []);
   let showQueryResults = $derived(block.kind === 'sql' && block.preview === 'results');
   let card = $state<HTMLDivElement>();
+  let previewArea = $state<HTMLDivElement>();
+  let fitsContentHeight = $derived(block.kind === 'config' || (block.kind === 'table' && Boolean(block.footerRows)));
+  let contentHeightLimit = $state<number>();
   type GrowthAxis = 'row' | 'column';
   let tableEditor = $state<{
     startHandleResize: (axis: GrowthAxis) => void;
@@ -73,7 +78,7 @@
   let growth: { axis: GrowthAxis; pointer: number; start: number; step: number } | undefined;
   let skipGrowthClick = false;
   let movedResize = false;
-  let tableResizeLimit = $state<{ width: number; height: number }>();
+  let resizeLimit = $state<{ width?: number; height: number }>();
   const sqlKeyword = /^(?:SELECT|FROM|WHERE|JOIN|AS|GROUP|BY|ORDER|LIMIT|SUM|WITH|AND|DESC|ASC|VALUES)$/i;
 
   function startGrowth(event: PointerEvent & { currentTarget: HTMLButtonElement }, axis: GrowthAxis) {
@@ -106,13 +111,37 @@
 
   function startResize() {
     movedResize = false;
-    tableResizeLimit = undefined;
-    if (block.kind !== 'table' || !card) return;
-    const fit = tableCardContentSize(card);
-    if (fit) {
-      tableResizeLimit = { width: Math.max(card.offsetWidth, fit.width), height: Math.max(card.offsetHeight, fit.height) };
+    resizeLimit = undefined;
+    if (!card) return;
+    if (block.kind === 'table') {
+      const fit = tableCardContentSize(card);
+      if (fit) resizeLimit = { width: Math.max(card.offsetWidth, fit.width),
+        height: Math.max(card.offsetHeight, contentHeightLimit ?? fit.height) };
+    } else if (contentHeightLimit !== undefined) {
+      resizeLimit = { height: Math.max(card.offsetHeight, contentHeightLimit) };
     }
   }
+
+  $effect(() => {
+    if (!fitsContentHeight || !expanded || !card || !previewArea) return;
+    const element = card;
+    const preview = previewArea;
+    const content = preview.querySelector<HTMLElement>('.table-editor-content, .config-editor');
+    const limitHeight = untrack(() => data.limitHeight);
+    if (!content || !limitHeight) return;
+    const observer = new ResizeObserver(() => {
+      const height = cardContentHeight(element, preview, content.offsetHeight);
+      contentHeightLimit = height;
+      limitHeight(height);
+    });
+    observer.observe(content);
+    observer.observe(preview);
+    return () => {
+      observer.disconnect();
+      contentHeightLimit = undefined;
+      limitHeight(undefined);
+    };
+  });
 
   $effect(() => {
     if (block.kind !== 'table' || !expanded || !card) return;
@@ -126,7 +155,7 @@
       const left = handle.classList.contains('left');
       const top = handle.classList.contains('top');
       const width = left || handle.classList.contains('right') ? size.width : element.offsetWidth;
-      const height = top || handle.classList.contains('bottom') ? size.height : element.offsetHeight;
+      const height = top || handle.classList.contains('bottom') ? contentHeightLimit ?? size.height : element.offsetHeight;
       if (width === element.offsetWidth && height === element.offsetHeight) return;
       event.stopPropagation();
       data.resize?.({
@@ -167,13 +196,13 @@
 {/snippet}
 
 {#if expanded && !data.group?.focusExpanded}
-  <NodeResizer minWidth={260} minHeight={block.kind === 'chart' ? 228 : block.kind === 'group' ? 120 : 170}
-    maxWidth={tableResizeLimit?.width} maxHeight={tableResizeLimit?.height}
+  <NodeResizer minWidth={260} minHeight={block.kind === 'chart' ? 228 : block.kind === 'group' ? 120 : Math.min(170, contentHeightLimit ?? 170)}
+    maxWidth={resizeLimit?.width} maxHeight={resizeLimit?.height}
     lineClass="block-resize-edge" handleClass="block-resize-corner"
     shouldResize={(_event, bounds) => data.canResize?.(bounds) ?? true}
     onResizeStart={startResize} onResize={() => movedResize = true}
     onResizeEnd={(_event, bounds) => {
-      tableResizeLimit = undefined;
+      resizeLimit = undefined;
       if (movedResize) data.resize?.(bounds);
     }} />
 {/if}
@@ -220,7 +249,7 @@
     {#if block.kind === 'table'}
       {#if expanded && data.edit}
         <!-- svelte-ignore a11y_no_noninteractive_tabindex (The locked table must be reachable for keyboard scrolling.) -->
-        <div class="node-preview node-inline nodrag nopan nowheel" role={block.inlineLocked ? 'region' : 'group'}
+        <div bind:this={previewArea} class="node-preview node-inline nodrag nopan nowheel" role={block.inlineLocked ? 'region' : 'group'}
           aria-label={block.inlineLocked ? 'Full table data' : 'Edit ' + block.title} data-table-style={block.style} tabindex={block.inlineLocked ? 0 : undefined}
           onscroll={(event) => {
             const element = event.currentTarget;
@@ -284,7 +313,7 @@
         </div>
       </footer>
     {:else if block.kind === 'config'}
-      <div class="node-preview node-inline nodrag nopan nowheel">
+      <div bind:this={previewArea} class="node-preview node-inline nodrag nopan nowheel">
         {#if expanded && data.config}
           <ConfigEditor {block} change={data.config.patch} confirm={data.config.confirm} />
         {:else}

@@ -329,6 +329,35 @@ test('drags table handles inward one step at a time and keeps values, formulas a
   await expect(card.getByRole('columnheader', { name: 'D', exact: true })).toBeVisible();
 });
 
+test('fits short tables with footers and config blocks to their content height', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const tableDialog = page.getByRole('dialog', { name: 'Untitled table', exact: true });
+  const footerRows = tableDialog.getByRole('spinbutton', { name: 'Footer rows' });
+  await footerRows.fill('1');
+  await footerRows.press('Tab');
+  await tableDialog.getByRole('button', { name: 'Done', exact: true }).click();
+
+  const gapBelow = (title: string, selector: string) => canvasBlock(page, title).locator('.graph-card').evaluate((card: HTMLElement, contentSelector) => {
+    const content = card.querySelector(contentSelector)!.getBoundingClientRect();
+    const footer = card.querySelector('.node-footer')!.getBoundingClientRect();
+    const scale = card.getBoundingClientRect().height / card.offsetHeight;
+    return (footer.top - content.bottom) / scale;
+  }, selector);
+  await expect.poll(() => gapBelow('Untitled table', 'tfoot')).toBeLessThanOrEqual(2);
+  await expect.poll(() => canvasBlock(page, 'Untitled table').locator('.node-inline').evaluate((preview) =>
+    preview.scrollHeight - preview.clientHeight)).toBeLessThanOrEqual(1);
+  await canvasBlock(page, 'Untitled table').getByRole('button', { name: 'Lock inline editing', exact: true }).click();
+  await expect.poll(() => gapBelow('Untitled table', 'tfoot')).toBeLessThanOrEqual(2);
+
+  await page.getByRole('button', { name: 'Add config', exact: true }).click();
+  const configDialog = page.getByRole('dialog', { name: 'Create config', exact: true });
+  await configDialog.getByRole('textbox', { name: 'Name', exact: true }).fill('Short config');
+  await configDialog.getByRole('button', { name: 'Add field', exact: true }).click();
+  await configDialog.getByRole('button', { name: 'Create config', exact: true }).click();
+  await expect.poll(async () => Math.abs(await gapBelow('Short config', '.config-editor') - 8)).toBeLessThanOrEqual(1);
+});
+
 test('resizes an expanded table, scrolls to its last row and restores the size', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New workspace', exact: true }).click();
