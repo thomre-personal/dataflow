@@ -720,14 +720,18 @@
       const target = visibleBlockId(link.target);
       return source === target ? [] : [{ ...link, source, target }];
     });
+    const previousNodes = untrack(() => new Map(flowNodes.map((node) => [node.id, node])));
     flowNodes = workspace.blocks.filter((block) => center ? focusPositions.has(block.id) : visibleBlockId(block.id) === block.id)
       .sort((a, b) => depth(a) - depth(b)).map((block) => {
       const result = block.kind === 'chart' ? chartInput(block) : runtime[block.id] ?? {};
       const size = nodeSize(block, members);
       const expandable = block.kind !== 'sql' && block.kind !== 'switch';
       const parentId = !center || (block.id !== center.id && members.has(block.id)) ? block.parentId : undefined;
+      const hasInput = block.kind === 'group' && visibleLinks.some((link) => link.target === block.id);
+      const hasOutput = block.kind === 'group' && visibleLinks.some((link) => link.source === block.id);
       return {
         id: block.id, type: 'block', position: focusPositions.get(block.id) ?? { ...block.position }, parentId,
+        measured: previousNodes.get(block.id)?.measured,
         selected: block.id === selectedId,
         dragHandle: block.kind === 'group' ? '.group-card' : '.node-heading',
         ...size,
@@ -765,8 +769,8 @@
             count: childrenByParent.get(block.id)?.length ?? 0,
             focused: block.id === center?.id,
             focusExpanded: members.has(block.id),
-            hasInput: visibleLinks.some((link) => link.target === block.id),
-            hasOutput: visibleLinks.some((link) => link.source === block.id),
+            hasInput,
+            hasOutput,
           } : undefined,
           edit: block.kind === 'table' ? {
             workspace,

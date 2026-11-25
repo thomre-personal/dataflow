@@ -250,6 +250,7 @@ code { font-family: var(--mono); }
 .node-actions { display: flex; flex-shrink: 0; align-items: center; gap: 4px; }
 .node-actions button { display: inline-flex; align-items: center; gap: 3px; }
 .node-inline { padding: 8px; overflow: auto; overscroll-behavior: contain; }
+.graph-card.config .node-inline, .node-inline:has(.editor-grid tfoot) { scrollbar-gutter: stable; }
 .node-inline:has(.editor-grid tfoot) { padding-bottom: 0; }
 .table-editor-content { display: flow-root; }
 .node-inline .editor-grid { max-height: none; overflow: auto hidden; margin-bottom: 7px; }

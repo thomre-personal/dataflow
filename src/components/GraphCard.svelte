@@ -36,7 +36,7 @@
 
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { Handle, NodeResizer, Position, useConnection } from '@xyflow/svelte';
+  import { Handle, NodeResizeControl, Position, ResizeControlVariant, useConnection, useUpdateNodeInternals } from '@xyflow/svelte';
   import type { Node, NodeProps } from '@xyflow/svelte';
   import { Braces, ChartColumnIncreasing, CircleAlert, Equal, Folder, Lock, LockOpen, Maximize2, Minimize2, Pause, Plus, SlidersHorizontal, Table2, ToggleLeft } from 'lucide-svelte';
   import { countLabel, chartSeries, tablePreview } from '../lib/format';
@@ -50,6 +50,12 @@
 
   let { data, selected }: NodeProps<Node<CardData>> = $props();
   const connection = useConnection();
+  const updateNodeInternals = useUpdateNodeInternals();
+  let groupHasInput = $derived(data.group?.hasInput);
+  let groupHasOutput = $derived(data.group?.hasOutput);
+  $effect(() => {
+    if (groupHasInput !== undefined && groupHasOutput !== undefined) untrack(() => updateNodeInternals());
+  });
   const icons = { table: Table2, sql: Braces, chart: ChartColumnIncreasing, config: SlidersHorizontal, switch: ToggleLeft, group: Folder };
   const labels = { table: 'Table', sql: 'SQL query', chart: 'Chart', config: 'Config', switch: 'Switch', group: 'Group' };
   let block = $derived(data.block);
@@ -78,7 +84,13 @@
   let growth: { axis: GrowthAxis; pointer: number; start: number; step: number } | undefined;
   let skipGrowthClick = false;
   let movedResize = false;
+  let resizingCard = false;
+  let pendingContentHeight: number | undefined;
   let resizeLimit = $state<{ width?: number; height: number }>();
+  const resizeControls = [
+    ['left', 'horizontal'], ['right', 'horizontal'], ['top', 'vertical'], ['bottom', 'vertical'],
+    ['top-left', undefined], ['top-right', undefined], ['bottom-left', undefined], ['bottom-right', undefined],
+  ] as const;
   const sqlKeyword = /^(?:SELECT|FROM|WHERE|JOIN|AS|GROUP|BY|ORDER|LIMIT|SUM|WITH|AND|DESC|ASC|VALUES)$/i;
 
   function startGrowth(event: PointerEvent & { currentTarget: HTMLButtonElement }, axis: GrowthAxis) {
@@ -111,6 +123,7 @@
 
   function startResize() {
     movedResize = false;
+    resizingCard = true;
     resizeLimit = undefined;
     if (!card) return;
     if (block.kind === 'table') {
@@ -122,6 +135,17 @@
     }
   }
 
+  function finishResize(bounds: ResizeParams) {
+    resizingCard = false;
+    resizeLimit = undefined;
+    if (movedResize) data.resize?.(bounds);
+    if (pendingContentHeight !== undefined) {
+      contentHeightLimit = pendingContentHeight;
+      data.limitHeight?.(pendingContentHeight);
+      pendingContentHeight = undefined;
+    }
+  }
+
   $effect(() => {
     if (!fitsContentHeight || !expanded || !card || !previewArea) return;
     const element = card;
@@ -129,15 +153,19 @@
     const content = preview.querySelector<HTMLElement>('.table-editor-content, .config-editor');
     const limitHeight = untrack(() => data.limitHeight);
     if (!content || !limitHeight) return;
-    const observer = new ResizeObserver(() => {
-      const height = cardContentHeight(element, preview, content.offsetHeight);
+    const observer = new ResizeObserver(([entry]) => {
+      const height = cardContentHeight(element, preview, entry.contentRect.height);
+      if (resizingCard) {
+        pendingContentHeight = height;
+        return;
+      }
       contentHeightLimit = height;
       limitHeight(height);
     });
     observer.observe(content);
-    observer.observe(preview);
     return () => {
       observer.disconnect();
+      pendingContentHeight = undefined;
       contentHeightLimit = undefined;
       limitHeight(undefined);
     };
@@ -196,21 +224,22 @@
 {/snippet}
 
 {#if expanded && !data.group?.focusExpanded}
-  <NodeResizer minWidth={260} minHeight={block.kind === 'chart' ? 228 : block.kind === 'group' ? 120 : Math.min(170, contentHeightLimit ?? 170)}
-    maxWidth={resizeLimit?.width} maxHeight={resizeLimit?.height}
-    lineClass="block-resize-edge" handleClass="block-resize-corner"
-    shouldResize={(_event, bounds) => data.canResize?.(bounds) ?? true}
-    onResizeStart={startResize} onResize={() => movedResize = true}
-    onResizeEnd={(_event, bounds) => {
-      resizeLimit = undefined;
-      if (movedResize) data.resize?.(bounds);
-    }} />
+  {#each resizeControls as [position, direction] (position)}
+    <NodeResizeControl {position} resizeDirection={direction}
+      variant={direction ? ResizeControlVariant.Line : ResizeControlVariant.Handle}
+      class={direction ? 'block-resize-edge' : 'block-resize-corner'}
+      minWidth={260} minHeight={block.kind === 'chart' ? 228 : block.kind === 'group' ? 120 : Math.min(170, contentHeightLimit ?? 170)}
+      maxWidth={resizeLimit?.width} maxHeight={resizeLimit?.height}
+      shouldResize={(_event, bounds) => data.canResize?.(bounds) ?? true}
+      onResizeStart={startResize} onResize={() => movedResize = true}
+      onResizeEnd={(_event, bounds) => finishResize(bounds)} />
+  {/each}
 {/if}
 
 {#if block.kind === 'group'}
   <div class="group-card" class:selected class:focused={data.group?.focused} class:collapsed={!expanded} class:drop-target={data.group?.drop.target === block.id}>
-    {#if data.group?.hasInput}<Handle type="target" position={Position.Left} isConnectable={false} class="group-proxy-port" />{/if}
-    {#if data.group?.hasOutput}<Handle type="source" position={Position.Right} isConnectable={false} class="group-proxy-port" />{/if}
+    {#if groupHasInput}<Handle type="target" position={Position.Left} isConnectable={false} class="group-proxy-port" />{/if}
+    {#if groupHasOutput}<Handle type="source" position={Position.Right} isConnectable={false} class="group-proxy-port" />{/if}
     <header class="group-title">
       <Folder size={15} />
       <div><h3 aria-label={block.title}><BlockName title={block.title} rename={data.rename} /></h3>

@@ -331,6 +331,9 @@ test('drags table handles inward one step at a time and keeps values, formulas a
 
 test('fits short tables with footers and config blocks to their content height', async ({ page }) => {
   await page.goto('/');
+  const connection = page.getByRole('group', { name: 'Connection from Transactions to Monthly totals', exact: true })
+    .locator('.svelte-flow__edge-path');
+  await expect(connection).toBeVisible();
   await page.getByRole('button', { name: 'Add table', exact: true }).click();
   const tableDialog = page.getByRole('dialog', { name: 'Untitled table', exact: true });
   const footerRows = tableDialog.getByRole('spinbutton', { name: 'Footer rows' });
@@ -341,12 +344,22 @@ test('fits short tables with footers and config blocks to their content height',
   const gapBelow = (title: string, selector: string) => canvasBlock(page, title).locator('.graph-card').evaluate((card: HTMLElement, contentSelector) => {
     const content = card.querySelector(contentSelector)!.getBoundingClientRect();
     const footer = card.querySelector('.node-footer')!.getBoundingClientRect();
+    const preview = card.querySelector<HTMLElement>('.node-inline')!;
     const scale = card.getBoundingClientRect().height / card.offsetHeight;
-    return (footer.top - content.bottom) / scale;
+    return (footer.top - content.bottom) / scale - (preview.offsetHeight - preview.clientHeight);
   }, selector);
   await expect.poll(() => gapBelow('Untitled table', 'tfoot')).toBeLessThanOrEqual(2);
   await expect.poll(() => canvasBlock(page, 'Untitled table').locator('.node-inline').evaluate((preview) =>
     preview.scrollHeight - preview.clientHeight)).toBeLessThanOrEqual(1);
+  const tableHeights = () => canvasBlock(page, 'Untitled table').locator('.graph-card').evaluate(async (element: HTMLElement) => {
+    const samples = new Set<number>();
+    for (let frame = 0; frame < 20; frame++) {
+      await new Promise(requestAnimationFrame);
+      samples.add(element.offsetHeight);
+    }
+    return [...samples];
+  });
+  expect(await tableHeights()).toHaveLength(1);
   await canvasBlock(page, 'Untitled table').getByRole('button', { name: 'Lock inline editing', exact: true }).click();
   await expect.poll(() => gapBelow('Untitled table', 'tfoot')).toBeLessThanOrEqual(2);
 
@@ -356,6 +369,14 @@ test('fits short tables with footers and config blocks to their content height',
   await configDialog.getByRole('button', { name: 'Add field', exact: true }).click();
   await configDialog.getByRole('button', { name: 'Create config', exact: true }).click();
   await expect.poll(async () => Math.abs(await gapBelow('Short config', '.config-editor') - 8)).toBeLessThanOrEqual(1);
+  await waitForCanvasFit(page);
+  const config = canvasBlock(page, 'Short config');
+  const before = await cardSize(config);
+  await dragResize(page, config.locator('.block-resize-edge.bottom'), 60, -54);
+  await expect.poll(async () => (await cardSize(config)).height).toBeLessThan(before.height);
+  expect((await cardSize(config)).width).toBe(before.width);
+  await expect(connection).toBeVisible();
+  expect(await tableHeights()).toHaveLength(1);
 });
 
 test('resizes an expanded table, scrolls to its last row and restores the size', async ({ page }) => {

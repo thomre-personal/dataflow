@@ -1,6 +1,9 @@
 export function cardContentHeight(card: HTMLElement, preview: HTMLElement, contentHeight: number) {
   const style = getComputedStyle(preview);
-  return contentHeight + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + card.offsetHeight - preview.clientHeight;
+  const chrome = ['.node-heading', '.node-footer'].reduce((height, selector) =>
+    height + (card.querySelector<HTMLElement>(selector)?.offsetHeight ?? 0), card.offsetHeight - card.clientHeight);
+  return Math.ceil(contentHeight + chrome + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+    + preview.offsetHeight - preview.clientHeight);
 }
 
 export function tableCardContentSize(card: HTMLElement, gridWidth?: number, rowDelta = 0) {
