@@ -263,6 +263,18 @@ code { font-family: var(--mono); }
 .modal-body > .config-editor { margin-top: 12px; }
 .config-global { margin-top: 10px; }
 .config-field { padding: 8px; border: 1px solid var(--divider); border-radius: 6px; }
+.config-grid { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 11px; }
+.config-grid-name { width: 36%; }
+.config-grid-type { width: 23%; }
+.config-grid th, .config-grid td { padding: 5px 6px; border: 1px solid var(--divider); text-align: left; overflow-wrap: anywhere; }
+.config-grid th { background: var(--raised); font-weight: 650; }
+.config-type-label { color: var(--muted); }
+.config-grid .field input { margin: 0; }
+.config-grid .config-slider { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; }
+.config-grid .config-slider input { grid-area: 1 / 1; }
+.config-grid .config-slider-value { grid-area: 1 / 2; font-variant-numeric: tabular-nums; }
+.config-grid .config-options { min-width: 0; }
+.config-grid .checkbox { padding: 0; }
 .config-actions { display: flex; flex-wrap: wrap; align-items: end; gap: 6px; }
 .config-actions .field { flex: 1; min-width: 70px; margin: 0; }
 .config-slider { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; }

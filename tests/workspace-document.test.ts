@@ -22,6 +22,7 @@ test('workspace files round-trip canvas state and preserve stable formula refere
   config.fields = [{ id: 'rate', name: 'Rate', type: 'slider', min: 0, max: 1, step: 0.05, value: 0.15 }];
   config.presets = [{ id: 'baseline', name: 'Baseline', values: { rate: 0.15 } }];
   config.global = true;
+  config.showDataTypes = true;
   const control = createBlock('switch', { x: 0, y: 0 });
   control.options[0].presets = [{ configId: config.id, presetId: 'baseline' }];
   control.active = 0;

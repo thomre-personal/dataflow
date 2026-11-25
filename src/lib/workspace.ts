@@ -65,7 +65,13 @@ export type ConfigField = ConfigFieldBase & (
   | { type: 'multi'; value: string[]; options: string[]; dataType?: ColumnType }
 );
 export type ConfigPreset = { id: string; name: string; values: Record<string, ConfigValue> };
-export type ConfigBlock = BlockBase & ExpandableBlock & { kind: 'config'; fields: ConfigField[]; presets: ConfigPreset[]; global?: boolean };
+export type ConfigBlock = BlockBase & ExpandableBlock & {
+  kind: 'config';
+  fields: ConfigField[];
+  presets: ConfigPreset[];
+  global?: boolean;
+  showDataTypes?: boolean;
+};
 export type SwitchPreset = { configId: string; presetId: string };
 export type SwitchOption = { label: string; presets: SwitchPreset[] };
 export type SwitchBlock = BlockBase & { kind: 'switch'; options: [SwitchOption, SwitchOption]; active?: 0 | 1 };

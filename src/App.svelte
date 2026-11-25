@@ -1700,6 +1700,8 @@
         onchange={(event) => { if (!pendingConfig) event.currentTarget.value = renameBlock(block.id, event.currentTarget.value); }} /></label>
       <label class="checkbox config-global"><input type="checkbox" checked={block.global ?? false}
         onchange={(event) => patchConfig(block, { global: event.currentTarget.checked })} />Global config</label>
+      <label class="checkbox"><input type="checkbox" checked={block.showDataTypes ?? false}
+        onchange={(event) => patchConfig(block, { showDataTypes: event.currentTarget.checked })} />Show data types on canvas</label>
       <ConfigEditor {block} change={(patch) => patchConfig(block, patch)} confirm={(request) => confirmation = request} manage />
     {/snippet}
     {#snippet footer()}

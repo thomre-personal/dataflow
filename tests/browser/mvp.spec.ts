@@ -524,6 +524,7 @@ test('stores config presets and supplies live values to table formulas and SQL',
   await page.getByRole('button', { name: 'Add config', exact: true }).click();
   const config = page.getByRole('dialog', { name: 'Create config', exact: true });
   await config.getByRole('textbox', { name: 'Name', exact: true }).fill('MeineConfig');
+  await expect(config.getByRole('checkbox', { name: 'Show data types on canvas' })).not.toBeChecked();
   await expect(config.getByRole('region', { name: 'Presets', exact: true })).toHaveCount(0);
   const field = (name: string) => config.getByRole('region', { name, exact: true });
   let index = 0;
@@ -564,6 +565,9 @@ test('stores config presets and supplies live values to table formulas and SQL',
   for (const option of ['EU', 'US']) await field('Regions').getByRole('checkbox', { name: option }).check();
   await create.click();
   const configCard = canvasBlock(page, 'MeineConfig');
+  const grid = configCard.getByRole('table', { name: 'Config fields' });
+  await expect(grid.getByRole('rowheader')).toHaveText(['SoliFactor', 'Enabled', 'Note', 'Regions']);
+  await expect(grid.getByRole('row').first().getByRole('cell')).toHaveCount(1);
   const cardSlider = configCard.getByRole('slider', { name: 'SoliFactor' });
   await configCard.getByRole('textbox', { name: 'Preset name' }).fill('Baseline');
   await configCard.getByRole('button', { name: 'Save preset' }).click();
@@ -608,6 +612,21 @@ test('stores config presets and supplies live values to table formulas and SQL',
   await confirmation.getByRole('button', { name: 'Delete preset', exact: true }).click();
   await expect(configCard.getByRole('combobox', { name: 'Preset', exact: true })).toHaveCount(0);
   await expect(output).toHaveValue('12');
+
+  await configCard.getByRole('button', { name: 'Open config', exact: true }).click();
+  const settings = page.getByRole('dialog', { name: 'MeineConfig', exact: true });
+  await settings.getByRole('checkbox', { name: 'Show data types on canvas' }).check();
+  await settings.getByRole('button', { name: 'Done', exact: true }).click();
+  const dataTypes = grid.locator('tr > td:nth-child(2)');
+  await expect(dataTypes).toHaveText(['Number', 'Boolean', 'Text', 'Auto']);
+  await expect(grid.getByRole('row').first().getByRole('cell').last().getByRole('slider')).toHaveValue('0.1');
+  await expect(page.getByText('Saved locally', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(dataTypes).toHaveText(['Number', 'Boolean', 'Text', 'Auto']);
+  await configCard.getByRole('button', { name: 'Open config', exact: true }).click();
+  await settings.getByRole('checkbox', { name: 'Show data types on canvas' }).uncheck();
+  await settings.getByRole('button', { name: 'Done', exact: true }).click();
+  await expect(grid.getByRole('row').first().getByRole('cell')).toHaveCount(1);
 });
 
 test('uses global configs without connections and inserts a clicked cell at the formula cursor', async ({ page }) => {

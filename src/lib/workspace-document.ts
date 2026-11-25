@@ -131,6 +131,7 @@ function block(value: unknown): value is Block {
     case 'group': return true;
     case 'config': return objectsWithIds(value.fields, configField) && objectsWithIds(value.presets, configPreset)
       && (value.global === undefined || typeof value.global === 'boolean')
+      && (value.showDataTypes === undefined || typeof value.showDataTypes === 'boolean')
       && new Set(value.fields.map((field) => field.name.toLowerCase())).size === value.fields.length;
     case 'switch': return (value.active === undefined || value.active === 0 || value.active === 1)
       && Array.isArray(value.options) && value.options.length === 2 && value.options.every((option) => {

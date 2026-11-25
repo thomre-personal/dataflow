@@ -100,6 +100,30 @@
   }
 </script>
 
+{#snippet fieldControl(field: ConfigField, issueId: string | undefined)}
+  {#if field.type === 'input'}
+    <label class="field"><span class:sr-only={!manage}>{field.name}</span><input value={field.value} aria-invalid={Boolean(issueId)} aria-describedby={issueId}
+      onchange={(event) => setValue(field, event.currentTarget.value)} /></label>
+  {:else if field.type === 'slider'}
+    <label class="field config-slider" for={editorId + '-' + field.id}>
+      {#if manage}<span>{field.name}</span>{/if}
+      <span class="config-slider-value">{field.value}</span>
+      <input id={editorId + '-' + field.id} aria-label={field.name} type="range" min={field.min} max={field.max}
+        step={field.step} value={field.value} onchange={(event) => setValue(field, event.currentTarget.valueAsNumber)} />
+    </label>
+  {:else if field.type === 'toggle'}
+    <label class="checkbox"><input type="checkbox" checked={field.value} onchange={(event) => setValue(field, event.currentTarget.checked)} />
+      <span class:sr-only={!manage}>{field.name}</span></label>
+  {:else}
+    <fieldset class="config-options"><legend class="field" class:sr-only={!manage}>{field.name}</legend>
+      {#each field.options as option (option)}
+        <label class="checkbox"><input type="checkbox" checked={field.value.includes(option)} onchange={(event) =>
+          setValue(field, event.currentTarget.checked ? [...field.value, option] : field.value.filter((value) => value !== option))} />{option}</label>
+      {/each}
+    </fieldset>
+  {/if}
+{/snippet}
+
 <div class="config-editor">
   {#if !manage && block.fields.length}
     <section class="config-presets" aria-label="Presets">
@@ -120,11 +144,11 @@
     </section>
   {/if}
   {#if error}<p class="inline-error" role="alert">{error}</p>{/if}
-  {#each block.fields as field (field.id)}
-    {@const issue = issues.get(field.id)}
-    {@const issueId = issue ? editorId + '-error-' + field.id : undefined}
-    <section class="config-field" aria-label={field.name}>
-      {#if manage}
+  {#if manage}
+    {#each block.fields as field (field.id)}
+      {@const issue = issues.get(field.id)}
+      {@const issueId = issue ? editorId + '-error-' + field.id : undefined}
+      <section class="config-field" aria-label={field.name}>
         <div class="config-actions">
           <label class="field">Field name<input value={field.name} maxlength="80" onchange={(event) => nameField(field, event.currentTarget)} /></label>
           <label class="field">Control<select value={field.type} onchange={(event) => update(createConfigField(field.id, field.name, event.currentTarget.value as ConfigField['type']))}>
@@ -151,32 +175,34 @@
             update({ ...field, options, value: field.value.filter((value) => options.includes(value)) });
           }}></textarea></label>
         {/if}
-      {/if}
-      {#if field.type === 'input'}
-        <label class="field">{field.name}<input value={field.value} aria-invalid={Boolean(issue)} aria-describedby={issueId}
-          onchange={(event) => setValue(field, event.currentTarget.value)} /></label>
-      {:else if field.type === 'slider'}
-        <label class="field config-slider" for={editorId + '-' + field.id}>{field.name}
-          <span>{field.value}</span>
-          <input id={editorId + '-' + field.id} aria-label={field.name} type="range" min={field.min} max={field.max}
-            step={field.step} value={field.value} onchange={(event) => setValue(field, event.currentTarget.valueAsNumber)} />
-        </label>
-      {:else if field.type === 'toggle'}
-        <label class="checkbox"><input type="checkbox" checked={field.value} onchange={(event) => setValue(field, event.currentTarget.checked)} />{field.name}</label>
-      {:else}
-        <fieldset class="config-options"><legend class="field">{field.name}</legend>
-          {#each field.options as option (option)}
-            <label class="checkbox"><input type="checkbox" checked={field.value.includes(option)} onchange={(event) =>
-              setValue(field, event.currentTarget.checked ? [...field.value, option] : field.value.filter((value) => value !== option))} />{option}</label>
-          {/each}
-        </fieldset>
-      {/if}
-      {#if issue}<p id={issueId} class="inline-error" role="alert">{issue}</p>{/if}
-    </section>
-  {/each}
-  {#if manage}
+        {@render fieldControl(field, issueId)}
+        {#if issue}<p id={issueId} class="inline-error" role="alert">{issue}</p>{/if}
+      </section>
+    {/each}
     <button type="button" class="button secondary" onclick={addField}><Plus size={14} /> Add field</button>
-  {:else if !block.fields.length}
+  {:else if block.fields.length}
+    <table class="config-grid" aria-label="Config fields">
+      <colgroup>
+        <col class="config-grid-name" />
+        {#if block.showDataTypes}<col class="config-grid-type" />{/if}
+        <col />
+      </colgroup>
+      <tbody>
+        {#each block.fields as field (field.id)}
+          {@const issue = issues.get(field.id)}
+          {@const issueId = issue ? editorId + '-error-' + field.id : undefined}
+          <tr>
+            <th scope="row">{field.name}</th>
+            {#if block.showDataTypes}<td class="config-type-label">{configDataTypes[configFieldDataType(field)]}</td>{/if}
+            <td>
+              {@render fieldControl(field, issueId)}
+              {#if issue}<p id={issueId} class="inline-error" role="alert">{issue}</p>{/if}
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  {:else}
     <p class="helper-text">Open the config to add fields.</p>
   {/if}
 </div>
