@@ -130,6 +130,7 @@ function block(value: unknown): value is Block {
   switch (value.kind) {
     case 'group': return true;
     case 'config': return objectsWithIds(value.fields, configField) && objectsWithIds(value.presets, configPreset)
+      && (value.activePresetId === undefined || id(value.activePresetId))
       && (value.global === undefined || typeof value.global === 'boolean')
       && (value.showDataTypes === undefined || typeof value.showDataTypes === 'boolean')
       && new Set(value.fields.map((field) => field.name.toLowerCase())).size === value.fields.length;

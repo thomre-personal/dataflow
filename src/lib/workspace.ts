@@ -69,6 +69,7 @@ export type ConfigBlock = BlockBase & ExpandableBlock & {
   kind: 'config';
   fields: ConfigField[];
   presets: ConfigPreset[];
+  activePresetId?: string;
   global?: boolean;
   showDataTypes?: boolean;
 };

@@ -260,7 +260,9 @@ code { font-family: var(--mono); }
   box-shadow: var(--shadow); cursor: ew-resize; touch-action: none; }
 .table-grow-row { top: auto; right: auto; bottom: -29px; left: 11px; cursor: ns-resize; }
 .table-grow:hover { background: var(--accent-soft); }
-.config-editor, .config-presets, .config-field { display: grid; gap: 8px; }
+.config-editor, .config-field { display: grid; gap: 8px; }
+.config-presets { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, auto); align-items: center; gap: 5px; }
+.config-presets .inline-select { min-width: 0; margin: 0; }
 .modal-body > .config-editor { margin-top: 12px; }
 .config-global { margin-top: 10px; }
 .config-field { padding: 8px; border: 1px solid var(--divider); border-radius: 6px; }

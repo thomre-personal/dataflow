@@ -104,6 +104,15 @@ function canvasBlock(page: Page, title: string) {
   return page.locator('.svelte-flow__node').filter({ has: page.getByRole('heading', { name: title, exact: true }) });
 }
 
+async function createConfigPreset(page: Page, card: Locator, name: string) {
+  await card.getByRole('combobox', { name: 'Preset', exact: true }).selectOption({ label: 'New preset…' });
+  const dialog = page.getByRole('dialog', { name: 'New preset', exact: true });
+  const input = dialog.getByRole('textbox', { name: 'Preset name', exact: true });
+  await input.fill(name);
+  await input.press('Enter');
+  await expect(dialog).toHaveCount(0);
+}
+
 function columnHeader(table: Locator, name: string) {
   return table.getByRole('button', { name: 'Select column ' + name, exact: true });
 }
@@ -639,8 +648,10 @@ test('stores config presets and supplies live values to table formulas and SQL',
   await expect(grid.getByRole('rowheader')).toHaveText(['SoliFactor', 'Enabled', 'Note', 'Regions']);
   await expect(grid.getByRole('row').first().getByRole('cell')).toHaveCount(1);
   const cardSlider = configCard.getByRole('slider', { name: 'SoliFactor' });
-  await configCard.getByRole('textbox', { name: 'Preset name' }).fill('Baseline');
-  await configCard.getByRole('button', { name: 'Save preset' }).click();
+  const presetSelector = configCard.getByRole('combobox', { name: 'Preset', exact: true });
+  const savePreset = configCard.getByRole('button', { name: 'Save preset', exact: true });
+  await expect(savePreset).toBeDisabled();
+  await createConfigPreset(page, configCard, 'Baseline');
   await cardSlider.press('Home');
   await configCard.getByRole('checkbox', { name: 'Enabled' }).uncheck();
   await configCard.getByRole('checkbox', { name: 'US', exact: true }).uncheck();
@@ -648,7 +659,14 @@ test('stores config presets and supplies live values to table formulas and SQL',
   await expect(cardSlider).toHaveValue('0.1');
   await expect(configCard.getByRole('checkbox', { name: 'Enabled' })).toBeChecked();
   await expect(configCard.getByRole('checkbox', { name: 'US', exact: true })).toBeChecked();
-  await expect(configCard.getByRole('textbox', { name: 'Note', exact: true })).toHaveValue('Baseline');
+  const cardNote = configCard.getByRole('textbox', { name: 'Note', exact: true });
+  await expect(cardNote).toHaveValue('Baseline');
+  await cardNote.fill('Updated baseline');
+  await savePreset.click();
+  await cardNote.fill('Unsaved change');
+  await configCard.getByRole('button', { name: 'Load preset' }).click();
+  await expect(cardNote).toHaveValue('Updated baseline');
+  await expect(presetSelector.getByRole('option', { name: 'Baseline', exact: true })).toHaveCount(1);
 
   await page.getByRole('button', { name: 'Add table', exact: true }).click();
   const table = page.getByRole('dialog', { name: 'Untitled table', exact: true });
@@ -674,13 +692,14 @@ test('stores config presets and supplies live values to table formulas and SQL',
   await expect(inspector.getByRole('cell', { name: '0.05', exact: true })).toBeVisible();
   const output = canvasBlock(page, 'Untitled table').getByRole('textbox', { name: 'B row 1', exact: true });
   await expect(output).toHaveValue('6');
-  await configCard.getByRole('combobox', { name: 'Preset', exact: true }).selectOption({ label: 'Baseline' });
+  await presetSelector.selectOption({ label: 'Baseline' });
   await configCard.getByRole('button', { name: 'Load preset', exact: true }).click();
   await expect(cardSlider).toHaveValue('0.1');
   await configCard.getByRole('button', { name: 'Delete preset', exact: true }).click();
   const confirmation = page.getByRole('dialog', { name: 'Delete preset?', exact: true });
   await confirmation.getByRole('button', { name: 'Delete preset', exact: true }).click();
-  await expect(configCard.getByRole('combobox', { name: 'Preset', exact: true })).toHaveCount(0);
+  await expect(presetSelector.getByRole('option', { name: 'Baseline', exact: true })).toHaveCount(0);
+  await expect(savePreset).toBeDisabled();
   await expect(output).toHaveValue('12');
 
   await configCard.getByRole('button', { name: 'Open config', exact: true }).click();
@@ -767,9 +786,15 @@ test('switches named presets for connected and global configs, including with no
     for (const [label, text] of [['Low', low], ['High', high]]) {
       await value.fill(text);
       await value.press('Tab');
-      await card.getByRole('textbox', { name: 'Preset name', exact: true }).fill(label);
-      await card.getByRole('button', { name: 'Save preset', exact: true }).click();
+      await createConfigPreset(page, card, label);
     }
+    const selector = card.getByRole('combobox', { name: 'Preset', exact: true });
+    const save = card.getByRole('button', { name: 'Save preset', exact: true });
+    await selector.selectOption({ label: 'Low' });
+    await expect(save).toBeDisabled();
+    await expect(value).toHaveValue(high);
+    await selector.selectOption({ label: 'High' });
+    await expect(save).toBeEnabled();
     return value;
   }
   const global = await setupConfig('GlobalTax', true, '1', '2');

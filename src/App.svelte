@@ -992,7 +992,7 @@
       if (!config || !preset) return;
       const result = loadConfigPreset(config, preset);
       if (result.message !== undefined) { message('Could not switch presets. ' + result.message); return; }
-      updates.set(configId, { ...config, fields: result.fields });
+      updates.set(configId, { ...config, fields: result.fields, activePresetId: preset.id });
     }
     replaceWorkspace({ ...workspace, blocks: workspace.blocks.map((item) =>
       item.id === id ? { ...block, active } : updates.get(item.id) ?? item) });

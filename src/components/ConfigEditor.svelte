@@ -4,21 +4,26 @@
   import { newId } from '../lib/workspace';
   import type { ColumnType, ConfigBlock, ConfigField, ConfigValue } from '../lib/workspace';
   import type { Confirmation } from './ConfirmDialog.svelte';
+  import Modal from './Modal.svelte';
 
   let { block, change, confirm, manage = false }: {
     block: ConfigBlock;
-    change: (patch: Pick<Partial<ConfigBlock>, 'fields' | 'presets'>) => void;
+    change: (patch: Pick<Partial<ConfigBlock>, 'fields' | 'presets' | 'activePresetId'>) => void;
     confirm: (request: Confirmation) => void;
     manage?: boolean;
   } = $props();
 
   let presetName = $state('');
-  let presetId = $state('');
+  let presetSelection = $state<string>();
+  let creatingPreset = $state(false);
+  let presetError = $state('');
   let error = $state('');
-  let preset = $derived(block.presets.find(({ id }) => id === presetId));
+  let preset = $derived(block.presets.find(({ id }) => id === (presetSelection ?? block.activePresetId)));
   let issues = $derived(new Map(block.fields.map((field) => [field.id, evaluateConfigField(field).message])));
   let hasIssues = $derived([...issues.values()].some(Boolean));
+  let canSavePreset = $derived(Boolean(preset && preset.id === block.activePresetId && !hasIssues));
   const editorId = $props.id();
+  const presetFormId = editorId + '-new-preset';
 
   function update(field: ConfigField) {
     error = '';
@@ -52,19 +57,42 @@
     update(applyConfigValue(next, field.value));
   }
 
-  function savePreset(event: SubmitEvent) {
+  function selectPreset(select: HTMLSelectElement) {
+    if (select.selectedOptions[0]?.hasAttribute('data-new-preset')) {
+      select.value = preset?.id ?? '';
+      presetName = '';
+      presetError = '';
+      creatingPreset = true;
+    } else {
+      presetSelection = select.value;
+      error = '';
+    }
+  }
+
+  function presetValues() {
+    return Object.fromEntries(block.fields.map(({ id, value }) => [id, Array.isArray(value) ? [...value] : value]));
+  }
+
+  function createPreset(event: SubmitEvent) {
     event.preventDefault();
     const name = presetName.trim();
     if (!name || !block.fields.length || hasIssues) return;
     if (block.presets.some((item) => item.name.toLowerCase() === name.toLowerCase())) {
-      error = 'A preset with that name already exists.';
+      presetError = 'A preset with that name already exists.';
       return;
     }
-    const values = Object.fromEntries(block.fields.map(({ id, value }) => [id, Array.isArray(value) ? [...value] : value]));
     const id = newId();
-    change({ presets: [...block.presets, { id, name, values }] });
-    presetId = id;
-    presetName = '';
+    change({ presets: [...block.presets, { id, name, values: presetValues() }], activePresetId: id });
+    presetSelection = undefined;
+    creatingPreset = false;
+    error = '';
+  }
+
+  function savePreset() {
+    if (!canSavePreset || !preset) return;
+    const { id } = preset;
+    const values = presetValues();
+    change({ presets: block.presets.map((item) => item.id === id ? { ...item, values } : item) });
     error = '';
   }
 
@@ -76,7 +104,8 @@
       return;
     }
     error = '';
-    change({ fields: result.fields });
+    change({ fields: result.fields, activePresetId: preset.id });
+    presetSelection = undefined;
   }
 
   function removeField(field: ConfigField) {
@@ -91,7 +120,11 @@
     const { id, name } = preset;
     confirm({
       title: 'Delete preset?', message: 'Delete “' + name + '” from this config?', label: 'Delete preset',
-      accept: () => { change({ presets: block.presets.filter((item) => item.id !== id) }); presetId = ''; },
+      accept: () => {
+        change({ presets: block.presets.filter((item) => item.id !== id),
+          activePresetId: block.activePresetId === id ? undefined : block.activePresetId });
+        presetSelection = undefined;
+      },
     });
   }
 
@@ -127,20 +160,14 @@
 <div class="config-editor">
   {#if !manage && block.fields.length}
     <section class="config-presets" aria-label="Presets">
-      {#if block.presets.length}
-        <div class="config-actions">
-          <label class="field">Preset<select bind:value={presetId}>
-            <option value="">Choose a preset</option>
-            {#each block.presets as item (item.id)}<option value={item.id}>{item.name}</option>{/each}
-          </select></label>
-          <button type="button" class="button secondary" disabled={!preset} onclick={loadPreset}>Load preset</button>
-          <button type="button" class="icon-button delete-block" aria-label="Delete preset" disabled={!preset} onclick={removePreset}><Trash2 size={14} /></button>
-        </div>
-      {/if}
-      <form class="config-actions" onsubmit={savePreset}>
-        <label class="field">Preset name<input maxlength="100" bind:value={presetName} /></label>
-        <button class="button secondary" disabled={!presetName.trim() || hasIssues}>Save preset</button>
-      </form>
+      <select class="inline-select" aria-label="Preset" value={preset?.id ?? ''} onchange={(event) => selectPreset(event.currentTarget)}>
+        <option value="" disabled>Choose a preset</option>
+        {#each block.presets as item (item.id)}<option value={item.id}>{item.name}</option>{/each}
+        <option value={presetFormId} data-new-preset disabled={hasIssues}>New preset…</option>
+      </select>
+      <button type="button" class="button secondary" aria-label="Load preset" disabled={!preset} onclick={loadPreset}>Load</button>
+      <button type="button" class="button secondary" aria-label="Save preset" disabled={!canSavePreset} onclick={savePreset}>Save</button>
+      <button type="button" class="icon-button delete-block" aria-label="Delete preset" disabled={!preset} onclick={removePreset}><Trash2 size={14} /></button>
     </section>
   {/if}
   {#if error}<p class="inline-error" role="alert">{error}</p>{/if}
@@ -206,3 +233,20 @@
     <p class="helper-text">Open the config to add fields.</p>
   {/if}
 </div>
+
+{#if creatingPreset}
+  {#snippet presetForm()}
+    <form id={presetFormId} onsubmit={createPreset}>
+      <label class="field">Preset name
+        <!-- svelte-ignore a11y_autofocus (Naming the preset is the purpose of this dialog.) -->
+        <input maxlength="100" bind:value={presetName} autofocus />
+      </label>
+      {#if presetError}<p class="inline-error" role="alert">{presetError}</p>{/if}
+    </form>
+  {/snippet}
+  {#snippet presetActions()}
+    <button type="button" class="button secondary" onclick={() => creatingPreset = false}>Cancel</button>
+    <button type="submit" class="button primary" form={presetFormId} disabled={!presetName.trim() || hasIssues}>Create preset</button>
+  {/snippet}
+  <Modal title="New preset" close={() => creatingPreset = false} children={presetForm} footer={presetActions} />
+{/if}
