@@ -1,6 +1,6 @@
 <script lang="ts">
   import { CircleAlert, Plus, Trash2 } from 'lucide-svelte';
-  import { tick } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
   import { columnLetter, dataRowCount, defaultTableColumnWidth, newId, rowNumber, tableInputs } from '../lib/workspace';
   import { countLabel } from '../lib/format';
   import { copyGrid, MAX_COLUMNS, MAX_ROWS, parseDelimited, readCopiedGrid } from '../lib/clipboard';
@@ -16,11 +16,12 @@
   import FormulaSuggestions from './FormulaSuggestions.svelte';
   import Modal from './Modal.svelte';
 
-  let { block, workspace, hotkeys, change, error, activeCell, selectCell, inline = false, locked = false }: {
+  let { block, workspace, hotkeys, change, previewWidth, error, activeCell, selectCell, inline = false, locked = false }: {
     block: TableBlock;
     workspace: Workspace;
     hotkeys: Hotkeys;
     change: (patch: Partial<TableBlock>, continueGrowth?: boolean) => void;
+    previewWidth?: (width: number | undefined) => void;
     error: (message: string) => void;
     activeCell?: CellSelection;
     selectCell: (cell: CellSelection, extend?: boolean) => void;
@@ -54,8 +55,13 @@
   const rowActionsWidth = 30;
   let table = $state<HTMLTableElement>();
   let cellDrag: { pointer: number; end: HTMLTableCellElement; editOnRelease: boolean } | undefined;
-  type Resize = { id: string; pointer: number; start: number; scale: number; initial: number; size: number; min: number; widths?: Record<string, number> };
+  type Resize = {
+    id: string; pointer: number; start: number; scale: number; initial: number; size: number; min: number;
+    widths?: Record<string, number>;
+    card?: { width: number; height: number; requiredWidth: number };
+  };
   let resizing = $state<Resize>();
+  onDestroy(() => { if (resizing?.card) previewWidth?.(undefined); });
   const defaultAddedRowHeight = 33;
   type HandleResize = {
     axis: 'row' | 'column';
@@ -75,8 +81,7 @@
   let handleResize: HandleResize | undefined;
   let columnWidths = $derived(resizing?.widths && resizing.size !== resizing.initial
     ? { ...resizing.widths, [resizing.id]: resizing.size } : block.columnWidths);
-  let gridWidth = $derived(rowIndexWidth + rowActionsWidth + block.columns.reduce((width, column) =>
-    width + (columnWidths?.[column.id] ?? defaultTableColumnWidth), 0));
+  let gridWidth = $derived(columnGridWidth(columnWidths));
 
   const editorId = $props.id();
   const suggestionsId = editorId + '-formulas';
@@ -89,6 +94,17 @@
       const header = headers?.[index + 1];
       return [id, header ? parseFloat(getComputedStyle(header).width) : defaultTableColumnWidth];
     }));
+  }
+
+  function columnGridWidth(widths?: Record<string, number>) {
+    return rowIndexWidth + rowActionsWidth + block.columns.reduce((sum, { id }) => sum + (widths?.[id] ?? defaultTableColumnWidth), 0);
+  }
+
+  function growingCardWidth({ card, size, initial }: Resize) {
+    if (card && size > initial) {
+      const required = Math.ceil(card.requiredWidth + size - initial);
+      if (required > card.width) return required;
+    }
   }
 
   function rowHeight(id: string) {
@@ -104,7 +120,9 @@
     const scale = bounds.width / table.offsetWidth;
     const widths = column ? renderedColumnWidths() : undefined;
     const initial = widths?.[id] ?? row.offsetHeight;
-    let min = defaultTableColumnWidth;
+    const card = widths && inline ? table.closest<HTMLElement>('.graph-card.table') : undefined;
+    const grid = card ? table.parentElement : undefined;
+    let min = Math.min(defaultTableColumnWidth, initial);
     if (!column) {
       const height = row.style.height;
       row.style.height = '';
@@ -117,6 +135,8 @@
     resizing = {
       id, pointer: event.pointerId, start: column ? event.clientX : event.clientY,
       scale, initial, size: initial, min, widths,
+      card: card && grid ? { width: card.offsetWidth, height: card.offsetHeight,
+        requiredWidth: columnGridWidth(widths) + card.offsetWidth - grid.clientWidth } : undefined,
     };
   }
 
@@ -124,24 +144,29 @@
     if (resizing?.pointer !== event.pointerId) return;
     const position = resizing.widths ? event.clientX : event.clientY;
     resizing.size = Math.max(resizing.min, resizing.initial + Math.round((position - resizing.start) / resizing.scale));
+    if (resizing.card) previewWidth?.(growingCardWidth(resizing));
   }
 
   function endResize(event: PointerEvent, save = false) {
     if (resizing?.pointer !== event.pointerId) return;
     if (save) moveResize(event);
-    const { id, initial, size, widths } = resizing;
+    const { id, initial, size, widths, card } = resizing;
+    const width = growingCardWidth(resizing);
+    if (card) previewWidth?.(undefined);
     resizing = undefined;
     if (!save || size === initial) return;
-    if (widths) resizeColumns({ ...widths, [id]: size });
-    else {
+    if (widths) {
+      const patch: Partial<TableBlock> = { columnWidths: { ...widths, [id]: size } };
+      if (width !== undefined && card) patch.expandedSize = { width, height: card.height };
+      change(patch);
+    } else {
       const row = (event.currentTarget as HTMLElement).closest('tr');
       resizeGrid({ rowHeights: { ...block.rowHeights, [id]: size } }, undefined, size - (row?.offsetHeight ?? initial));
     }
   }
 
   function resizeColumns(widths: Record<string, number>) {
-    const width = rowIndexWidth + rowActionsWidth + block.columns.reduce((sum, { id }) => sum + (widths[id] ?? defaultTableColumnWidth), 0);
-    resizeGrid({ columnWidths: widths }, width);
+    resizeGrid({ columnWidths: widths }, columnGridWidth(widths));
   }
 
   function resizeGrid(patch: Partial<TableBlock>, width?: number, rowDelta = 0) {

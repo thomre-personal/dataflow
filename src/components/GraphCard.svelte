@@ -24,6 +24,7 @@
       workspace: Workspace;
       toggleLock: () => void;
       patch: (patch: Partial<TableBlock>, continueGrowth?: boolean) => void;
+      previewWidth: (width: number | undefined) => void;
       hotkeys: Hotkeys;
       error: (message: string) => void;
       activeCell?: CellSelection;
@@ -208,6 +209,7 @@
             if (element.scrollTop + element.clientHeight >= element.scrollHeight - 1) tableEditor?.revealRows();
           }}>
           <TableEditor bind:this={tableEditor} {block} workspace={data.edit.workspace} hotkeys={data.edit.hotkeys} change={data.edit.patch}
+            previewWidth={data.edit.previewWidth}
             error={data.edit.error} activeCell={block.inlineLocked ? undefined : data.edit.activeCell}
             selectCell={data.edit.selectCell} locked={block.inlineLocked ?? false} inline />
         </div>

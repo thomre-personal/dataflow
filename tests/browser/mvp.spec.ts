@@ -1689,13 +1689,34 @@ test('wraps unbroken text and grows or fits the canvas table at its edges', asyn
   await expect.poll(() => editor.evaluate((element: HTMLElement) => element.scrollHeight - element.clientHeight)).toBeLessThanOrEqual(1);
 
   const initial = await cardSize(table);
-  const column = table.getByRole('button', { name: 'Resize column A', exact: true });
+  const column = table.getByRole('button', { name: 'Resize column B', exact: true });
+  const columnWidth = (name: string) => table.getByRole('columnheader', { name, exact: true })
+    .evaluate((header: HTMLElement) => header.offsetWidth);
+  const leftWidth = await columnWidth('A');
+  const rightWidth = await columnWidth('B');
   await column.hover();
-  await dragResize(page, column, 95, 0);
-  await expect.poll(async () => (await cardSize(table)).width).toBeGreaterThan(initial.width);
   const grid = table.locator('.editor-grid');
+  const separator = (await column.boundingBox())!;
+  const x = separator.x + separator.width / 2;
+  const y = separator.y + separator.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 95, y, { steps: 8 });
+  await expect.poll(async () => (await cardSize(table)).width).toBeGreaterThan(initial.width);
+  await expect.poll(() => columnWidth('B')).toBeGreaterThan(rightWidth);
+  expect(await columnWidth('A')).toBe(leftWidth);
   await expect.poll(() => grid.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  await page.mouse.move(x, y, { steps: 8 });
+  await expect.poll(() => cardSize(table)).toEqual(initial);
+  await page.mouse.move(x + 95, y, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(async () => (await cardSize(table)).width).toBeGreaterThan(initial.width);
   const width = (await cardSize(table)).width;
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect.poll(() => cardSize(table)).toEqual(initial);
+  await expect.poll(() => columnWidth('B')).toBe(rightWidth);
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  await expect.poll(async () => (await cardSize(table)).width).toBe(width);
   const right = table.locator('.block-resize-edge.right');
   await page.getByRole('button', { name: 'Fit canvas', exact: true }).click();
   await waitForCanvasFit(page);

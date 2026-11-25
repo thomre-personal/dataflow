@@ -146,6 +146,7 @@
   let dark = $derived(preferences.theme === 'dark' || (preferences.theme === 'auto' && systemDark));
   let flowNodes = $state.raw<Node<CardData>[]>([]);
   let flowEdges = $state.raw<Edge[]>([]);
+  let tableWidthPreview = $state.raw<{ id: string; width: number }>();
   type ComputedState = { state: 'ready' | 'stale' | 'running' | 'error'; result?: Result; error?: string };
   let workspaceResults = $state<Record<string, Record<string, ComputedState>>>({});
   let runtime = $derived(workspaceResults[workspace.id] ?? {});
@@ -597,10 +598,10 @@
 
   function nodeSize(block: Block, focusScope?: ReadonlySet<string>): { width: number; height: number } {
     if ((block.kind === 'table' || block.kind === 'chart' || block.kind === 'config') && block.expanded !== false) {
-      if (block.expandedSize) return block.expandedSize;
-      if (block.kind === 'chart') return { width: 420, height: 320 };
-      if (block.kind === 'config') return { width: 300, height: 260 };
-      return { width: 320, height: Math.max(280, 132 + Math.min(block.rows.length, 13) * 28) };
+      if (block.kind === 'chart') return block.expandedSize ?? { width: 420, height: 320 };
+      if (block.kind === 'config') return block.expandedSize ?? { width: 300, height: 260 };
+      const size = block.expandedSize ?? { width: 320, height: Math.max(280, 132 + Math.min(block.rows.length, 13) * 28) };
+      return tableWidthPreview?.id === block.id ? { ...size, width: tableWidthPreview.width } : size;
     }
     if (block.kind !== 'group') return { width: 260, height: 228 };
     if (block.expanded === false && !focusScope?.has(block.id)) return { width: 260, height: 66 };
@@ -609,6 +610,14 @@
       const bounds = nodeSize(child, focusScope);
       return { width: Math.max(size.width, child.position.x + bounds.width + 24), height: Math.max(size.height, child.position.y + bounds.height + 24) };
     }, block.expandedSize ?? { width: 330, height: 280 });
+  }
+
+  function previewTableWidth(id: string, width: number | undefined) {
+    if (width === undefined) {
+      if (tableWidthPreview?.id === id) tableWidthPreview = undefined;
+    } else if (tableWidthPreview?.id !== id || tableWidthPreview.width !== width) {
+      tableWidthPreview = { id, width };
+    }
   }
 
   function resizeBlock(id: string, { x, y, width, height }: ResizeParams) {
@@ -754,6 +763,7 @@
             workspace,
             toggleLock: () => patchBlock(block.id, { inlineLocked: !block.inlineLocked }),
             patch: (patch: Partial<TableBlock>, continueGrowth?: boolean) => patchBlock(block.id, patch, continueGrowth),
+            previewWidth: (width: number | undefined) => previewTableWidth(block.id, width),
             hotkeys: preferences.hotkeys,
             error: message,
             activeCell: activeCell?.tableId === block.id ? activeCell : undefined,
