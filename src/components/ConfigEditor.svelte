@@ -15,7 +15,7 @@
 
   let presetName = $state('');
   let presetSelection = $state<string>();
-  let creatingPreset = $state(false);
+  let presetDialog = $state<{ kind: 'create' } | { kind: 'rename'; id: string }>();
   let presetError = $state('');
   let error = $state('');
   let preset = $derived(block.presets.find(({ id }) => id === (presetSelection ?? block.activePresetId)));
@@ -23,7 +23,7 @@
   let hasIssues = $derived([...issues.values()].some(Boolean));
   let canSavePreset = $derived(Boolean(preset && preset.id === block.activePresetId && !hasIssues));
   const editorId = $props.id();
-  const presetFormId = editorId + '-new-preset';
+  const presetFormId = editorId + '-preset-name';
 
   function update(field: ConfigField) {
     error = '';
@@ -58,14 +58,20 @@
   }
 
   function selectPreset(select: HTMLSelectElement) {
-    if (select.selectedOptions[0]?.hasAttribute('data-new-preset')) {
-      select.value = preset?.id ?? '';
-      presetName = '';
-      presetError = '';
-      creatingPreset = true;
-    } else {
+    const action = select.selectedOptions[0]?.dataset.presetAction;
+    if (!action) {
       presetSelection = select.value;
       error = '';
+      return;
+    }
+    select.value = preset?.id ?? '';
+    presetError = '';
+    if (action === 'rename' && preset) {
+      presetName = preset.name;
+      presetDialog = { kind: 'rename', id: preset.id };
+    } else if (action === 'create') {
+      presetName = '';
+      presetDialog = { kind: 'create' };
     }
   }
 
@@ -73,18 +79,24 @@
     return Object.fromEntries(block.fields.map(({ id, value }) => [id, Array.isArray(value) ? [...value] : value]));
   }
 
-  function createPreset(event: SubmitEvent) {
+  function submitPresetName(event: SubmitEvent) {
     event.preventDefault();
+    const dialog = presetDialog;
     const name = presetName.trim();
-    if (!name || !block.fields.length || hasIssues) return;
-    if (block.presets.some((item) => item.name.toLowerCase() === name.toLowerCase())) {
+    if (!dialog || !name || (dialog.kind === 'create' && (!block.fields.length || hasIssues))) return;
+    const renamed = dialog.kind === 'rename' ? block.presets.find((item) => item.id === dialog.id) : undefined;
+    if (block.presets.some((item) => item.id !== renamed?.id && item.name.toLowerCase() === name.toLowerCase())) {
       presetError = 'A preset with that name already exists.';
       return;
     }
-    const id = newId();
-    change({ presets: [...block.presets, { id, name, values: presetValues() }], activePresetId: id });
-    presetSelection = undefined;
-    creatingPreset = false;
+    if (dialog.kind === 'create') {
+      const id = newId();
+      change({ presets: [...block.presets, { id, name, values: presetValues() }], activePresetId: id });
+      presetSelection = undefined;
+    } else if (renamed && name !== renamed.name) {
+      change({ presets: block.presets.map((item) => item.id === renamed.id ? { ...item, name } : item) });
+    }
+    presetDialog = undefined;
     error = '';
   }
 
@@ -163,7 +175,8 @@
       <select class="inline-select" aria-label="Preset" value={preset?.id ?? ''} onchange={(event) => selectPreset(event.currentTarget)}>
         <option value="" disabled>Choose a preset</option>
         {#each block.presets as item (item.id)}<option value={item.id}>{item.name}</option>{/each}
-        <option value={presetFormId} data-new-preset disabled={hasIssues}>New preset…</option>
+        <option value={presetFormId + '-create'} data-preset-action="create" disabled={hasIssues}>New preset…</option>
+        <option value={presetFormId + '-rename'} data-preset-action="rename" disabled={!preset}>Rename preset…</option>
       </select>
       <button type="button" class="button secondary" aria-label="Load preset" disabled={!preset} onclick={loadPreset}>Load</button>
       <button type="button" class="button secondary" aria-label="Save preset" disabled={!canSavePreset} onclick={savePreset}>Save</button>
@@ -234,9 +247,10 @@
   {/if}
 </div>
 
-{#if creatingPreset}
+{#if presetDialog}
+  {@const renaming = presetDialog.kind === 'rename'}
   {#snippet presetForm()}
-    <form id={presetFormId} onsubmit={createPreset}>
+    <form id={presetFormId} onsubmit={submitPresetName}>
       <label class="field">Preset name
         <!-- svelte-ignore a11y_autofocus (Naming the preset is the purpose of this dialog.) -->
         <input maxlength="100" bind:value={presetName} autofocus />
@@ -245,8 +259,10 @@
     </form>
   {/snippet}
   {#snippet presetActions()}
-    <button type="button" class="button secondary" onclick={() => creatingPreset = false}>Cancel</button>
-    <button type="submit" class="button primary" form={presetFormId} disabled={!presetName.trim() || hasIssues}>Create preset</button>
+    <button type="button" class="button secondary" onclick={() => presetDialog = undefined}>Cancel</button>
+    <button type="submit" class="button primary" form={presetFormId} disabled={!presetName.trim() || (!renaming && hasIssues)}>
+      {renaming ? 'Rename preset' : 'Create preset'}
+    </button>
   {/snippet}
-  <Modal title="New preset" close={() => creatingPreset = false} children={presetForm} footer={presetActions} />
+  <Modal title={renaming ? 'Rename preset' : 'New preset'} close={() => presetDialog = undefined} children={presetForm} footer={presetActions} />
 {/if}
