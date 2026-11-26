@@ -870,9 +870,10 @@ test('switches named presets for connected and global configs, including with no
   await automatic.check();
   await settings.getByRole('button', { name: 'Done' }).click();
   await expect(used.getByRole('cell', { name: '4', exact: true })).toBeVisible();
-  const globalPresets = canvasBlock(page, 'GlobalTax').getByRole('combobox', { name: 'Preset', exact: true });
+  const globalCard = canvasBlock(page, 'GlobalTax');
+  const globalPresets = globalCard.getByRole('combobox', { name: 'Preset', exact: true });
   await globalPresets.selectOption({ label: 'High' });
-  await globalPresets.selectOption({ label: 'Rename preset…' });
+  await globalCard.getByRole('button', { name: 'Edit preset', exact: true }).click();
   const rename = page.getByRole('dialog', { name: 'Rename preset', exact: true });
   const presetName = rename.getByRole('textbox', { name: 'Preset name', exact: true });
   await expect(presetName).toHaveValue('High');

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Plus, Trash2 } from 'lucide-svelte';
+  import { Pencil, Plus, Trash2 } from 'lucide-svelte';
   import { applyConfigValue, configDataTypes, configFieldDataType, configFieldTypes, createConfigField, evaluateConfigField, loadConfigPreset } from '../lib/config';
   import { newId } from '../lib/workspace';
   import type { ColumnType, ConfigBlock, ConfigField, ConfigValue } from '../lib/workspace';
@@ -58,21 +58,22 @@
   }
 
   function selectPreset(select: HTMLSelectElement) {
-    const action = select.selectedOptions[0]?.dataset.presetAction;
-    if (!action) {
+    if (!select.selectedOptions[0]?.hasAttribute('data-new-preset')) {
       presetSelection = select.value;
       error = '';
       return;
     }
     select.value = preset?.id ?? '';
+    presetName = '';
     presetError = '';
-    if (action === 'rename' && preset) {
-      presetName = preset.name;
-      presetDialog = { kind: 'rename', id: preset.id };
-    } else if (action === 'create') {
-      presetName = '';
-      presetDialog = { kind: 'create' };
-    }
+    presetDialog = { kind: 'create' };
+  }
+
+  function editPreset() {
+    if (!preset) return;
+    presetName = preset.name;
+    presetError = '';
+    presetDialog = { kind: 'rename', id: preset.id };
   }
 
   function presetValues() {
@@ -175,11 +176,11 @@
       <select class="inline-select" aria-label="Preset" value={preset?.id ?? ''} onchange={(event) => selectPreset(event.currentTarget)}>
         <option value="" disabled>Choose a preset</option>
         {#each block.presets as item (item.id)}<option value={item.id}>{item.name}</option>{/each}
-        <option value={presetFormId + '-create'} data-preset-action="create" disabled={hasIssues}>New preset…</option>
-        <option value={presetFormId + '-rename'} data-preset-action="rename" disabled={!preset}>Rename preset…</option>
+        <option value={presetFormId + '-create'} data-new-preset disabled={hasIssues}>New preset…</option>
       </select>
       <button type="button" class="button secondary" aria-label="Load preset" disabled={!preset} onclick={loadPreset}>Load</button>
       <button type="button" class="button secondary" aria-label="Save preset" disabled={!canSavePreset} onclick={savePreset}>Save</button>
+      <button type="button" class="icon-button small" aria-label="Edit preset" title="Rename preset" disabled={!preset} onclick={editPreset}><Pencil size={14} /></button>
       <button type="button" class="icon-button delete-block" aria-label="Delete preset" disabled={!preset} onclick={removePreset}><Trash2 size={14} /></button>
     </section>
   {/if}
