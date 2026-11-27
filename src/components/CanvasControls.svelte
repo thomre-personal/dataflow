@@ -45,7 +45,8 @@
       }
 
       event.preventDefault();
-      if (isDataTable && !hasVerticalOverflow) {
+      const tallerThanCanvas = isDataTable && table.getBoundingClientRect().height > canvas.clientHeight;
+      if (isDataTable && !hasVerticalOverflow && !tallerThanCanvas) {
         const viewport = store.viewport;
         const wheelStep = deltaMode === WheelEvent.DOM_DELTA_LINE ? .05 : deltaMode === WheelEvent.DOM_DELTA_PAGE ? 1 : .002;
         const zoom = Math.max(store.minZoom, Math.min(store.maxZoom, viewport.zoom * 2 ** (-deltaY * wheelStep)));
