@@ -167,7 +167,7 @@ async function clickConnection(page: Page, connection: Locator) {
   await page.mouse.click(point.x, point.y);
 }
 
-test('zooms over a table that fits and scrolls over a table with vertical overflow', async ({ page }) => {
+test('zooms over fitting, scrollable, and oversized canvas tables', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New workspace', exact: true }).click();
   await page.getByRole('textbox', { name: 'Workspace name' }).fill('Table scrolling');
@@ -204,20 +204,12 @@ test('zooms over a table that fits and scrolls over a table with vertical overfl
   await dialog.getByRole('button', { name: 'Done', exact: true }).click();
   const editor = card.getByRole('group', { name: 'Edit Untitled table', exact: true });
   await editor.hover();
+  await expect.poll(() => editor.evaluate((element) => element.scrollHeight - element.clientHeight)).toBeGreaterThan(0);
   const beforeScroll = await viewport();
+  const scrollTop = await editor.evaluate((element) => element.scrollTop);
   await page.mouse.wheel(0, 100);
-  await expect.poll(() => editor.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
-  expect(await viewport()).toEqual(beforeScroll);
-
-  await editor.evaluate((element) => element.scrollTop = element.scrollHeight);
-  await editor.hover();
-  await page.mouse.wheel(0, 70);
-  await expect.poll(async () => (await viewport()).y).toBeCloseTo(beforeScroll.y - 70);
-  expect(await viewport()).toMatchObject({ zoom: beforeScroll.zoom });
-
-  await page.getByRole('region', { name: 'Canvas drop area', exact: true }).hover({ position: { x: 24, y: 32 } });
-  await page.mouse.wheel(0, -70);
-  await expect.poll(async () => (await viewport()).zoom).toBeGreaterThan(beforeScroll.zoom);
+  await expect.poll(async () => (await viewport()).zoom).toBeLessThan(beforeScroll.zoom);
+  expect(await editor.evaluate((element) => element.scrollTop)).toBe(scrollTop);
 
   await page.getByRole('button', { name: 'Fit canvas', exact: true }).click();
   await waitForCanvasFit(page);
@@ -229,12 +221,9 @@ test('zooms over a table that fits and scrolls over a table with vertical overfl
   const visibleTop = Math.max(canvas.y, preview.y);
   const visibleBottom = Math.min(canvas.y + canvas.height, preview.y + preview.height);
   await page.mouse.move(preview.x + preview.width / 2, (visibleTop + visibleBottom) / 2);
-  const beforePan = await viewport();
+  const beforeWheel = await viewport();
   await page.mouse.wheel(0, 90);
-  await expect.poll(async () => (await viewport()).y).toBeCloseTo(beforePan.y - 90);
-  expect((await viewport()).zoom).toBe(beforePan.zoom);
-  await page.mouse.wheel(0, -90);
-  await expect.poll(async () => (await viewport()).y).toBeCloseTo(beforePan.y);
+  await expect.poll(async () => (await viewport()).zoom).toBeLessThan(beforeWheel.zoom);
 });
 
 test('keeps the table geometry when locking and grows the table from the outside handles', async ({ page }) => {

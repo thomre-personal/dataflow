@@ -278,7 +278,7 @@
     {#if block.kind === 'table'}
       {#if expanded && data.edit}
         <!-- svelte-ignore a11y_no_noninteractive_tabindex (The locked table must be reachable for keyboard scrolling.) -->
-        <div bind:this={previewArea} class="node-preview node-inline nodrag nopan nowheel" role={block.inlineLocked ? 'region' : 'group'}
+        <div bind:this={previewArea} class="node-preview node-inline nodrag nopan" role={block.inlineLocked ? 'region' : 'group'}
           aria-label={block.inlineLocked ? 'Full table data' : 'Edit ' + block.title} data-table-style={block.style} tabindex={block.inlineLocked ? 0 : undefined}
           onscroll={(event) => {
             const element = event.currentTarget;
@@ -342,7 +342,7 @@
         </div>
       </footer>
     {:else if block.kind === 'config'}
-      <div bind:this={previewArea} class="node-preview node-inline nodrag nopan nowheel">
+      <div bind:this={previewArea} class="node-preview node-inline nodrag nopan">
         {#if expanded && data.config}
           <ConfigEditor {block} change={data.config.patch} confirm={data.config.confirm} />
         {:else}
