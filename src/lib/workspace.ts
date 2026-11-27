@@ -11,7 +11,7 @@ export type Column = { id: string; name: string; type: ColumnType };
 export type FormulaColumn = { columnId: string; reference: 'implicit' | 'name' | 'letter'; tableId?: string };
 export type ScalarExpression =
   | { kind: 'number'; value: string }
-  | { kind: 'cell'; columnId: string; row: number }
+  | { kind: 'cell'; columnId: string; row: number; fixedRow?: boolean }
   | { kind: 'config'; blockId: string; fieldId: string }
   | { kind: 'binary'; operator: '+' | '-' | '*' | '/'; left: ScalarExpression; right: ScalarExpression };
 export type OrderedFunction = 'MIN' | 'MAX' | 'MEDIAN';

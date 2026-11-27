@@ -9,7 +9,7 @@ type Operator = keyof typeof operators;
 const isOperator = (value: string): value is Operator => Object.hasOwn(operators, value);
 
 export function parseScalar(text: string, columns: Column[], inputs: FormulaInput[]): { expression?: ScalarExpression; message?: string } {
-  const token = /\s*(?:(?<source>\[(?:[^\]]|\]\])*\]|[\p{L}_][\p{L}\p{N}_]*)\s*\.\s*(?<field>\[(?:[^\]]|\]\])*\]|[\p{L}_][\p{L}\p{N}_]*)|(?<cell>[a-z]+\d+)\b|(?<number>\d+(?:\.\d+)?|\.\d+)|(?<symbol>[()+*/-]))/giyu;
+  const token = /\s*(?:(?<source>\[(?:[^\]]|\]\])*\]|[\p{L}_][\p{L}\p{N}_]*)\s*\.\s*(?<field>\[(?:[^\]]|\]\])*\]|[\p{L}_][\p{L}\p{N}_]*)|(?<cell>[a-z]+\$?\d+)\b|(?<number>\d+(?:\.\d+)?|\.\d+)|(?<symbol>[()+*/-]))/giyu;
   const parts: (ScalarExpression | string)[] = [];
   while (token.lastIndex < text.length) {
     const match = token.exec(text);
@@ -26,11 +26,11 @@ export function parseScalar(text: string, columns: Column[], inputs: FormulaInpu
       if (!entry) return { message: 'The config ' + source + ' has no field named ' + field + '.' };
       parts.push({ kind: 'config', blockId: config.id, fieldId: entry.id });
     } else if (cell) {
-      const [, letter, digits] = /^([a-z]+)(\d+)$/i.exec(cell)!;
+      const [, letter, fixed, digits] = /^([a-z]+)(\$?)(\d+)$/i.exec(cell)!;
       const column = columns.find((_, index) => columnLetter(index) === letter.toUpperCase());
       const row = Number(digits);
       if (!column || !Number.isSafeInteger(row)) return { message: 'Choose an existing cell address.' };
-      parts.push({ kind: 'cell', columnId: column.id, row });
+      parts.push({ kind: 'cell', columnId: column.id, row, ...(fixed ? { fixedRow: true } : {}) });
     } else if (number) {
       parts.push({ kind: 'number', value: number.startsWith('.') ? '0' + number : number });
     } else {
@@ -67,12 +67,14 @@ export function parseScalar(text: string, columns: Column[], inputs: FormulaInpu
   return cursor === parts.length ? { expression } : {};
 }
 
-export function scalarText(expression: ScalarExpression, columns: Column[], inputs: FormulaInput[], minimum = 0): string | undefined {
+export function scalarText(expression: ScalarExpression, columns: Column[], inputs: FormulaInput[], rowOffset = 0, minimum = 0): string | undefined {
   switch (expression.kind) {
     case 'number': return expression.value;
     case 'cell': {
       const index = columns.findIndex(({ id }) => id === expression.columnId);
-      return index < 0 ? undefined : columnLetter(index) + expression.row;
+      const row = expression.row + (expression.fixedRow ? 0 : rowOffset);
+      if (index < 0) return undefined;
+      return row < 0 ? '#REF!' : columnLetter(index) + (expression.fixedRow ? '$' : '') + row;
     }
     case 'config': {
       const configs = inputs.filter((input) => 'config' in input);
@@ -86,8 +88,8 @@ export function scalarText(expression: ScalarExpression, columns: Column[], inpu
     }
     case 'binary': {
       const rank = operators[expression.operator];
-      const left = scalarText(expression.left, columns, inputs, rank);
-      const right = scalarText(expression.right, columns, inputs, rank + 1);
+      const left = scalarText(expression.left, columns, inputs, rowOffset, rank);
+      const right = scalarText(expression.right, columns, inputs, rowOffset, rank + 1);
       if (left === undefined || right === undefined) return;
       const text = left + expression.operator + right;
       return rank < minimum ? '(' + text + ')' : text;

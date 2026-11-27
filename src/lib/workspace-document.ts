@@ -51,7 +51,8 @@ function scalar(value: unknown, depth: number): boolean {
   if (!record(value) || depth >= 64) return false;
   switch (value.kind) {
     case 'number': return typeof value.value === 'string' && /^\d+(?:\.\d+)?$/.test(value.value);
-    case 'cell': return id(value.columnId) && finiteNumber(value.row) && Number.isSafeInteger(value.row) && value.row >= 0;
+    case 'cell': return id(value.columnId) && finiteNumber(value.row) && Number.isSafeInteger(value.row) && value.row >= 0
+      && (value.fixedRow === undefined || typeof value.fixedRow === 'boolean');
     case 'config': return id(value.blockId) && id(value.fieldId);
     case 'binary': return ['+', '-', '*', '/'].some((operator) => operator === value.operator)
       && scalar(value.left, depth + 1) && scalar(value.right, depth + 1);

@@ -1348,6 +1348,7 @@ test('calculates table sums, keeps formula references after rename, and handles 
 });
 
 test('suggests formulas in both table editors and uses Return to accept suggestions and cells', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'platform', { get: () => 'MacIntel' }));
   await page.goto('/');
   await page.getByRole('button', { name: 'New workspace', exact: true }).click();
   await page.getByRole('textbox', { name: 'Workspace name' }).fill('Suggested formulas');
@@ -1359,7 +1360,7 @@ test('suggests formulas in both table editors and uses Return to accept suggesti
   await expect(page.getByRole('listbox', { name: 'Formula suggestions' })).toHaveCount(0);
   await first.press('Enter');
   await expect(first).toHaveValue('=');
-  await expect(first).not.toBeFocused();
+  await expect(dialog.getByRole('textbox', { name: 'A row 2', exact: true }).locator('xpath=ancestor::td')).toBeFocused();
 
   const second = dialog.getByRole('textbox', { name: 'B row 1', exact: true });
   await second.fill('=');
@@ -1393,6 +1394,32 @@ test('suggests formulas in both table editors and uses Return to accept suggesti
   await inline.fill('=CONCAT("DISTINCT:", COUNT(DISTINCT(Category)))');
   await inline.press('Enter');
   await expect(inline).toHaveValue('DISTINCT:1');
+  const bottom = canvasBlock(page, 'Untitled table').getByRole('textbox', { name: 'B row 2', exact: true });
+  const bottomCell = bottom.locator('xpath=ancestor::td');
+  await expect(bottomCell).toBeFocused();
+  await page.keyboard.press('ArrowLeft');
+  await expect(canvasBlock(page, 'Untitled table').getByRole('textbox', { name: 'Category row 2', exact: true })
+    .locator('xpath=ancestor::td')).toBeFocused();
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowRight');
+  await expect(inline.locator('xpath=ancestor::td')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(bottomCell).toBeFocused();
+  await page.evaluate(() => history.pushState({}, '', '#cell-navigation'));
+  await page.keyboard.press('Meta+ArrowLeft');
+  await expect(canvasBlock(page, 'Untitled table').getByRole('textbox', { name: 'Category row 2', exact: true })
+    .locator('xpath=ancestor::td')).toBeFocused();
+  await expect(page).toHaveURL(/#cell-navigation$/);
+  await page.keyboard.press('Meta+ArrowRight');
+  await expect(bottomCell).toBeFocused();
+  await page.keyboard.press('Meta+ArrowUp');
+  await expect(inline.locator('xpath=ancestor::td')).toBeFocused();
+  await page.keyboard.press('Meta+ArrowDown');
+  await expect(bottomCell).toBeFocused();
+  await page.keyboard.type('Done');
+  await bottom.press('Enter');
+  await expect(bottom).toHaveValue('Done');
+  await expect(bottomCell).toBeFocused();
 });
 
 test('inserts and saves line breaks with Shift+Enter in both table editors', async ({ page }) => {
@@ -1441,6 +1468,7 @@ test('shows nested functions and searchable documentation for the active cell', 
   await dialogCell.fill(formula);
   await dialogCell.press('Enter');
   await expect(dialogCell).toHaveValue('MAX(A): 11');
+  await dialogCell.click();
   const usedInDialog = dialogInspector.getByRole('region', { name: 'Functions in this cell' });
   await expect(usedInDialog.locator('summary')).toHaveText(['CONCAT', 'COUNT', 'DISTINCT']);
   await usedInDialog.locator('summary').filter({ hasText: 'DISTINCT' }).click();
@@ -1484,6 +1512,8 @@ test('shows nested functions and searchable documentation for the active cell', 
   await inlineCell.fill('=AND(TRUE, NOT(FALSE))');
   await inlineCell.press('Enter');
   await expect(inlineCell).toHaveValue('true');
+  await expect(options.getByText('B2', { exact: true })).toBeVisible();
+  await inlineCell.click();
   await expect(used.locator('summary')).toHaveText(['AND', 'NOT']);
 });
 
@@ -1678,6 +1708,13 @@ test('selects all cells in a row or column from its header and opens settings on
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.keyboard.press('ControlOrMeta+c');
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(rows[0]);
+  const thirdRow = dialog.getByRole('button', { name: 'Select row 3', exact: true });
+  await thirdRow.click({ modifiers: ['Shift'] });
+  await expect(firstRow).toHaveAttribute('aria-pressed', 'true');
+  await expect(thirdRow).toHaveAttribute('aria-pressed', 'true');
+  await expect(selectedCells).toHaveCount(6);
+  await page.keyboard.press('ControlOrMeta+c');
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(rows.slice(0, 3).join('\n'));
 
   await firstColumn.click();
   await expect(firstRow).toHaveAttribute('aria-pressed', 'false');
@@ -1710,6 +1747,105 @@ test('selects all cells in a row or column from its header and opens settings on
   await expect(card.getByRole('textbox', { name: 'A row 1', exact: true })).toHaveValue('');
   await expect(card.getByRole('textbox', { name: 'B row 1', exact: true })).toHaveValue('');
   await expect(card.getByRole('textbox', { name: 'B row 2', exact: true })).toHaveValue('keep 2');
+});
+
+test('fills series in both directions and shifts relative rows when filling or copying formulas', async ({ page }) => {
+  await page.goto('/');
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Untitled table' });
+  const cell = (name: string) => dialog.getByRole('textbox', { name, exact: true });
+  const select = (name: string) => cell(name).locator('xpath=ancestor::td');
+  const dragTo = async (from: Locator, to: Locator) => {
+    const start = (await from.boundingBox())!;
+    const end = (await to.boundingBox())!;
+    await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(end.x + end.width / 2, end.y + end.height / 2, { steps: 8 });
+    await page.mouse.up();
+  };
+
+  await cell('A row 1').fill('1');
+  await cell('B row 1').fill('2026-11-01');
+  await cell('A row 2').fill('2');
+  await cell('B row 2').fill('2026-11-03');
+  await cell('B row 2').press('Enter');
+  await dragTo(cell('A row 1'), cell('B row 2'));
+  await dragResize(page, dialog.getByRole('button', { name: 'Fill down', exact: true }), 0, 100);
+  await expect(cell('A row 4')).toHaveValue('4');
+  await expect(cell('B row 4')).toHaveValue('2026-11-07');
+
+  await cell('A row 3').fill('9');
+  await cell('B row 3').fill('2026-11-10');
+  await cell('A row 4').fill('12');
+  await cell('B row 4').fill('2026-11-13');
+  await cell('B row 4').press('Enter');
+  await dragTo(cell('A row 3'), cell('B row 4'));
+  await dragTo(dialog.getByRole('button', { name: 'Fill up', exact: true }), cell('A row 1'));
+  await expect(cell('A row 1')).toHaveValue('3');
+  await expect(cell('B row 1')).toHaveValue('2026-11-04');
+
+  await cell('B row 2').fill('=A1+A$1');
+  await cell('B row 2').press('Enter');
+  await select('B row 2').focus();
+  await page.keyboard.press('ControlOrMeta+c');
+  await select('B row 3').focus();
+  await page.keyboard.press('ControlOrMeta+v');
+  await expect(cell('B row 3')).toHaveAttribute('title', '=A2+A$1');
+  await expect(cell('B row 3')).toHaveValue('9');
+  await dragTo(dialog.getByRole('button', { name: 'Fill down', exact: true }), cell('B row 4'));
+  await expect(cell('B row 4')).toHaveAttribute('title', '=A3+A$1');
+  await expect(cell('B row 4')).toHaveValue('12');
+  await select('B row 4').focus();
+  await dragTo(dialog.getByRole('button', { name: 'Fill up', exact: true }), cell('B row 2'));
+  await expect(cell('B row 2')).toHaveAttribute('title', '=A1+A$1');
+});
+
+test('offers cell, row and column actions through the table context menu', async ({ page }) => {
+  await page.goto('/');
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.getByRole('button', { name: 'Add table', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Untitled table' });
+  const cell = (name: string) => dialog.getByRole('textbox', { name, exact: true });
+  const menu = dialog.getByRole('menu', { name: 'Table actions' });
+  const action = (name: string) => menu.getByRole('menuitem', { name, exact: true });
+  await cell('A row 1').fill('Seed');
+  await cell('A row 2').fill('Second');
+  await cell('A row 2').press('Enter');
+  await cell('A row 1').click({ button: 'right' });
+  await action('Copy').click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('Seed');
+  await cell('B row 2').click({ button: 'right' });
+  await action('Paste').click();
+  await expect(cell('B row 2')).toHaveValue('Seed');
+  await cell('A row 1').fill('1');
+  await cell('A row 2').fill('2');
+  await cell('B row 1').fill('=A1+1');
+  await cell('B row 1').press('Enter');
+  await cell('B row 1').click({ button: 'right' });
+  await action('Copy').click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('=A1+1');
+  await cell('B row 2').click({ button: 'right' });
+  await action('Paste').click();
+  await expect(cell('B row 2')).toHaveAttribute('title', '=A2+1');
+
+  await columnHeader(dialog, 'B').click({ button: 'right' });
+  await expect(action('Fit column width')).toBeVisible();
+  await action('Column settings…').click();
+  const settings = page.getByRole('dialog', { name: 'Column settings' });
+  await expect(settings.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('B');
+  await settings.getByRole('button', { name: 'Cancel', exact: true }).click();
+
+  const firstRow = dialog.getByRole('button', { name: 'Select row 1', exact: true });
+  const secondRow = dialog.getByRole('button', { name: 'Select row 2', exact: true });
+  await firstRow.click();
+  await secondRow.click({ modifiers: ['Shift'] });
+  await secondRow.click({ button: 'right' });
+  await expect(action('Delete rows')).toBeVisible();
+  await action('Clear contents').click();
+  await expect(cell('A row 1')).toHaveValue('');
+  await expect(cell('B row 2')).toHaveValue('');
+  await expect(menu).toHaveCount(0);
 });
 
 test('drags, copies and clears rectangular cell ranges in both table editors', async ({ page }) => {

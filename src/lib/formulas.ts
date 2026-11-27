@@ -313,8 +313,15 @@ export function cellFormulaText(row: Row, columns: Column[], index: number, inpu
   return expression ? '=' + expression : raw;
 }
 
-function expressionText(formula: Formula, columns: Column[], inputs: FormulaInput[]): string | undefined {
-  if (formula.name === 'VALUE') return scalarText(formula.expression, columns, inputs);
+export function shiftFormulaRows(text: string, columns: Column[], index: number, inputs: FormulaInput[], rowOffset: number) {
+  if (!rowOffset || !isFormulaEntry(text)) return text;
+  const { formula } = parseFormula(text, columns, index, inputs);
+  const expression = formula && expressionText(formula, columns, inputs, rowOffset);
+  return expression ? '=' + expression : text;
+}
+
+function expressionText(formula: Formula, columns: Column[], inputs: FormulaInput[], rowOffset = 0): string | undefined {
+  if (formula.name === 'VALUE') return scalarText(formula.expression, columns, inputs, rowOffset);
   const tables = inputs.filter((input) => 'table' in input);
   function reference(source: FormulaColumn, concat = false) {
     const input = source.tableId ? tables.find(({ table }) => table.id === source.tableId) : undefined;
@@ -334,7 +341,7 @@ function expressionText(formula: Formula, columns: Column[], inputs: FormulaInpu
   if (formula.name === 'CONCAT') {
     const parts = formula.parts.map((part) => {
       if ('literal' in part) return quote(part.literal);
-      if ('expression' in part) return expressionText(part.expression, columns, inputs);
+      if ('expression' in part) return expressionText(part.expression, columns, inputs, rowOffset);
       return reference(part, true);
     });
     return parts.includes(undefined) ? undefined : 'CONCAT(' + parts.join(', ') + ')';
@@ -342,7 +349,7 @@ function expressionText(formula: Formula, columns: Column[], inputs: FormulaInpu
   if ('args' in formula) {
     const args = formula.args.map((argument) => {
       if ('boolean' in argument) return argument.boolean ? 'TRUE' : 'FALSE';
-      if ('expression' in argument) return expressionText(argument.expression, columns, inputs);
+      if ('expression' in argument) return expressionText(argument.expression, columns, inputs, rowOffset);
       const column = reference(argument, true);
       return column && /^(true|false)$/i.test(column) ? bracket(column) : column;
     });

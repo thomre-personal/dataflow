@@ -8,7 +8,7 @@ export const MAX_ROWS = 10_000;
 export const MAX_COLUMNS = 80;
 
 export const cellClipboardType = 'application/x-dataflow-cells';
-export type CopiedCell = { text: string; style?: CellStyle };
+export type CopiedCell = { text: string; style?: CellStyle; sourceRow?: number };
 
 export function copyGrid(clipboard: DataTransfer, cells: CopiedCell[][]) {
   clipboard.setData(cellClipboardType, JSON.stringify(cells));
@@ -26,11 +26,42 @@ export function readCopiedGrid(clipboard: DataTransfer) {
     if (!Array.isArray(cells) || !cells.length || cells.length > MAX_ROWS || !Array.isArray(cells[0])) return;
     const width = cells[0].length;
     if (!width || width > MAX_COLUMNS || !cells.every((row) => Array.isArray(row) && row.length === width
-      && row.every((cell) => cell && typeof cell.text === 'string' && (cell.style === undefined || isCellStyle(cell.style))))) return;
+      && row.every((cell) => cell && typeof cell.text === 'string' && (cell.style === undefined || isCellStyle(cell.style))
+        && (cell.sourceRow === undefined || (Number.isSafeInteger(cell.sourceRow) && cell.sourceRow >= 0))))) return;
     return cells as CopiedCell[][];
   } catch {
     return;
   }
+}
+
+const webCellClipboardType = 'web ' + cellClipboardType;
+
+export async function writeCellClipboard(clipboard: DataTransfer) {
+  const text = clipboard.getData('text/plain');
+  try {
+    await navigator.clipboard.write([new ClipboardItem({
+      'text/plain': new Blob([text], { type: 'text/plain' }),
+      [webCellClipboardType]: new Blob([clipboard.getData(cellClipboardType)], { type: cellClipboardType }),
+    })]);
+  } catch {
+    await navigator.clipboard.writeText(text);
+  }
+}
+
+export async function readCellClipboard() {
+  const clipboard = new DataTransfer();
+  try {
+    for (const item of await navigator.clipboard.read()) {
+      if (item.types.includes('text/plain')) clipboard.setData('text/plain', await (await item.getType('text/plain')).text());
+      if (item.types.includes(webCellClipboardType)) {
+        clipboard.setData(cellClipboardType, await (await item.getType(webCellClipboardType)).text());
+      }
+      if (clipboard.types.length) return clipboard;
+    }
+  } catch {
+    clipboard.setData('text/plain', await navigator.clipboard.readText());
+  }
+  return clipboard;
 }
 
 function delimiterFor(text: string): string {

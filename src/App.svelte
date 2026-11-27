@@ -88,7 +88,8 @@
     const text = cellFormulaText(selected.rows[row], selected.columns, column, tableInputs(workspace, selected.id));
     const start = columnLetter(left) + rowNumber(selected, top);
     return {
-      address: activeCell?.axis === 'row' ? 'Row ' + rowNumber(selected, row)
+      address: activeCell?.axis === 'row' ? top === bottom ? 'Row ' + rowNumber(selected, row)
+          : 'Rows ' + rowNumber(selected, top) + '–' + rowNumber(selected, bottom)
         : activeCell?.axis === 'column' ? 'Column ' + letter
         : top === bottom && left === right ? start : start + ':' + columnLetter(right) + rowNumber(selected, bottom),
       column: name === letter ? undefined : name,
@@ -804,7 +805,9 @@
     }
     if (id !== selectedId) showQueryTab('sql');
     selectedId = id;
-    if (cell && !cell.axis && extend && activeCell?.tableId === id && !activeCell.axis) {
+    if (cell?.axis === 'row' && extend && activeCell?.tableId === id && activeCell.axis === 'row') {
+      activeCell = { ...activeCell, endRowId: cell.rowId === activeCell.rowId ? undefined : cell.rowId };
+    } else if (cell && !cell.axis && extend && activeCell?.tableId === id && !activeCell.axis) {
       const end = activeCell.rowId === cell.rowId && activeCell.columnId === cell.columnId ? undefined : cell;
       activeCell = { ...activeCell, end };
     } else {

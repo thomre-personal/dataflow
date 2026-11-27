@@ -23,7 +23,7 @@ export type CellTextStyle = keyof Pick<CellStyle, 'bold' | 'italic' | 'underline
 export type CellAddress = { rowId: string; columnId: string };
 export type CellSelection =
   | (CellAddress & { axis?: undefined; end?: CellAddress })
-  | { axis: 'row'; rowId: string }
+  | { axis: 'row'; rowId: string; endRowId?: string }
   | { axis: 'column'; columnId: string };
 
 export function cellSelectionBounds(table: TableBlock, selection: CellSelection | undefined) {
@@ -31,7 +31,11 @@ export function cellSelectionBounds(table: TableBlock, selection: CellSelection 
   const row = selection.axis === 'column' ? 0 : table.rows.findIndex(({ id }) => id === selection.rowId);
   const column = selection.axis === 'row' ? 0 : table.columns.findIndex(({ id }) => id === selection.columnId);
   if (row < 0 || column < 0) return;
-  if (selection.axis === 'row') return { row, column, top: row, bottom: row, left: 0, right: table.columns.length - 1 };
+  if (selection.axis === 'row') {
+    const end = selection.endRowId ? table.rows.findIndex(({ id }) => id === selection.endRowId) : -1;
+    const last = end < 0 ? row : end;
+    return { row, column, top: Math.min(row, last), bottom: Math.max(row, last), left: 0, right: table.columns.length - 1 };
+  }
   if (selection.axis === 'column') return { row, column, top: 0, bottom: table.rows.length - 1, left: column, right: column };
   const end = selection.end;
   const endRow = end ? table.rows.findIndex(({ id }) => id === end.rowId) : row;

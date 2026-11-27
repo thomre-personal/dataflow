@@ -3,12 +3,12 @@
   import { onDestroy, tick } from 'svelte';
   import { columnLetter, dataRowCount, defaultTableColumnWidth, newId, rowNumber, tableInputs } from '../lib/workspace';
   import { countLabel } from '../lib/format';
-  import { copyGrid, MAX_COLUMNS, MAX_ROWS, parseDelimited, readCopiedGrid } from '../lib/clipboard';
-  import { bindCellFormula, cellFormulaText, isFormulaEntry, suggestFunctions } from '../lib/formulas';
+  import { copyGrid, MAX_COLUMNS, MAX_ROWS, parseDelimited, readCellClipboard, readCopiedGrid, writeCellClipboard } from '../lib/clipboard';
+  import { bindCellFormula, cellFormulaText, isFormulaEntry, shiftFormulaRows, suggestFunctions } from '../lib/formulas';
   import type { FormulaCall } from '../lib/formulas';
   import { cellSelectionBounds, cellStyleCss } from '../lib/cell-style';
   import type { CellAddress, CellSelection } from '../lib/cell-style';
-  import { describeCellIssue, invalidTableCells, tableData } from '../lib/table-data';
+  import { describeCellIssue, fillSeries, invalidTableCells, tableData } from '../lib/table-data';
   import { eventHotkey, hotkeyLabel } from '../lib/preferences';
   import type { Hotkeys } from '../lib/preferences';
   import { tableCardContentSize } from '../lib/table-layout';
@@ -48,6 +48,16 @@
   let cellAnchor = $derived(activeCell?.axis ? undefined : activeCell);
   let bounds = $derived(cellSelectionBounds(block, activeCell));
   let range = $derived(activeCell?.axis || cellAnchor?.end ? bounds : undefined);
+  type FillDirection = 'up' | 'down';
+  let fillDrag = $state<{ pointer: number; direction: FillDirection; source: NonNullable<typeof bounds>; edge: number }>();
+  let fillSource = $derived(!locked && !editing && cellAnchor && bounds && bounds.bottom < dataRows ? bounds : undefined);
+  let displayRange = $derived(fillDrag ? {
+    ...fillDrag.source, top: Math.min(fillDrag.source.top, fillDrag.edge), bottom: Math.max(fillDrag.source.bottom, fillDrag.edge),
+  } : range);
+  type TableMenu = { axis?: 'row' | 'column'; row: number; column: number; target: HTMLElement; trigger: HTMLElement; selection: CellSelection };
+  let tableMenu = $state.raw<TableMenu>();
+  let menuBounds = $derived(cellSelectionBounds(block, tableMenu?.selection));
+  let menuElement = $state<HTMLDivElement>();
   let columnSettings = $state<Column>();
   let columnSettingsTrigger: HTMLButtonElement | undefined;
   let settingsColumnIndex = $derived(block.columns.findIndex(({ id }) => id === columnSettings?.id));
@@ -330,10 +340,11 @@
     if (block.rowHeights?.[id] !== undefined) change({ rowHeights: withoutEntry(block.rowHeights, id) });
   }
 
-  async function focusCell(rowIndex: number, rowId: string, columnId: string) {
+  async function focusCell(rowIndex: number, rowId: string, columnId: string, mode: 'edit' | 'select' = 'edit') {
     if (rowIndex < dataRows) limit = Math.max(limit, rowIndex + 1);
     await tick();
-    document.getElementById(cellId(rowId, columnId))?.focus();
+    const input = document.getElementById(cellId(rowId, columnId));
+    (mode === 'select' ? input?.closest('td') : input)?.focus();
   }
 
   function updateCell(rowIndex: number, colIndex: number, value: string) {
@@ -346,8 +357,7 @@
     change({ rows });
   }
 
-  function clearSelectedCells() {
-    const selection = bounds;
+  function clearSelectedCells(selection = bounds) {
     if (!selection) return;
     let changed = false;
     const rows = block.rows.map((row, index) => {
@@ -372,13 +382,18 @@
     const selection = bounds;
     if (event.target !== event.currentTarget || !selection || !event.clipboardData) return;
     if (event.currentTarget instanceof HTMLButtonElement && event.currentTarget.ariaPressed !== 'true') return;
+    copySelection(event.clipboardData, selection);
+    event.preventDefault();
+  }
+
+  function copySelection(clipboard: DataTransfer, selection: NonNullable<typeof bounds>, move = false) {
     const rows = block.rows.slice(selection.top, selection.bottom + 1);
     const columns = block.columns.slice(selection.left, selection.right + 1);
-    copyGrid(event.clipboardData, rows.map((row) => columns.map((column, index) => ({
+    copyGrid(clipboard, rows.map((row, offset) => columns.map((column, index) => ({
       text: cellFormulaText(row, block.columns, selection.left + index, inputs),
       style: block.cellStyles?.[row.id]?.[column.id],
+      sourceRow: move ? undefined : rowNumber(block, selection.top + offset),
     }))));
-    event.preventDefault();
   }
 
   function pasteCells(event: ClipboardEvent, firstRow: number, firstColumn: number, wholeCell = false) {
@@ -389,8 +404,13 @@
     const delimited = /[\t\r\n]/.test(text);
     if (!copied && !delimited && (!wholeCell || !clipboard.types.includes('text/plain'))) return;
     event.preventDefault();
+    pasteRange(text, copied, firstRow, firstColumn);
+  }
+
+  function pasteRange(text: string, copied: ReturnType<typeof readCopiedGrid>, firstRow: number, firstColumn: number) {
     try {
-      const grid = copied ? copied.map((row) => row.map((cell) => cell.text)) : delimited ? parseDelimited(text) : [[text]];
+      const grid = copied ? copied.map((row) => row.map((cell) => cell.text))
+        : /[\t\r\n]/.test(text) ? parseDelimited(text) : [[text]];
       const width = Math.max(block.columns.length, firstColumn + (grid[0]?.length ?? 0));
       const intoFooter = footerRows > 0 && firstRow >= dataRows;
       const boundary = intoFooter ? block.rows.length : dataRows;
@@ -406,8 +426,11 @@
         const formulas = { ...existing?.formulas };
         const cells = Array.from({ length: width }, (_, columnIndex) => {
           const pasted = grid[rowIndex - firstRow]?.[columnIndex - firstColumn];
-          if (pasted !== undefined) bindCellFormula(formulas, columns, columnIndex, pasted, inputs);
-          return pasted ?? existing?.cells[columnIndex] ?? '';
+          if (pasted === undefined) return existing?.cells[columnIndex] ?? '';
+          const source = copied?.[rowIndex - firstRow]?.[columnIndex - firstColumn]?.sourceRow;
+          const value = source === undefined ? pasted : shiftFormulaRows(pasted, columns, columnIndex, inputs, rowNumber(block, rowIndex) - source);
+          bindCellFormula(formulas, columns, columnIndex, value, inputs);
+          return value;
         });
         const id = existing?.id ?? newId();
         const pasted = copied?.[rowIndex - firstRow];
@@ -498,7 +521,9 @@
     } else if (plain && event.key === 'Enter') {
       event.preventDefault();
       event.stopPropagation();
-      event.currentTarget.closest('td')?.focus({ preventScroll: true });
+      const next = block.rows[row + 1];
+      if (next) void focusCell(row + 1, next.id, block.columns[column].id, 'select');
+      else event.currentTarget.closest('td')?.focus({ preventScroll: true });
     } else {
       insertWithShortcut(event, row, column);
     }
@@ -566,6 +591,74 @@
     cellDrag = undefined;
   }
 
+  function startFill(event: PointerEvent & { currentTarget: HTMLButtonElement }, direction: FillDirection) {
+    if (event.button !== 0 || !fillSource || fillDrag) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    fillDrag = { pointer: event.pointerId, direction, source: fillSource, edge: direction === 'up' ? fillSource.top : fillSource.bottom };
+  }
+
+  function moveFill(event: PointerEvent) {
+    const drag = fillDrag;
+    const body = table?.tBodies[0];
+    if (!drag || drag.pointer !== event.pointerId || !body?.rows.length) return;
+    event.stopPropagation();
+    const last = body.rows[body.rows.length - 1].getBoundingClientRect();
+    if (drag.direction === 'down' && event.clientY >= last.bottom && body.rows.length === dataRows && last.height > 0) {
+      drag.edge = Math.min(MAX_ROWS - footerRows - 1, dataRows - 1 + Math.ceil((event.clientY - last.bottom) / last.height));
+      return;
+    }
+    let low = 0;
+    let high = body.rows.length - 1;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (event.clientY < body.rows[middle].getBoundingClientRect().bottom) high = middle;
+      else low = middle + 1;
+    }
+    drag.edge = drag.direction === 'up' ? Math.min(drag.source.top, low) : Math.max(drag.source.bottom, low);
+  }
+
+  function endFill(event: PointerEvent) {
+    if (fillDrag?.pointer !== event.pointerId) return;
+    if (event.type === 'pointerup') moveFill(event);
+    const { source, edge } = fillDrag;
+    fillDrag = undefined;
+    if (event.type === 'pointerup') applyFill(source, edge);
+  }
+
+  function applyFill(source: NonNullable<typeof bounds>, edge: number) {
+    if (locked || (edge >= source.top && edge <= source.bottom)) return;
+    const upwards = edge < source.top;
+    const seedCount = source.bottom - source.top + 1;
+    const top = Math.min(edge, source.top);
+    const bottom = Math.max(edge, source.bottom);
+    const series = block.columns.slice(source.left, source.right + 1).map((column, offset) =>
+      fillSeries(block.rows.slice(source.top, source.bottom + 1).map((row) =>
+        cellFormulaText(row, block.columns, source.left + offset, inputs)), column.type, block.numberFormat));
+    const addedRows = Math.max(0, bottom + 1 - dataRows);
+    const rows = block.rows.slice(0, dataRows);
+    for (let index = upwards ? top : source.bottom + 1; index <= (upwards ? source.top - 1 : bottom); index++) {
+      const row = rows[index] ?? { id: newId(), cells: block.columns.map(() => '') };
+      const cells = [...row.cells];
+      const formulas = { ...row.formulas };
+      for (const [offset, valueAt] of series.entries()) {
+        const column = source.left + offset;
+        const step = index - source.top;
+        const seed = (step % seedCount + seedCount) % seedCount;
+        cells[column] = shiftFormulaRows(valueAt(step), block.columns, column, inputs, step - seed);
+        bindCellFormula(formulas, block.columns, column, cells[column], inputs);
+      }
+      rows[index] = { ...row, cells, formulas };
+    }
+    limit = Math.max(limit, bottom + 1);
+    const patch = { rows: [...rows, ...block.rows.slice(dataRows)] };
+    if (addedRows) resizeGrid(patch, undefined, addedRows * defaultAddedRowHeight);
+    else change(patch);
+    selectCell({ rowId: rows[top].id, columnId: block.columns[source.left].id,
+      end: { rowId: rows[bottom].id, columnId: block.columns[source.right].id } });
+  }
+
   function clearSelectionWithKey(event: KeyboardEvent) {
     if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey
       || (event.key !== 'Delete' && event.key !== 'Backspace')) return false;
@@ -578,6 +671,23 @@
   function selectionKeyboard(event: KeyboardEvent & { currentTarget: HTMLTableCellElement }, row: number, column: number) {
     if (event.target !== event.currentTarget || event.isComposing || clearSelectionWithKey(event)) return;
     const plain = !event.altKey && !event.ctrlKey && !event.metaKey;
+    const jump = eventHotkey(event) === 'Mod+' + event.key;
+    if ((plain || jump) && !event.shiftKey && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
+      event.preventDefault();
+      event.stopPropagation();
+      let nextRow = row;
+      let nextColumn = column;
+      switch (event.key) {
+        case 'ArrowUp': nextRow = jump ? 0 : row - 1; break;
+        case 'ArrowDown': nextRow = jump ? block.rows.length - 1 : row + 1; break;
+        case 'ArrowLeft': nextColumn = jump ? 0 : column - 1; break;
+        case 'ArrowRight': nextColumn = jump ? block.columns.length - 1 : column + 1; break;
+      }
+      const target = block.rows[nextRow];
+      const field = block.columns[nextColumn];
+      if (target && field) void focusCell(nextRow, target.id, field.id, 'select');
+      return;
+    }
     if (plain && (event.key === 'Enter' || event.key === 'F2' || event.key.length === 1)) {
       const input = event.currentTarget.querySelector('textarea');
       if (!input) return;
@@ -597,9 +707,97 @@
     if (event.currentTarget.ariaPressed === 'true') clearSelectionWithKey(event);
   }
 
-  function selectHeader(button: HTMLButtonElement, selection: CellSelection) {
+  function selectHeader(button: HTMLButtonElement, selection: CellSelection, extend = false) {
     button.focus({ preventScroll: true });
-    selectCell(selection);
+    selectCell(selection, extend);
+  }
+
+  async function openTableMenu(event: MouseEvent) {
+    if (!(event.target instanceof Element)) return;
+    const cell = event.target.closest<HTMLTableCellElement>('td[data-table-cell]');
+    const header = event.target.closest<HTMLTableCellElement>('th');
+    const headerButton = header?.querySelector<HTMLButtonElement>('.row-select, .column-select');
+    if (!cell && !headerButton) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const axis = headerButton?.classList.contains('row-select') ? 'row' : headerButton ? 'column' : undefined;
+    const row = Number((cell ?? header)?.closest('tr')?.dataset.rowIndex ?? 0);
+    const column = axis === 'row' ? 0 : (cell ?? header)!.cellIndex - 1;
+    if ((axis !== 'column' && !block.rows[row]) || (axis !== 'row' && !block.columns[column])) return;
+    const selected = bounds && (axis === 'row' ? activeCell?.axis === 'row' && row >= bounds.top && row <= bounds.bottom
+      : axis === 'column' ? activeCell?.axis === 'column' && column === bounds.column
+        : row >= bounds.top && row <= bounds.bottom && column >= bounds.left && column <= bounds.right);
+    const target = cell ?? headerButton!;
+    const focused = document.activeElement;
+    const trigger = selected && focused instanceof HTMLElement && table?.contains(focused) ? focused : target;
+    const selection: CellSelection = axis === 'row' ? { axis, rowId: block.rows[row].id } : axis === 'column'
+      ? { axis, columnId: block.columns[column].id } : { rowId: block.rows[row].id, columnId: block.columns[column].id };
+    if (!selected && !locked) selectCell(selection);
+    const menu: TableMenu = { axis, row, column, target, trigger, selection: selected && activeCell ? activeCell : selection };
+    tableMenu = menu;
+    await tick();
+    if (tableMenu !== menu || !menuElement) return;
+    if (!menuElement.matches(':popover-open')) menuElement.showPopover();
+    const anchor = target.getBoundingClientRect();
+    const x = event.clientX || anchor.left;
+    const y = event.clientY || anchor.bottom;
+    menuElement.style.left = Math.max(4, Math.min(x, innerWidth - menuElement.offsetWidth - 4)) + 'px';
+    menuElement.style.top = Math.max(4, Math.min(y, innerHeight - menuElement.offsetHeight - 4)) + 'px';
+    menuElement.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true });
+  }
+
+  function closeTableMenu(action?: () => void) {
+    const trigger = tableMenu?.trigger;
+    if (menuElement?.matches(':popover-open')) menuElement.hidePopover();
+    trigger?.focus({ preventScroll: true });
+    action?.();
+    tableMenu = undefined;
+  }
+
+  function tableMenuKeyboard(event: KeyboardEvent) {
+    event.stopPropagation();
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Escape'].includes(event.key)) return;
+    event.preventDefault();
+    if (event.key === 'Escape') { closeTableMenu(); return; }
+    if (!menuElement) return;
+    const items = [...menuElement.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
+    const current = items.findIndex((item) => item === document.activeElement);
+    const index = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+      : (current + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length;
+    items[index]?.focus();
+  }
+
+  async function menuClipboard(action: 'copy' | 'cut' | 'paste') {
+    const selection = menuBounds;
+    if (!selection) return;
+    const originalRows = block.rows;
+    closeTableMenu();
+    try {
+      if (action === 'paste') {
+        const clipboard = await readCellClipboard();
+        if (!locked && block.rows === originalRows && clipboard.types.length) {
+          pasteRange(clipboard.getData('text/plain'), readCopiedGrid(clipboard), selection.top, selection.left);
+        }
+      } else {
+        const clipboard = new DataTransfer();
+        copySelection(clipboard, selection, action === 'cut');
+        await writeCellClipboard(clipboard);
+        if (action === 'cut' && !locked && block.rows === originalRows) clearSelectedCells(selection);
+      }
+    } catch {
+      error(action === 'paste' ? 'Clipboard access failed. Use the paste shortcut.' : 'Clipboard access failed. Use the copy shortcut.');
+    }
+  }
+
+  function deleteRows(top: number, bottom: number) {
+    const removed = new Set(block.rows.slice(top, bottom + 1).map(({ id }) => id));
+    const removedFooters = Math.max(0, bottom + 1 - Math.max(top, dataRows));
+    change({
+      rows: block.rows.filter(({ id }) => !removed.has(id)),
+      rowHeights: omitEntries(block.rowHeights, removed),
+      cellStyles: omitEntries(block.cellStyles, removed),
+      footerRows: removedFooters ? footerRows - removedFooters : block.footerRows,
+    });
   }
 
   function columnHeaderKeyboard(event: KeyboardEvent & { currentTarget: HTMLButtonElement }, column: Column) {
@@ -658,6 +856,16 @@
 
 </script>
 
+{#snippet fillHandle(direction: FillDirection)}
+  <button type="button" class="cell-fill-handle nodrag nopan" class:fill-up={direction === 'up'}
+    aria-label={direction === 'up' ? 'Fill up' : 'Fill down'} title={'Drag ' + direction + ' to fill'}
+    onpointerdown={(event) => startFill(event, direction)} onpointermove={moveFill} onpointerup={endFill} onlostpointercapture={endFill}
+    onclick={(event) => {
+      event.stopPropagation();
+      if (event.detail === 0 && fillSource) applyFill(fillSource, direction === 'up' ? fillSource.top - 1 : fillSource.bottom + 1);
+    }}></button>
+{/snippet}
+
 {#snippet resizeHandle(id: string, label: string, fit: () => void, column = false)}
   <button type="button" class="table-resize-handle nodrag nopan" class:column-resize={column}
     class:row-resize={!column} class:resizing={resizing?.id === id}
@@ -689,7 +897,8 @@
 {/if}
 <div class="editor-grid" data-table-style={block.style}>
   <table bind:this={table} aria-rowcount={block.rows.length + 1} style:min-width={gridWidth + 'px'} style:width={columnWidths ? gridWidth + 'px' : undefined}
-    onpointermove={extendCellDrag} onpointerup={endCellDrag} onlostpointercapture={endCellDrag}>
+    onpointerdown={(event) => { if (event.button === 2) event.preventDefault(); }}
+    onpointermove={extendCellDrag} onpointerup={endCellDrag} onlostpointercapture={endCellDrag} oncontextmenu={openTableMenu}>
     <colgroup>
       <col style:width={rowIndexWidth + 'px'} />
       {#each block.columns as column (column.id)}
@@ -724,8 +933,9 @@
         class:footer-row={rowIndex >= dataRows} style:height={height === undefined ? undefined : height + 'px'}>
         <th scope="row" class="row-index">
           <button type="button" class="table-header-select row-select nokey" data-table-selection=""
-            aria-label={'Select row ' + rowNumber(block, rowIndex)} aria-pressed={activeCell?.axis === 'row' && activeCell.rowId === row.id} disabled={locked}
-            onclick={(event) => selectHeader(event.currentTarget, { axis: 'row', rowId: row.id })}
+            aria-label={'Select row ' + rowNumber(block, rowIndex)}
+            aria-pressed={activeCell?.axis === 'row' && !!bounds && rowIndex >= bounds.top && rowIndex <= bounds.bottom} disabled={locked}
+            onclick={(event) => selectHeader(event.currentTarget, { axis: 'row', rowId: row.id }, event.shiftKey)}
             onkeydown={headerSelectionKeyboard} oncopy={copyCells}>
             {rowNumber(block, rowIndex)}
           </button>
@@ -737,15 +947,17 @@
           {@const isFormula = Boolean(row.formulas?.[column.id]) || isFormulaEntry(row.cells[columnIndex] ?? '')}
           {@const showMenu = editing?.id === id && suggestions.length > 0}
           {@const value = editing?.id === id ? cellDraft : data.display(rowIndex, columnIndex)}
-          {@const inRange = range && rowIndex >= range.top && rowIndex <= range.bottom && columnIndex >= range.left && columnIndex <= range.right}
+          {@const inRange = displayRange && rowIndex >= displayRange.top && rowIndex <= displayRange.bottom &&
+            columnIndex >= displayRange.left && columnIndex <= displayRange.right}
           {@const address = { rowId: row.id, columnId: column.id }}
           {@const active = cellAnchor?.rowId === row.id && cellAnchor.columnId === column.id}
+          {@const fill = fillDrag?.source ?? fillSource}
           <!-- svelte-ignore a11y_no_noninteractive_tabindex (Cells can be selected with the keyboard before entering edit mode.) -->
           <td data-table-cell="" class="nokey" tabindex={locked ? undefined : 0} role={columnIndex < titleColumns ? 'rowheader' : undefined}
             class:invalid-cell={Boolean(issue)} class:title-column={columnIndex < titleColumns}
             class:formula-cell={isFormula} class:range-cell={inRange} class:selected-cell={active}
-            class:range-top={inRange && rowIndex === range?.top} class:range-bottom={inRange && rowIndex === range?.bottom}
-            class:range-left={inRange && columnIndex === range?.left} class:range-right={inRange && columnIndex === range?.right}
+            class:range-top={inRange && rowIndex === displayRange?.top} class:range-bottom={inRange && rowIndex === displayRange?.bottom}
+            class:range-left={inRange && columnIndex === displayRange?.left} class:range-right={inRange && columnIndex === displayRange?.right}
             onfocus={() => { if (!active) selectCell(address); }}
             onpointerdown={(event) => cellPointer(event, address)}
             onkeydown={(event) => selectionKeyboard(event, rowIndex, columnIndex)}
@@ -789,14 +1001,17 @@
             }}
             onkeydown={(event) => cellKeyboard(event, rowIndex, columnIndex)}
             onpaste={(event) => pasteCells(event, rowIndex, columnIndex)}
-            ></textarea>{/if}</div>{#if issue}<span id={id + '-error'} class="cell-validation-message">{issue}</span>{/if}</td>
+            ></textarea>{/if}</div>{#if issue}<span id={id + '-error'} class="cell-validation-message">{issue}</span>{/if}
+            {#if fill && columnIndex === fill.right}
+              {#if rowIndex === fill.top && fill.top > 0}{@render fillHandle('up')}{/if}
+              {#if rowIndex === fill.bottom && (fill.bottom + 1 < dataRows || block.rows.length < MAX_ROWS)}
+                {@render fillHandle('down')}
+              {/if}
+            {/if}
+          </td>
         {/each}
-        <td class="row-actions"><button class="icon-button small" aria-label={'Delete row ' + rowNumber(block, rowIndex)} disabled={locked} onclick={() => change({
-          rows: block.rows.filter((candidate) => candidate.id !== row.id),
-          rowHeights: withoutEntry(block.rowHeights, row.id),
-          cellStyles: withoutEntry(block.cellStyles, row.id),
-          footerRows: rowIndex >= dataRows ? footerRows - 1 : block.footerRows,
-        })}><Trash2 size={13} /></button></td>
+        <td class="row-actions"><button class="icon-button small" aria-label={'Delete row ' + rowNumber(block, rowIndex)} disabled={locked}
+          onclick={() => deleteRows(rowIndex, rowIndex)}><Trash2 size={13} /></button></td>
       </tr>
     {/snippet}
     <tbody>
@@ -814,6 +1029,63 @@
   </table>
   {#if !block.rows.length}<p class="grid-empty">Add a row or paste a range to begin.</p>{/if}
 </div>
+{#if tableMenu && menuBounds}
+  {@const menu = tableMenu}
+  {@const selection = menuBounds}
+  {@const oneCell = selection.top === selection.bottom && selection.left === selection.right}
+  {@const column = block.columns[menu.column]}
+  <div bind:this={menuElement} class="table-context-menu nodrag nopan" popover="auto" role="menu" aria-label="Table actions" tabindex="-1"
+    onkeydown={tableMenuKeyboard} ontoggle={(event) => {
+      if (event.newState === 'closed' && !event.currentTarget.matches(':popover-open')) tableMenu = undefined;
+    }}>
+    {#if !locked && !menu.axis && oneCell}
+      <button type="button" role="menuitem" onclick={() => closeTableMenu(() => void focusCell(menu.row, block.rows[menu.row].id, column.id))}>Edit cell</button>
+    {/if}
+    <button type="button" role="menuitem" onclick={() => void menuClipboard('copy')}>Copy</button>
+    {#if !locked}
+      <button type="button" role="menuitem" onclick={() => void menuClipboard('cut')}>Cut</button>
+      <button type="button" role="menuitem" onclick={() => void menuClipboard('paste')}>Paste</button>
+      <button type="button" role="menuitem" onclick={() => closeTableMenu(() => clearSelectedCells(selection))}>Clear contents</button>
+      {#if !menu.axis && selection.bottom < dataRows}
+        {#if selection.top > 0}
+          <button type="button" role="menuitem" onclick={() => closeTableMenu(() => applyFill(selection, selection.top - 1))}>Fill up</button>
+        {/if}
+        {#if selection.bottom + 1 < dataRows || block.rows.length < MAX_ROWS}
+          <button type="button" role="menuitem" onclick={() => closeTableMenu(() => applyFill(selection, selection.bottom + 1))}>Fill down</button>
+        {/if}
+      {/if}
+      {#if menu.axis !== 'column'}
+        <hr />
+        <button type="button" role="menuitem" onclick={() => closeTableMenu(() => insertRow(selection.top))}>Insert row above</button>
+        <button type="button" role="menuitem" onclick={() => closeTableMenu(() => insertRow(selection.bottom + 1))}>Insert row below</button>
+        {#if menu.axis === 'row'}
+          <button type="button" role="menuitem"
+            disabled={!block.rows.slice(selection.top, selection.bottom + 1).some(({ id }) => block.rowHeights?.[id] !== undefined)}
+            onclick={() => closeTableMenu(() => {
+            const ids = new Set(block.rows.slice(selection.top, selection.bottom + 1).map(({ id }) => id));
+            change({ rowHeights: omitEntries(block.rowHeights, ids) });
+          })}>Fit row height</button>
+        {/if}
+        <button type="button" role="menuitem" onclick={() => closeTableMenu(() => deleteRows(selection.top, selection.bottom))}>
+          {selection.top === selection.bottom ? 'Delete row' : 'Delete rows'}
+        </button>
+      {/if}
+      {#if menu.axis !== 'row'}
+        <hr />
+        <button type="button" role="menuitem" onclick={() => closeTableMenu(() => insertColumn(selection.left))}>Insert column left</button>
+        <button type="button" role="menuitem" onclick={() => closeTableMenu(() => insertColumn(selection.right + 1))}>Insert column right</button>
+        {#if menu.axis === 'column'}
+          <button type="button" role="menuitem" onclick={() => closeTableMenu(() => fitColumn(column.id, menu.column))}>Fit column width</button>
+          <button type="button" role="menuitem" onclick={() => closeTableMenu(() => {
+            if (menu.target instanceof HTMLButtonElement) openColumnSettings(column, menu.target);
+          })}>Column settings…</button>
+        {/if}
+        <button type="button" role="menuitem" disabled={block.columns.length === 1}
+          onclick={() => closeTableMenu(() => deleteColumn(menu.column))}>Delete column</button>
+      {/if}
+    {/if}
+  </div>
+{/if}
 {#if editing && suggestions.length}
   <FormulaSuggestions anchor={editing.input} id={suggestionsId} choices={suggestions} active={suggestions[activeSuggestion]} pick={completeFormula} />
 {/if}

@@ -33,6 +33,39 @@ function compactDecimal(text: string) {
   return text.replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1');
 }
 
+export function fillSeries(values: string[], type: Column['type'], format: TableBlock['numberFormat']): (index: number) => string {
+  const repeat = (index: number) => values[(index % values.length + values.length) % values.length];
+  if (values.length < 2 || values.some((value) => isFormulaEntry(value) || value.startsWith("'"))) return repeat;
+  if (type === 'date' || type === 'auto') {
+    const dates = values.map(parseDate);
+    if (dates.every((date) => date !== null)) {
+      const [first, second, ...rest] = dates.map((date) => Date.parse(date));
+      const step = second - first;
+      if (rest.every((date, index) => date === first + (index + 2) * step)) {
+        return (index) => {
+          const date = new Date(first + index * step);
+          return Number.isFinite(date.getTime()) && date.getUTCFullYear() >= 0 && date.getUTCFullYear() <= 9999
+            ? date.toISOString().slice(0, 10) : repeat(index);
+        };
+      }
+      return repeat;
+    }
+  }
+  if (type !== 'decimal' && type !== 'auto') return repeat;
+  if (type === 'auto' && values.some((value) => /^0\d+$/.test(value.trim()))) return repeat;
+  const numbers = values.map((value) => parseDecimal(value, format));
+  if (!numbers.every((value) => value !== null)) return repeat;
+  const decimals = numbers.map(decimal);
+  const scale = decimals.reduce((maximum, value) => Math.max(maximum, value.scale), 0);
+  const [first, second, ...rest] = decimals.map((value) => atScale(value, scale));
+  const step = second - first;
+  if (!rest.every((value, index) => value === first + BigInt(index + 2) * step)) return repeat;
+  return (index) => {
+    const value = decimalText({ units: first + BigInt(index) * step, scale });
+    return format === 'decimal-comma' ? value.replace('.', ',') : value;
+  };
+}
+
 function compareDecimals(first: Decimal, second: Decimal) {
   const scale = Math.max(first.scale, second.scale);
   const difference = atScale(first, scale) - atScale(second, scale);

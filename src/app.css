@@ -523,6 +523,17 @@ dialog::backdrop { background: #151f386d; backdrop-filter: blur(2px); }
 .editor-grid td.range-bottom::after { border-bottom-width: 1px; }
 .editor-grid td.range-left::after { border-left-width: 1px; }
 .editor-grid td.range-right::after { border-right-width: 1px; }
+.editor-grid td:has(.cell-fill-handle) { position: relative; }
+.cell-fill-handle { position: absolute; right: 0; bottom: 0; z-index: 1; width: 13px; height: 13px; display: grid;
+  place-items: end; cursor: ns-resize; touch-action: none; }
+.cell-fill-handle::after { content: ''; width: 7px; height: 7px; border-radius: 1px; background: var(--accent); }
+.cell-fill-handle.fill-up { top: 0; bottom: auto; place-items: start end; }
+.table-context-menu { position: fixed; inset: auto; margin: 0; min-width: 175px; max-height: calc(100dvh - 8px);
+  overflow: auto; padding: 4px; color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: var(--shadow); font-size: 12px; }
+.table-context-menu button { display: block; width: 100%; padding: 5px 8px; border-radius: 4px; text-align: left; }
+.table-context-menu button:not(:disabled):is(:hover, :focus-visible) { background: var(--accent-soft); color: var(--accent); }
+.table-context-menu hr { margin: 3px 4px; border: 0; border-top: 1px solid var(--divider); }
 .cell-validation-message { display: block; max-width: 190px; padding: 0 8px 5px; white-space: normal; color: var(--error); font-size: 10px; }
 .row-actions { width: 30px; }
 .table-count { display: flex; justify-content: space-between; margin-top: 8px; color: var(--muted); font-size: 11px; }
