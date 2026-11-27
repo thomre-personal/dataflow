@@ -28,18 +28,24 @@
       const table = target.closest('.nowheel');
       if (!table) return;
 
+      const isDataTable = table.matches('.full-grid') || Boolean(table.closest('.graph-card.table'));
       let hasVerticalOverflow = false;
       for (let element: Element | null = target; element; element = element.parentElement) {
         const maxScroll = element.scrollHeight - element.clientHeight;
-        if (maxScroll > 0 && /^(auto|scroll)$/.test(getComputedStyle(element).overflowY)) {
-          hasVerticalOverflow = true;
-          if (deltaY > 0 ? element.scrollTop < maxScroll - .5 : element.scrollTop > .5) return;
+        if (maxScroll > 0 && element instanceof HTMLElement) {
+          const style = getComputedStyle(element);
+          // The horizontal scrollbar occupies part of clientHeight.
+          const height = element.offsetHeight - parseFloat(style.borderTopWidth) - parseFloat(style.borderBottomWidth);
+          if (/^(auto|scroll)$/.test(style.overflowY) && (!isDataTable || element.scrollHeight > Math.round(height))) {
+            hasVerticalOverflow = true;
+            if (deltaY > 0 ? element.scrollTop < maxScroll - .5 : element.scrollTop > .5) return;
+          }
         }
         if (element === table) break;
       }
 
       event.preventDefault();
-      if (!hasVerticalOverflow && (table.matches('.full-grid') || table.closest('.graph-card.table'))) {
+      if (isDataTable && !hasVerticalOverflow) {
         const viewport = store.viewport;
         const wheelStep = deltaMode === WheelEvent.DOM_DELTA_LINE ? .05 : deltaMode === WheelEvent.DOM_DELTA_PAGE ? 1 : .002;
         const zoom = Math.max(store.minZoom, Math.min(store.maxZoom, viewport.zoom * 2 ** (-deltaY * wheelStep)));
