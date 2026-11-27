@@ -167,7 +167,7 @@ async function clickConnection(page: Page, connection: Locator) {
   await page.mouse.click(point.x, point.y);
 }
 
-test('zooms over fitting, scrollable, and oversized canvas tables', async ({ page }) => {
+test('zooms over canvas tables and scrolls the canvas while Option is held', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New workspace', exact: true }).click();
   await page.getByRole('textbox', { name: 'Workspace name' }).fill('Table scrolling');
@@ -209,6 +209,15 @@ test('zooms over fitting, scrollable, and oversized canvas tables', async ({ pag
   const scrollTop = await editor.evaluate((element) => element.scrollTop);
   await page.mouse.wheel(0, 100);
   await expect.poll(async () => (await viewport()).zoom).toBeLessThan(beforeScroll.zoom);
+  expect(await editor.evaluate((element) => element.scrollTop)).toBe(scrollTop);
+  await editor.hover();
+  const beforeOption = await viewport();
+  await page.keyboard.down('Alt');
+  await page.mouse.wheel(25, 70);
+  await page.keyboard.up('Alt');
+  await expect.poll(async () => (await viewport()).y).toBeCloseTo(beforeOption.y - 70);
+  expect((await viewport()).x).toBeCloseTo(beforeOption.x - 25);
+  expect((await viewport()).zoom).toBe(beforeOption.zoom);
   expect(await editor.evaluate((element) => element.scrollTop)).toBe(scrollTop);
 
   await page.getByRole('button', { name: 'Fit canvas', exact: true }).click();

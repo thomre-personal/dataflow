@@ -15,6 +15,24 @@
   let zoom = $derived(Math.round(store.viewport.zoom * 100));
 
   onMount(() => connect((options) => store.fitView(options), screenToFlowPosition));
+
+  $effect(() => {
+    const canvas = store.domNode;
+    if (!canvas) return;
+    const scrollCanvas = (event: WheelEvent) => {
+      if (!event.altKey || event.defaultPrevented) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const page = event.deltaMode === WheelEvent.DOM_DELTA_PAGE;
+      const step = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 20 : 1;
+      void store.panBy({
+        x: -event.deltaX * (page ? canvas.clientWidth : step),
+        y: -event.deltaY * (page ? canvas.clientHeight : step),
+      });
+    };
+    canvas.addEventListener('wheel', scrollCanvas, { capture: true, passive: false });
+    return () => canvas.removeEventListener('wheel', scrollCanvas, true);
+  });
 </script>
 
 <div class="canvas-hud">
