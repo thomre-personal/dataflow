@@ -167,7 +167,7 @@ async function clickConnection(page: Page, connection: Locator) {
   await page.mouse.click(point.x, point.y);
 }
 
-test('pans the canvas when a table cannot scroll and keeps native scrolling when it can', async ({ page }) => {
+test('zooms over a table that fits and scrolls over a table with vertical overflow', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'New workspace', exact: true }).click();
   await page.getByRole('textbox', { name: 'Workspace name' }).fill('Table scrolling');
@@ -188,11 +188,11 @@ test('pans the canvas when a table cannot scroll and keeps native scrolling when
   await full.hover();
   const start = await viewport();
   await page.mouse.wheel(0, 70);
-  await expect.poll(async () => (await viewport()).y).toBeCloseTo(start.y - 70);
-  expect(await viewport()).toMatchObject({ x: start.x, zoom: start.zoom });
+  await expect.poll(async () => (await viewport()).zoom).toBeLessThan(start.zoom);
+  const zoomedOut = await viewport();
   await full.hover();
   await page.mouse.wheel(0, -70);
-  await expect.poll(async () => (await viewport()).y).toBeCloseTo(start.y);
+  await expect.poll(async () => (await viewport()).zoom).toBeGreaterThan(zoomedOut.zoom);
 
   await card.getByRole('button', { name: 'Unlock inline editing', exact: true }).click();
   await card.getByRole('button', { name: 'Open table', exact: true }).click();

@@ -28,14 +28,34 @@
       const table = target.closest('.nowheel');
       if (!table) return;
 
+      let hasVerticalOverflow = false;
       for (let element: Element | null = target; element; element = element.parentElement) {
         const maxScroll = element.scrollHeight - element.clientHeight;
-        const canScroll = deltaY > 0 ? element.scrollTop < maxScroll - 1 : element.scrollTop > 1;
-        if (maxScroll > 1 && canScroll && /^(auto|scroll)$/.test(getComputedStyle(element).overflowY)) return;
+        if (maxScroll > 0 && /^(auto|scroll)$/.test(getComputedStyle(element).overflowY)) {
+          hasVerticalOverflow = true;
+          if (deltaY > 0 ? element.scrollTop < maxScroll - .5 : element.scrollTop > .5) return;
+        }
         if (element === table) break;
       }
 
       event.preventDefault();
+      if (!hasVerticalOverflow && (table.matches('.full-grid') || table.closest('.graph-card.table'))) {
+        const viewport = store.viewport;
+        const wheelStep = deltaMode === WheelEvent.DOM_DELTA_LINE ? .05 : deltaMode === WheelEvent.DOM_DELTA_PAGE ? 1 : .002;
+        const zoom = Math.max(store.minZoom, Math.min(store.maxZoom, viewport.zoom * 2 ** (-deltaY * wheelStep)));
+        if (zoom === viewport.zoom) return;
+        const bounds = canvas.getBoundingClientRect();
+        const x = event.clientX - bounds.left;
+        const y = event.clientY - bounds.top;
+        const ratio = zoom / viewport.zoom;
+        void store.panZoom?.setViewportConstrained({
+          x: x - (x - viewport.x) * ratio,
+          y: y - (y - viewport.y) * ratio,
+          zoom,
+        }, [[0, 0], [canvas.clientWidth, canvas.clientHeight]], store.translateExtent);
+        return;
+      }
+
       const pixels = deltaMode === WheelEvent.DOM_DELTA_LINE ? 20
         : deltaMode === WheelEvent.DOM_DELTA_PAGE ? canvas.clientHeight : 1;
       void store.panBy({ x: 0, y: -deltaY * pixels });
